@@ -30,3 +30,45 @@ export interface HeaderProps {
   onMenuClick: () => void;
   user?: User | null;
 }
+
+// WhatsApp Types
+export type MessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
+export type MessageType = 'text' | 'image' | 'document' | 'audio' | 'video' | 'location';
+
+export interface WhatsAppMessage {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  senderPhone: string;
+  content: string;
+  type: MessageType;
+  timestamp: Date;
+  status: MessageStatus;
+  isIncoming: boolean;
+  mediaUrl?: string;
+  caption?: string;
+  fileName?: string;
+  mimeType?: string;
+}
+
+export interface WhatsAppContact {
+  id: string;
+  phoneNumber: string;
+  name: string | null;
+  profilePicture?: string;
+  lastMessage?: string;
+  lastMessageTime?: Date;
+  unreadCount: number;
+  isArchived: boolean;
+  labels: string[];
+}
+
+export interface WhatsAppConversation {
+  id: string;
+  contact: WhatsAppContact;
+  messages: WhatsAppMessage[];
+  createdAt: Date;
+  updatedAt: Date;
+  isActive: boolean;
+}
