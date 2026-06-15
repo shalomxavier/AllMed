@@ -1,4 +1,4 @@
-import { ArrowLeft, MoreVertical, Phone, Video } from 'lucide-react';
+import { ArrowLeft, MoreVertical } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { WhatsAppContact } from '@/types/index';
 
@@ -67,20 +67,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
       {/* Actions */}
       <div className="flex items-center gap-1">
-        <button
-          className="p-2 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-200 transition-colors"
-          aria-label="Voice call"
-          title="Voice call"
-        >
-          <Phone size={18} />
-        </button>
-        <button
-          className="p-2 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-200 transition-colors"
-          aria-label="Video call"
-          title="Video call"
-        >
-          <Video size={18} />
-        </button>
         <button
           className="p-2 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-200 transition-colors"
           aria-label="More options"
