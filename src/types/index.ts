@@ -52,6 +52,8 @@ export interface WhatsAppMessage {
   mimeType?: string;
 }
 
+export type DeliveryStatus = 'delivered' | 'not_delivered' | 'pending' | null;
+
 export interface WhatsAppContact {
   id: string;
   phoneNumber: string;
@@ -62,6 +64,7 @@ export interface WhatsAppContact {
   unreadCount: number;
   isArchived: boolean;
   labels: string[];
+  deliveryStatus?: DeliveryStatus;
 }
 
 export interface WhatsAppConversation {

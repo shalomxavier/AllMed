@@ -1,21 +1,25 @@
-import { PageContainer, PageHeader, EmptyState } from '@/components/common';
-import { CalendarDays } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Users } from 'lucide-react';
+import { PageContainer, PageHeader } from '@/components/common';
 
 export const AttendancePage: React.FC = () => {
+  const navigate = useNavigate();
   return (
     <PageContainer>
-      <PageHeader
-        title="Attendance Management"
-        description="Track and manage staff attendance records"
-      />
-
-      {/* Empty Content Container */}
-      <div className="card min-h-[400px]">
-        <EmptyState
-          title="Attendance Records"
-          description="Attendance tracking functionality will be implemented here."
-          icon={<CalendarDays className="w-8 h-8 text-secondary-400" />}
+      <div className="mt-6">
+        <PageHeader
+          title="Attendance Management"
+          description="Track and manage staff attendance records"
         />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mt-2">
+        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/employees')}>
+          <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mb-3">
+            <Users className="w-9 h-9 text-blue-600" />
+          </div>
+          <p className="text-base font-semibold text-secondary-900 text-center">Employees</p>
+        </div>
       </div>
     </PageContainer>
   );

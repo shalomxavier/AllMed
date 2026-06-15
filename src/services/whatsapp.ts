@@ -54,6 +54,7 @@ export const subscribeToConversations = (
             lastMessage: contact.lastMessage ?? data.lastMessage,
             unreadCount: contact.unreadCount ?? data.unreadCount ?? 0,
             lastMessageTime: rawLastMsgTime?.toDate ? rawLastMsgTime.toDate() : rawLastMsgTime,
+            deliveryStatus: contact.deliveryStatus ?? data.deliveryStatus ?? null,
           },
           messages: [], // Messages loaded separately
           createdAt: data.createdAt?.toDate() || new Date(),
@@ -204,4 +205,25 @@ export const getConversation = async (conversationId: string): Promise<WhatsAppC
     updatedAt: data.updatedAt?.toDate() || new Date(),
     isActive: data.isActive,
   } as WhatsAppConversation;
+};
+
+/**
+ * Update delivery status for a conversation
+ */
+export const updateDeliveryStatus = async (
+  conversationId: string,
+  status: 'delivered' | 'not_delivered' | 'pending',
+  reason?: string
+): Promise<void> => {
+  const docRef = doc(db, 'whatsapp_conversations', conversationId);
+  const updateData: any = {
+    'contact.deliveryStatus': status,
+    updatedAt: serverTimestamp(),
+  };
+
+  if (reason) {
+    updateData['contact.deliveryReason'] = reason;
+  }
+
+  await updateDoc(docRef, updateData);
 };

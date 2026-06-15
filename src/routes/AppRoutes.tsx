@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LoginPage } from '@pages/Login/LoginPage';
 import { AttendancePage } from '@pages/Attendance/AttendancePage';
+import { EmployeesPage } from '@pages/Attendance/EmployeesPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
 import { DashboardLayout } from '@components/layout/DashboardLayout';
@@ -35,6 +36,7 @@ const AppRoutesContent: React.FC = () => {
         }
       >
         <Route path="/attendance" element={<AttendancePage />} />
+        <Route path="/attendance/employees" element={<EmployeesPage />} />
         <Route path="/dms" element={<DMSPage />} />
         <Route path="/dms/whatsapp-enquiry" element={<WhatsAppEnquiryPage />} />
       </Route>

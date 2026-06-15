@@ -44,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         }`}
       >
         {/* Company Branding */}
-        <div className="flex items-center justify-between h-16 px-6 border-b border-secondary-200">
+        <div className="relative flex items-center justify-center h-16 px-6 border-b border-secondary-200">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-primary-600 flex items-center justify-center">
               <span className="text-white font-bold text-sm">A</span>
@@ -55,7 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </div>
           <button
             onClick={onClose}
-            className="lg:hidden p-2 text-secondary-500 hover:text-secondary-700 transition-colors"
+            className="absolute right-6 lg:hidden p-2 text-secondary-500 hover:text-secondary-700 transition-colors"
             aria-label="Close sidebar"
           >
             <X size={20} />
@@ -71,10 +71,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 key={item.path}
                 to={item.path}
                 onClick={() => onClose()}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-colors duration-200 ${
+                className={`flex items-center gap-3 px-4 py-3 font-medium transition-colors duration-200 ${
                   isActive
-                    ? 'bg-primary-50 text-primary-700 border-l-4 border-primary-600'
-                    : 'text-secondary-600 hover:bg-secondary-50 hover:text-secondary-900'
+                    ? 'bg-primary-50 text-primary-700 border-l-4 border-primary-600 rounded-r-lg'
+                    : 'text-secondary-600 hover:bg-secondary-50 hover:text-secondary-900 rounded-lg'
                 }`}
               >
                 <span className={isActive ? 'text-primary-600' : 'text-secondary-400'}>

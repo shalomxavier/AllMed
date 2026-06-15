@@ -57,14 +57,41 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         const isActive = id === activeConversationId;
         const hasUnread = contact.unreadCount > 0;
         const messageTime = contact.lastMessageTime;
+        const deliveryStatus = contact.deliveryStatus;
+
+        // Determine background color based on priority: unread > delivery status
+        let bgClass = 'bg-white';
+        let borderClass = 'border-transparent';
+
+        if (hasUnread) {
+          bgClass = 'bg-green-100';
+          borderClass = 'border-green-600';
+        } else if (deliveryStatus === 'delivered') {
+          bgClass = 'bg-blue-100';
+          borderClass = 'border-blue-600';
+        } else if (deliveryStatus === 'not_delivered') {
+          bgClass = 'bg-red-100';
+          borderClass = 'border-red-600';
+        } else if (deliveryStatus === 'pending' || deliveryStatus === null) {
+          bgClass = 'bg-yellow-100';
+          borderClass = 'border-yellow-600';
+        }
+
+        // Active state: keep delivery status color but add ring
+        const ringColorMap: Record<string, string> = {
+          'border-green-600': 'ring-green-500',
+          'border-blue-600': 'ring-blue-500',
+          'border-red-600': 'ring-red-500',
+          'border-yellow-600': 'ring-yellow-500',
+          'border-transparent': 'ring-green-500',
+        };
+        const activeRing = isActive ? `ring-1 ${ringColorMap[borderClass] || 'ring-green-500'} ring-inset` : '';
 
         return (
           <button
             key={id}
             onClick={() => onSelectConversation(id)}
-            className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary-50 transition-colors text-left ${
-              isActive ? 'bg-green-50 hover:bg-green-50 border-l-4 border-green-600' : 'border-l-4 border-transparent'
-            }`}
+            className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${bgClass} hover:opacity-80 ${activeRing}`}
           >
             {/* Avatar */}
             <div className="relative flex-shrink-0">
@@ -95,14 +122,14 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                   {contact.name || contact.phoneNumber}
                 </h4>
                 {messageTime && (
-                  <span className={`text-xs flex-shrink-0 ${hasUnread ? 'text-green-600 font-medium' : 'text-secondary-400'}`}>
+                  <span className={`text-xs flex-shrink-0 ${hasUnread ? 'text-green-600 font-medium' : 'text-secondary-600'}`}>
                     {formatMessageTime(messageTime)}
                   </span>
                 )}
               </div>
 
               <div className="flex items-center gap-2 mt-0.5">
-                <p className={`text-sm truncate flex-1 ${hasUnread ? 'text-secondary-900 font-medium' : 'text-secondary-500'}`}>
+                <p className={`text-sm truncate flex-1 ${hasUnread ? 'text-secondary-900 font-medium' : 'text-secondary-700'}`}>
                   {contact.lastMessage || 'No messages yet'}
                 </p>
               </div>

@@ -193,6 +193,7 @@ export const WhatsAppEnquiryPage: React.FC = () => {
               <ChatHeader
                 contact={activeConversation.contact}
                 onBack={handleBackToList}
+                conversationId={activeConversation.id}
               />
 
               {/* Messages */}
