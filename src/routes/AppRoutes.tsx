@@ -3,6 +3,8 @@ import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LoginPage } from '@pages/Login/LoginPage';
 import { AttendancePage } from '@pages/Attendance/AttendancePage';
 import { EmployeesPage } from '@pages/Attendance/EmployeesPage';
+import { RawPunchesPage } from '@pages/Attendance/RawPunchesPage';
+import { ShiftsPage } from '@pages/Attendance/ShiftsPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
 import { DashboardLayout } from '@components/layout/DashboardLayout';
@@ -37,6 +39,8 @@ const AppRoutesContent: React.FC = () => {
       >
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/attendance/employees" element={<EmployeesPage />} />
+        <Route path="/attendance/records" element={<RawPunchesPage />} />
+        <Route path="/attendance/shifts" element={<ShiftsPage />} />
         <Route path="/dms" element={<DMSPage />} />
         <Route path="/dms/whatsapp-enquiry" element={<WhatsAppEnquiryPage />} />
       </Route>
