@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getFirestore, collection, getDocs, query, orderBy, where } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 
 interface LeaveRecord {
@@ -82,22 +82,35 @@ export const LeavesPage: React.FC = () => {
   const [unauthorizedModalOpen, setUnauthorizedModalOpen] = useState(false);
   const [unauthorizedResults, setUnauthorizedResults] = useState<any[]>([]);
   const [checkingAbsences, setCheckingAbsences] = useState(false);
+  const [bulkLeaveModalOpen, setBulkLeaveModalOpen] = useState(false);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [bulkLeaveSelectedIds, setBulkLeaveSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLeaveSearchQuery, setBulkLeaveSearchQuery] = useState('');
+  const [bulkLeaveForm, setBulkLeaveForm] = useState({ reason: '' });
+  const [bulkLeaveSelectedDates, setBulkLeaveSelectedDates] = useState<string[]>([]);
+  const [bulkLeaveCalendarMonth, setBulkLeaveCalendarMonth] = useState(new Date().getMonth());
+  const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
+  const [isSavingBulkLeave, setIsSavingBulkLeave] = useState(false);
 
   const fetchData = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
       const db = getFirestore();
-      const [leavesSnap, weekOffsSnap] = await Promise.all([
+      const [leavesSnap, weekOffsSnap, employeesSnap] = await Promise.all([
         getDocs(query(collection(db, 'leaves'), orderBy('fromDate', 'desc'))),
         getDocs(collection(db, 'weekOffs')),
+        getDocs(query(collection(db, 'employees'), orderBy('employeeName'))),
       ]);
       const leavesData: LeaveRecord[] = [];
       leavesSnap.forEach((d) => leavesData.push({ id: d.id, ...d.data() }));
       const weekOffsData: WeekOffRecord[] = [];
       weekOffsSnap.forEach((d) => weekOffsData.push({ id: d.id, ...d.data() }));
+      const employeesData: any[] = [];
+      employeesSnap.forEach((d) => employeesData.push({ id: d.id, ...d.data() }));
       setLeaves(leavesData);
       setWeekOffs(weekOffsData);
+      setEmployees(employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del')));
     } catch (e) {
       console.error('Error fetching data:', e);
     } finally {
@@ -106,6 +119,55 @@ export const LeavesPage: React.FC = () => {
   };
 
   useEffect(() => { fetchData(); }, [currentUser]);
+
+  const closeBulkLeaveModal = () => {
+    setBulkLeaveModalOpen(false);
+    setBulkLeaveSelectedIds(new Set());
+    setBulkLeaveSearchQuery('');
+    setBulkLeaveForm({ reason: '' });
+    setBulkLeaveSelectedDates([]);
+    setBulkLeaveCalendarMonth(new Date().getMonth());
+    setBulkLeaveCalendarYear(new Date().getFullYear());
+  };
+
+  const toggleBulkLeaveEmployee = (id: string) => {
+    setBulkLeaveSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkLeaveSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (bulkLeaveSelectedIds.size === 0 || bulkLeaveSelectedDates.length === 0 || !bulkLeaveForm.reason) return;
+    setIsSavingBulkLeave(true);
+    try {
+      const db = getFirestore();
+      const sorted = [...bulkLeaveSelectedDates].sort();
+      for (const empId of bulkLeaveSelectedIds) {
+        const employee = employees.find((e) => e.id === empId);
+        if (!employee) continue;
+        await addDoc(collection(db, 'leaves'), {
+          employeeId: employee.id,
+          employeeCode: employee.employeeCode,
+          employeeName: employee.employeeName,
+          dates: sorted,
+          fromDate: sorted[0],
+          toDate: sorted[sorted.length - 1],
+          reason: bulkLeaveForm.reason,
+          createdAt: serverTimestamp(),
+          createdBy: currentUser?.uid,
+        });
+      }
+      fetchData();
+      closeBulkLeaveModal();
+    } catch (err) {
+      console.error('Error saving bulk leave:', err);
+    } finally {
+      setIsSavingBulkLeave(false);
+    }
+  };
 
   const checkUnauthorizedAbsences = async () => {
     if (!currentUser) return;
@@ -327,8 +389,8 @@ export const LeavesPage: React.FC = () => {
 
       {/* Search */}
       <div className="px-4 pt-3 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-1/2 relative">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1 relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
             <input
               type="text"
@@ -338,10 +400,16 @@ export const LeavesPage: React.FC = () => {
               className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
             />
           </div>
-          <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shrink-0 ml-auto disabled:opacity-70">
-            {checkingAbsences ? <RefreshCw size={16} className="animate-spin" /> : <AlertTriangle size={16} />}
-            Check Unauthorized Absence
-          </button>
+          <div className="flex items-center gap-3 ml-auto">
+            <button onClick={() => setBulkLeaveModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shrink-0">
+              <Umbrella size={16} />
+              Add Leaves
+            </button>
+            <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shrink-0 disabled:opacity-70">
+              {checkingAbsences ? <RefreshCw size={16} className="animate-spin" /> : <AlertTriangle size={16} />}
+              Check Unauthorized Absence
+            </button>
+          </div>
         </div>
       </div>
 
@@ -435,7 +503,7 @@ export const LeavesPage: React.FC = () => {
                               setModalOpen(true);
                             }}
                           >
-                            {typeCount} {typeKey} in last 30 days
+                            <strong>{typeCount}</strong> {typeKey} in last 30 days
                           </span>
                           <span
                             className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-pink-100 transition-colors"
@@ -478,7 +546,7 @@ export const LeavesPage: React.FC = () => {
                               setModalOpen(true);
                             }}
                           >
-                            {totalCount} total days off in last 30 days
+                            <strong>{totalCount}</strong> total days off in last 30 days
                           </span>
                         </div>
                       </div>
@@ -541,7 +609,7 @@ export const LeavesPage: React.FC = () => {
                             setModalOpen(true);
                           }}
                         >
-                          {totalCount} total days off in last 30 days
+                          <strong>{totalCount}</strong> total days off in last 30 days
                         </span>
                       </div>
                     </div>
@@ -657,6 +725,110 @@ export const LeavesPage: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Add Leaves Modal */}
+      {bulkLeaveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+              <h2 className="text-lg font-semibold text-secondary-900">Add Leaves</h2>
+              <button onClick={closeBulkLeaveModal} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <form onSubmit={handleBulkLeaveSubmit} className="flex-1 overflow-y-auto p-4 space-y-4">
+              <p className="text-sm text-secondary-600">Select employees and choose leave dates to add leave for all selected employees at once.</p>
+
+              {/* Employee selector */}
+              <div className="border border-secondary-300 rounded-lg p-3">
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Select Employees ({bulkLeaveSelectedIds.size} selected)</label>
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
+                  <input type="text" placeholder="Search by name or code..."
+                    value={bulkLeaveSearchQuery} onChange={(e) => setBulkLeaveSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" />
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
+                  {employees.filter((emp) => {
+                    const s = bulkLeaveSearchQuery.toLowerCase();
+                    return emp.employeeName?.toLowerCase().includes(s) || emp.employeeCode?.toLowerCase().includes(s);
+                  }).map((emp) => (
+                    <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
+                      <input type="checkbox" checked={bulkLeaveSelectedIds.has(emp.id)} onChange={() => toggleBulkLeaveEmployee(emp.id)}
+                        className="w-4 h-4 text-purple-600 rounded border-secondary-300 focus:ring-purple-500" />
+                      <div>
+                        <p className="text-sm font-medium text-purple-700">{emp.employeeName || 'Unnamed'}</p>
+                        <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Calendar */}
+              <div className="border border-secondary-300 rounded-lg p-3">
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Select Leave Dates ({bulkLeaveSelectedDates.length} selected)</label>
+                {(() => {
+                  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                  const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+                  const firstDay = new Date(bulkLeaveCalendarYear, bulkLeaveCalendarMonth, 1).getDay();
+                  const daysInMonth = new Date(bulkLeaveCalendarYear, bulkLeaveCalendarMonth + 1, 0).getDate();
+                  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_, i) => i + 1)];
+                  while (cells.length % 7 !== 0) cells.push(null);
+                  return (
+                    <div className="border border-secondary-200 rounded-lg overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2 bg-purple-50">
+                        <button type="button" onClick={() => { if (bulkLeaveCalendarMonth === 0) { setBulkLeaveCalendarMonth(11); setBulkLeaveCalendarYear(y => y - 1); } else setBulkLeaveCalendarMonth(m => m - 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronLeft size={14}/></button>
+                        <span className="text-sm font-semibold text-secondary-800">{MONTHS[bulkLeaveCalendarMonth]} {bulkLeaveCalendarYear}</span>
+                        <button type="button" onClick={() => { if (bulkLeaveCalendarMonth === 11) { setBulkLeaveCalendarMonth(0); setBulkLeaveCalendarYear(y => y + 1); } else setBulkLeaveCalendarMonth(m => m + 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronRight size={14}/></button>
+                      </div>
+                      <div className="grid grid-cols-7 border-b border-secondary-100">
+                        {DAYS.map(d => <div key={d} className="text-center text-xs font-medium text-secondary-500 py-1">{d}</div>)}
+                      </div>
+                      <div className="grid grid-cols-7 p-1 gap-0.5">
+                        {cells.map((day, i) => {
+                          if (!day) return <div key={i} />;
+                          const dateStr = `${bulkLeaveCalendarYear}-${String(bulkLeaveCalendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                          const selected = bulkLeaveSelectedDates.includes(dateStr);
+                          return (
+                            <button key={i} type="button"
+                              onClick={() => setBulkLeaveSelectedDates(prev => selected ? prev.filter(d => d !== dateStr) : [...prev, dateStr])}
+                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
+                                selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
+                              }`}>{day}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Leave type */}
+              <div className="border border-secondary-300 rounded-lg p-3">
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
+                <select value={bulkLeaveForm.reason} onChange={(e) => setBulkLeaveForm({ reason: e.target.value })}
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
+                  <option value="">Select leave type...</option>
+                  <option value="Casual Leave">Casual Leave</option>
+                  <option value="Earned Leave">Earned Leave</option>
+                  <option value="Holiday Off">Holiday Off</option>
+                  <option value="Overtime Off">Overtime Off</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={closeBulkLeaveModal}
+                  className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
+                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || bulkLeaveSelectedDates.length === 0}
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
+                  {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
