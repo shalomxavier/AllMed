@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -442,31 +442,64 @@ export const LeavesPage: React.FC = () => {
               const typeCount = leaveCountsByEmployee.get(empCode)?.get(typeKey) ?? 0;
               const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
               return (
-                <div key={record.data.id} className="bg-white border border-secondary-200 rounded-xl overflow-hidden">
+                <div key={record.data.id} className="bg-white border border-secondary-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
+                          const leaveDetails = leaves
+                            .filter((l) => l.employeeCode === empCode)
+                            .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
+                            .filter((d) => new Date(d) >= thirtyDaysAgo)
+                            .map((d) => {
+                              const leave = leaves.find((l) => {
+                                const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
+                                return dates.includes(d) && l.employeeCode === empCode;
+                              });
+                              const reason = leave?.reason?.toLowerCase() ?? 'other';
+                              const tk = reason.includes('sick') || reason.includes('medical') ? 'sick' :
+                                      reason.includes('casual') || reason.includes('personal') ? 'casual' :
+                                      reason.includes('holiday') || reason.includes('festival') ? 'holiday' :
+                                      reason.includes('maternity') || reason.includes('paternity') ? 'maternity' :
+                                      reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
+                              return { date: d, type: 'leave', leaveType: tk.charAt(0).toUpperCase() + tk.slice(1) };
+                            });
+                          const wo = weekOffs.find((w) => w.employeeCode === empCode);
+                          const woDays = wo?.days ?? [];
+                          const woDetails: { date: string; type: string }[] = [];
+                          for (let i = 0; i < 30; i++) {
+                            const d = new Date();
+                            d.setDate(d.getDate() - i);
+                            const dayName = ALL_DAYS[d.getDay()];
+                            if (woDays.includes(dayName)) {
+                              woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
+                            }
+                          }
+                          const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
+                          setModalData({
+                            employeeCode: empCode,
+                            employeeName: data.employeeName || '',
+                            type: 'total',
+                            details: allDetails,
+                          });
+                          setModalOpen(true);
+                        }}>
                   <div className="px-4 py-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                    <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
                           <p className="text-base font-semibold text-blue-700">{data.employeeName || '—'}</p>
                           <span className="text-xs text-secondary-500">{data.employeeCode}</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-secondary-800">
-                            {dates.length === 1
-                              ? formatDate(dates[0])
-                              : `${formatDate(dates[0])} — ${formatDate(dates[dates.length - 1])}`}
-                          </p>
-                          {data.reason && (
-                            <span className={`text-xs font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full`}>{data.reason}</span>
-                          )}
-                        </div>
-                        {dates.length > 1 && (
-                          <p className="text-xs text-secondary-500 mt-0.5">{dates.length} days</p>
+                        <p className="text-sm font-semibold text-secondary-800">
+                          {dates.length === 1
+                            ? formatDate(dates[0])
+                            : `${formatDate(dates[0])} — ${formatDate(dates[dates.length - 1])}`}
+                          {dates.length > 1 && <span className="text-xs text-secondary-500 ml-1">({dates.length} days)</span>}
+                        </p>
+                        {data.reason && (
+                          <span className={`text-xs font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full self-start`}>{data.reason}</span>
                         )}
-                        <div className="flex gap-3 mt-2">
+                        <div className="flex flex-col gap-1.5 mt-1">
                           <span
-                            className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-purple-100 transition-colors"
-                            onClick={() => {
+                            className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-purple-100 transition-colors self-start"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const details = leaves
                                 .filter((l) => l.employeeCode === empCode)
                                 .filter((l) => {
@@ -506,8 +539,9 @@ export const LeavesPage: React.FC = () => {
                             <strong>{typeCount}</strong> {typeKey} in last 30 days
                           </span>
                           <span
-                            className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-pink-100 transition-colors"
-                            onClick={() => {
+                            className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-pink-100 transition-colors self-start"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               const leaveDetails = leaves
                                 .filter((l) => l.employeeCode === empCode)
                                 .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
@@ -549,7 +583,6 @@ export const LeavesPage: React.FC = () => {
                             <strong>{totalCount}</strong> total days off in last 30 days
                           </span>
                         </div>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -558,7 +591,32 @@ export const LeavesPage: React.FC = () => {
               const empCode = data.employeeCode ?? '';
               const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
               return (
-                <div key={record.data.id} className="bg-white border border-secondary-200 rounded-xl overflow-hidden">
+                <div key={record.data.id} className="bg-white border border-secondary-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
+                          const leaveDetails = leaves
+                            .filter((l) => l.employeeCode === empCode)
+                            .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
+                            .filter((d) => new Date(d) >= thirtyDaysAgo)
+                            .map((d) => ({ date: d, type: 'leave' }));
+                          const wo = weekOffs.find((w) => w.employeeCode === empCode);
+                          const woDays = wo?.days ?? [];
+                          const woDetails: { date: string; type: string }[] = [];
+                          for (let i = 0; i < 30; i++) {
+                            const d = new Date();
+                            d.setDate(d.getDate() - i);
+                            const dayName = ALL_DAYS[d.getDay()];
+                            if (woDays.includes(dayName)) {
+                              woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
+                            }
+                          }
+                          const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
+                          setModalData({
+                            employeeCode: empCode,
+                            employeeName: data.employeeName || '',
+                            type: 'total',
+                            details: allDetails,
+                          });
+                          setModalOpen(true);
+                        }}>
                   <div className="px-4 py-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1">
@@ -582,32 +640,7 @@ export const LeavesPage: React.FC = () => {
                         </div>
                         <span
                           className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full mt-2 inline-block cursor-pointer hover:bg-pink-100 transition-colors"
-                          onClick={() => {
-                            const leaveDetails = leaves
-                              .filter((l) => l.employeeCode === empCode)
-                              .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
-                              .filter((d) => new Date(d) >= thirtyDaysAgo)
-                              .map((d) => ({ date: d, type: 'leave' }));
-                            const wo = weekOffs.find((w) => w.employeeCode === empCode);
-                            const woDays = wo?.days ?? [];
-                            const woDetails: { date: string; type: string }[] = [];
-                            for (let i = 0; i < 30; i++) {
-                              const d = new Date();
-                              d.setDate(d.getDate() - i);
-                              const dayName = ALL_DAYS[d.getDay()];
-                              if (woDays.includes(dayName)) {
-                                woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
-                              }
-                            }
-                            const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
-                            setModalData({
-                              employeeCode: empCode,
-                              employeeName: data.employeeName || '',
-                              type: 'total',
-                              details: allDetails,
-                            });
-                            setModalOpen(true);
-                          }}
+                          onClick={(e) => e.stopPropagation()}
                         >
                           <strong>{totalCount}</strong> total days off in last 30 days
                         </span>

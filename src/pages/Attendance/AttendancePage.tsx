@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, Calendar, Clock, Umbrella, Fingerprint } from 'lucide-react';
+import { Users, ClipboardList, Clock, Umbrella, Fingerprint } from 'lucide-react';
 import { PageContainer, PageHeader } from '@/components/common';
 
 export const AttendancePage: React.FC = () => {
@@ -22,9 +22,9 @@ export const AttendancePage: React.FC = () => {
         </div>
         <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/records')}>
           <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-3">
-            <Calendar className="w-9 h-9 text-green-600" />
+            <ClipboardList className="w-9 h-9 text-green-600" />
           </div>
-          <p className="text-base font-semibold text-secondary-900 text-center">Attendance</p>
+          <p className="text-base font-semibold text-secondary-900 text-center">Logs</p>
         </div>
         <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/shifts')}>
           <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mb-3">
