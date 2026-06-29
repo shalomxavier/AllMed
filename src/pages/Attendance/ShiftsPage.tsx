@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, arrayUnion, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 
@@ -15,6 +15,8 @@ interface Employee {
 interface ShiftEmployee {
   employeeName: string;
   employeeCode: string;
+  fromDate?: string;
+  toDate?: string;
 }
 
 interface ShiftSlot {
@@ -75,6 +77,8 @@ export const ShiftsPage: React.FC = () => {
   const [editingSlot, setEditingSlot] = useState<ShiftSlot | null>(null);
   const [addingToSlot, setAddingToSlot] = useState<ShiftSlot | null>(null);
   const [addEmpSearch, setAddEmpSearch] = useState('');
+  const [deleteSlot, setDeleteSlot] = useState<ShiftSlot | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchEmployees = async () => {
     try {
@@ -173,6 +177,21 @@ export const ShiftsPage: React.FC = () => {
     finally { setIsAssigning(false); }
   };
 
+  const handleDeleteShift = async () => {
+    if (!deleteSlot) return;
+    
+    setIsDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'shifts', deleteSlot.key));
+      await fetchShifts();
+      setDeleteSlot(null);
+    } catch (err) {
+      console.error('Error deleting shift:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const fetchShifts = async () => {
     if (!currentUser) return;
     setLoading(true);
@@ -182,7 +201,12 @@ export const ShiftsPage: React.FC = () => {
       const results: ShiftSlot[] = [];
       snapshot.forEach((d) => {
         const data = d.data();
-        const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any) => ({ employeeName: e.employeeName ?? '', employeeCode: e.employeeCode ?? '' }));
+        const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any) => ({ 
+          employeeName: e.employeeName ?? '', 
+          employeeCode: e.employeeCode ?? '',
+          fromDate: e.fromDate,
+          toDate: e.toDate
+        }));
         results.push({
           key: d.id,
           fromDate: data.fromDate ?? '',
@@ -277,7 +301,15 @@ export const ShiftsPage: React.FC = () => {
                     onClick={() => {
                       setAddingToSlot(slot);
                       setAssignForm({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
-                      setAssignSelectedIds(new Set());
+                      // Pre-check employees already assigned to this slot
+                      const existingEmployeeIds = new Set<string>();
+                      slot.employees.forEach(emp => {
+                        const employee = allEmployees.find(e => e.employeeCode === emp.employeeCode);
+                        if (employee) {
+                          existingEmployeeIds.add(employee.id);
+                        }
+                      });
+                      setAssignSelectedIds(existingEmployeeIds);
                       setSelectedSlot(null);
                       setAssignOpen(true);
                     }}
@@ -302,10 +334,18 @@ export const ShiftsPage: React.FC = () => {
                       setEditingSlot(slot);
                       setAssignOpen(true);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-secondary-600 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-violet-600 border border-violet-300 rounded-lg hover:bg-violet-50 transition-colors"
                   >
                     <Pencil size={13} />
                     Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteSlot(slot)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                    Delete
                   </button>
                 </div>
               </div>
@@ -475,6 +515,66 @@ export const ShiftsPage: React.FC = () => {
         </div>
       )}
 
+      {/* Delete Confirmation Dialog */}
+      {deleteSlot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-secondary-900">Delete Shift</h3>
+                <p className="text-sm text-secondary-500">This action cannot be undone</p>
+              </div>
+            </div>
+            <div className="mb-6">
+              <p className="text-sm text-secondary-900 mb-2">
+                Are you sure you want to delete this shift?
+              </p>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-red-900">
+                  {formatTime12(deleteSlot.startTime)} — {formatTime12(deleteSlot.endTime)}
+                </p>
+                <p className="text-xs text-red-700 mt-1">
+                  {deleteSlot.count} {deleteSlot.count === 1 ? 'employee' : 'employees'} assigned
+                </p>
+                {deleteSlot.employees.length > 0 && (
+                  <div className="mt-2">
+                    <p className="text-xs text-red-600 font-medium mb-1">Employees to be removed:</p>
+                    <div className="space-y-1">
+                      {deleteSlot.employees.slice(0, 3).map((emp, i) => (
+                        <p key={i} className="text-xs text-red-600">• {emp.employeeName} ({emp.employeeCode})</p>
+                      ))}
+                      {deleteSlot.employees.length > 3 && (
+                        <p className="text-xs text-red-600">• and {deleteSlot.employees.length - 3} more...</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteSlot(null)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteShift()}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Shift'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Success toast */}
       {assignSuccess && (
         <div className="fixed bottom-6 right-6 z-50 bg-green-600 text-white text-sm font-medium px-5 py-3 rounded-xl shadow-lg">
@@ -501,9 +601,14 @@ export const ShiftsPage: React.FC = () => {
                   <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
                     <Users size={14} className="text-orange-600" />
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-secondary-900">{emp.employeeName || '—'}</p>
+                  <div className="flex-1">
+                    <p className="text-base font-medium text-secondary-900">{emp.employeeName || '—'}</p>
                     <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
+                    {(emp.fromDate || emp.toDate) && (
+                      <p className="text-sm font-medium text-orange-600 mt-0.5">
+                        {emp.fromDate && emp.toDate ? `${emp.fromDate} → ${emp.toDate}` : emp.fromDate || emp.toDate}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -522,6 +627,15 @@ export const ShiftsPage: React.FC = () => {
                   const s = parse12(selectedSlot.startTime);
                   const e = parse12(selectedSlot.endTime);
                   setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
+                  // Pre-check employees already assigned to this slot
+                  const existingEmployeeIds = new Set<string>();
+                  selectedSlot.employees.forEach(emp => {
+                    const employee = allEmployees.find(e => e.employeeCode === emp.employeeCode);
+                    if (employee) {
+                      existingEmployeeIds.add(employee.id);
+                    }
+                  });
+                  setAssignSelectedIds(existingEmployeeIds);
                   setSelectedSlot(null);
                   setAssignOpen(true);
                 }}

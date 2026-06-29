@@ -48,6 +48,7 @@ export const RawPunchesPage: React.FC = () => {
   const [allPunches, setAllPunches] = useState<RawPunch[]>([]);
   const [loading, setLoading] = useState(true);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
+  const [devicesMap, setDevicesMap] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [cursorStack, setCursorStack] = useState<(QueryDocumentSnapshot<DocumentData> | null)[]>([null]);
@@ -56,6 +57,7 @@ export const RawPunchesPage: React.FC = () => {
   const [hasNextPage, setHasNextPage] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [shiftsMap, setShiftsMap] = useState<Record<string, any[]>>({});
+  const [locationFilter, setLocationFilter] = useState('');
 
   const fetchPage = async (afterDoc: QueryDocumentSnapshot<DocumentData> | null) => {
     if (!currentUser) return;
@@ -84,6 +86,7 @@ export const RawPunchesPage: React.FC = () => {
   useEffect(() => {
     fetchEmployees();
     fetchShifts();
+    fetchDevices();
   }, [currentUser]);
 
   useEffect(() => {
@@ -145,19 +148,37 @@ export const RawPunchesPage: React.FC = () => {
         const employees: any[] = data.employees ?? [];
         employees.forEach((emp) => {
           const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
-          if (!code) return;
-          if (!map[code]) map[code] = [];
-          map[code].push({
-            startTime: data.startTime ?? '',
-            endTime: data.endTime ?? '',
-            fromDate: emp.fromDate ?? '',
-            toDate: emp.toDate ?? '',
-          });
+          if (code) {
+            if (!map[code]) map[code] = [];
+            map[code].push({ 
+              startTime: data.startTime, 
+              endTime: data.endTime,
+              fromDate: emp.fromDate,
+              toDate: emp.toDate,
+              id: doc.id 
+            });
+          }
         });
       });
       setShiftsMap(map);
     } catch (error) {
       console.error('Error fetching shifts:', error);
+    }
+  };
+
+  const fetchDevices = async () => {
+    if (!currentUser) return;
+    try {
+      const snapshot = await getDocs(collection(db, 'devices'));
+      const map: Record<string, string> = {};
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const key = (data.deviceId ?? '').toString().trim();
+        if (key) map[key] = data.location ?? '';
+      });
+      setDevicesMap(map);
+    } catch (error) {
+      console.error('Error fetching devices:', error);
     }
   };
 
@@ -208,6 +229,11 @@ export const RawPunchesPage: React.FC = () => {
     return employeeMap[userId.trim().toLowerCase()] ?? '';
   };
 
+  const resolveDeviceLocation = (deviceId?: number): string => {
+    if (!deviceId) return '—';
+    return devicesMap[String(deviceId)] ?? String(deviceId);
+  };
+
   const handleNextPage = () => {
     if (!hasNextPage || !lastDocOnPage) return;
     const newStack = [...cursorStack, lastDocOnPage];
@@ -227,10 +253,16 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const filteredPunches = allPunches.filter((p: RawPunch) => {
-    if (!isSearchMode) return true;
+    if (!isSearchMode) {
+      if (locationFilter) {
+        const location = resolveDeviceLocation(p.deviceId);
+        return location === locationFilter;
+      }
+      return true;
+    }
     const q = debouncedSearch.toLowerCase();
     const empName = resolveEmployeeName(p.userId).toLowerCase();
-    return (
+    const matchesSearch = (
       p.userId?.toLowerCase().includes(q) ||
       empName.includes(q) ||
       p.deviceLogId?.toLowerCase().includes(q) ||
@@ -238,6 +270,11 @@ export const RawPunchesPage: React.FC = () => {
       p.sourceTable?.toLowerCase().includes(q) ||
       String(p.deviceId ?? '').includes(q)
     );
+    if (locationFilter) {
+      const location = resolveDeviceLocation(p.deviceId);
+      return matchesSearch && location === locationFilter;
+    }
+    return matchesSearch;
   });
 
   const totalPages = Math.ceil(filteredPunches.length / PAGE_SIZE);
@@ -286,8 +323,8 @@ export const RawPunchesPage: React.FC = () => {
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
         {/* Search */}
-        <div className="mb-4">
-          <div className="relative max-w-md">
+        <div className="mb-4 flex gap-3">
+          <div className="relative max-w-md flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
             <input
               type="text"
@@ -296,6 +333,18 @@ export const RawPunchesPage: React.FC = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
+          </div>
+          <div className="w-48">
+            <select
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            >
+              <option value="">All Locations</option>
+              {Array.from(new Set(Object.values(devicesMap))).sort().map((loc) => (
+                <option key={loc} value={loc}>{loc}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -324,7 +373,7 @@ export const RawPunchesPage: React.FC = () => {
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Time</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Direction</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Status</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Device ID</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Location</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -359,7 +408,7 @@ export const RawPunchesPage: React.FC = () => {
                           );
                         })()}
                       </td>
-                      <td className="px-4 py-2.5 text-secondary-700">{punch.deviceId ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-secondary-700">{resolveDeviceLocation(punch.deviceId)}</td>
                     </tr>
                   ))}
                 </tbody>

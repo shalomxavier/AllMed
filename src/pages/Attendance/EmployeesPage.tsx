@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, RefreshCw, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion } from 'firebase/firestore';
@@ -133,17 +133,18 @@ export const EmployeesPage: React.FC = () => {
   const [attendanceMonth, setAttendanceMonth] = useState<number>(new Date().getMonth() + 1);
   const [attendanceYear, setAttendanceYear] = useState<number>(new Date().getFullYear());
   const [employeeAttendanceShifts, setEmployeeAttendanceShifts] = useState<any[]>([]);
+  const [attendanceLeaves, setAttendanceLeaves] = useState<any[]>([]);
 
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [leaveEmployee, setLeaveEmployee] = useState<Employee | null>(null);
   const [leaveTab, setLeaveTab] = useState<'upcoming' | 'past'>('upcoming');
-  const [weekOffDays, setWeekOffDays] = useState<string[]>([]);
+  const [weekOffDays, setWeekOffDays] = useState<string[]>([]); // Used for week-off functionality
   const [leaveForm, setLeaveForm] = useState({ reason: '' });
   const [selectedLeaveDates, setSelectedLeaveDates] = useState<string[]>([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [isSavingLeave, setIsSavingLeave] = useState(false);
-  const [existingWeekOff, setExistingWeekOff] = useState<any | null>(null);
+  const [existingWeekOff, setExistingWeekOff] = useState<any | null>(null); // Used for week-off functionality
   const [employeeLeaves, setEmployeeLeaves] = useState<any[]>([]);
   const [leavesLoading, setLeavesLoading] = useState(false);
   const [showAddLeaveForm, setShowAddLeaveForm] = useState(false);
@@ -211,6 +212,30 @@ export const EmployeesPage: React.FC = () => {
     setShiftModalOpen(true);
   };
 
+  const fetchAttendanceLeavesForMonth = async (employee: Employee, month: number, year: number) => {
+    if (!employee.employeeCode) return;
+    try {
+      const db = getFirestore();
+      const q = query(collection(db, 'leaves'), where('employeeCode', '==', employee.employeeCode));
+      const snapshot = await getDocs(q);
+      const leaves: any[] = [];
+      snapshot.forEach((d) => leaves.push({ id: d.id, ...d.data() }));
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      // Filter leaves that fall within the given month/year and are not in the future
+      const filtered = leaves.filter((leave) => {
+        const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
+        return dates.some((dateStr) => {
+          const d = new Date(dateStr);
+          return d.getMonth() + 1 === month && d.getFullYear() === year && d <= today;
+        });
+      });
+      setAttendanceLeaves(filtered);
+    } catch (e) {
+      console.error('Error fetching attendance leaves:', e);
+    }
+  };
+
   const handleViewAttendanceClick = async (employee: Employee) => {
     if (!employee.employeeCode) return;
     const currentMonth = new Date().getMonth() + 1;
@@ -221,7 +246,9 @@ export const EmployeesPage: React.FC = () => {
     setAttendanceModalOpen(true);
     setAttendanceLoading(true);
     setAttendancePunches([]);
+    setAttendanceLeaves([]);
     fetchAttendanceShifts(employee);
+    fetchAttendanceLeavesForMonth(employee, currentMonth, currentYear);
     try {
       const rawPunchesRef = collection(db, 'rawPunches');
       const q = query(
@@ -276,6 +303,7 @@ export const EmployeesPage: React.FC = () => {
     if (attendanceEmployee) {
       fetchAttendanceForMonth(attendanceEmployee, newMonth, newYear);
       fetchAttendanceShifts(attendanceEmployee);
+      fetchAttendanceLeavesForMonth(attendanceEmployee, newMonth, newYear);
     }
   };
 
@@ -284,6 +312,7 @@ export const EmployeesPage: React.FC = () => {
     setAttendanceEmployee(null);
     setAttendancePunches([]);
     setEmployeeAttendanceShifts([]);
+    setAttendanceLeaves([]);
   };
 
   const fetchLeavesForEmployee = async (employee: Employee) => {
@@ -469,10 +498,23 @@ export const EmployeesPage: React.FC = () => {
     try {
       const db = getFirestore();
       const shiftsRef = collection(db, 'shifts');
-      const q = query(shiftsRef, where('employeeCode', '==', employee.employeeCode));
-      const snapshot = await getDocs(q);
+      const snapshot = await getDocs(shiftsRef);
       const shifts: any[] = [];
-      snapshot.forEach((doc) => shifts.push({ id: doc.id, ...doc.data() }));
+      const empCode = (employee.employeeCode ?? '').trim().toLowerCase();
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const employees: any[] = data.employees ?? [];
+        const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
+        if (entry) {
+          shifts.push({
+            id: doc.id,
+            startTime: data.startTime,
+            endTime: data.endTime,
+            fromDate: entry.fromDate ?? '',
+            toDate: entry.toDate ?? '',
+          });
+        }
+      });
       setEmployeeAttendanceShifts(shifts);
     } catch (error) {
       console.error('Error fetching attendance shifts:', error);
@@ -482,6 +524,12 @@ export const EmployeesPage: React.FC = () => {
   const findShiftForDate = (dateStr: string, shifts: any[]) => {
     const date = new Date(dateStr);
     return shifts.find((shift) => {
+      // If no date range is specified, the shift applies to all dates
+      if (!shift.fromDate && !shift.toDate) return true;
+      // If only one date is specified, check that specific date
+      if (shift.fromDate && !shift.toDate) return dateStr === shift.fromDate;
+      if (!shift.fromDate && shift.toDate) return dateStr === shift.toDate;
+      // If both dates are specified, check the range
       const fromDate = new Date(shift.fromDate);
       const toDate = new Date(shift.toDate);
       return date >= fromDate && date <= toDate;
@@ -1097,9 +1145,16 @@ export const EmployeesPage: React.FC = () => {
                 <div className="space-y-3">
                   {(() => {
                     const days = groupedAttendance();
-                    return days.map(({ date, punches }, dayIdx) => (
-                    <div key={date} className="border border-secondary-200 rounded-lg overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-2 bg-secondary-50">
+                    return days.map(({ date, punches }, dayIdx) => {
+                      // Check if this date also has a leave record
+                      const dayLeave = attendanceLeaves.find((leave) => {
+                        const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
+                        return dates.includes(date);
+                      });
+                      return (
+                    <React.Fragment key={date}>
+                      <div className={`border border-secondary-200 rounded-lg overflow-hidden ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
+                      <div className={`flex items-center justify-between px-4 py-2 ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
                         <span className="text-sm font-semibold text-secondary-800">
                           {formatDisplayDate(punches[0].logDate)}
                         </span>
@@ -1134,22 +1189,20 @@ export const EmployeesPage: React.FC = () => {
                               const diff = punchMinutes - shiftStart;
                               if (diff > 0) {
                                 shiftIndicator = <span className="text-xs text-red-500 font-medium">Late by {formatMinutesDiff(diff)}</span>;
-                              } else if (diff < 0) {
-                                shiftIndicator = <span className="text-xs text-green-500 font-medium">Early by {formatMinutesDiff(-diff)}</span>;
                               }
+                              // Removed "Early by" for IN punches
                             } else if (punch.direction === 'out') {
                               const shiftEnd = getShiftTimeInMinutes(shift.endTime);
                               const diff = shiftEnd - punchMinutes;
                               if (diff > 0) {
                                 shiftIndicator = <span className="text-xs text-orange-500 font-medium">Early out by {formatMinutesDiff(diff)}</span>;
-                              } else if (diff < 0) {
-                                shiftIndicator = <span className="text-xs text-blue-500 font-medium">Late out by {formatMinutesDiff(-diff)}</span>;
                               }
+                              // Removed "Late out by" for OUT punches
                             }
                           }
 
                           return (
-                          <div key={punch.id} className="flex items-center justify-between px-4 py-2">
+                          <div key={punch.id} className={`flex items-center justify-between px-4 py-2 ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
                             <div className="flex flex-wrap items-center gap-2 w-32">
                               {punch.direction === 'in' ? (
                                 <span className="flex items-center gap-1 text-sm font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full">
@@ -1164,10 +1217,10 @@ export const EmployeesPage: React.FC = () => {
                                   {punch.direction || '—'}
                                 </span>
                               )}
-                              {duration !== null && duration > 0 && (
-                                <span className="text-sm text-blue-500">{formatDuration(duration)}</span>
-                              )}
                               {shiftIndicator}
+                              {duration !== null && duration > 0 && (
+                                <span className="text-sm text-blue-500">Duration: {formatDuration(duration)}</span>
+                              )}
                             </div>
                             <span className={`text-base font-mono ${punch.direction === 'in' ? 'text-green-600' : punch.direction === 'out' ? 'text-red-500' : 'text-secondary-700'}`}>{formatTime(punch.logDate)}</span>
                             <span className="text-sm text-secondary-400">Device {punch.deviceId ?? '—'}</span>
@@ -1176,7 +1229,51 @@ export const EmployeesPage: React.FC = () => {
                         })}
                       </div>
                     </div>
-                  ));
+                    {dayLeave && (
+                      <div className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50">
+                        <div className="flex items-center justify-between px-4 py-2 bg-purple-50">
+                          <span className="text-sm font-semibold text-secondary-800">{formatDisplayDate(punches[0].logDate)}</span>
+                          <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
+                        </div>
+                        <div className="px-4 py-2">
+                          <p className="text-xs text-purple-700">{dayLeave.reason || 'Leave'}</p>
+                        </div>
+                      </div>
+                    )}
+                    </React.Fragment>
+                    );
+                    });
+                  })()}
+                  {/* Leave-only days (no punch records) */}
+                  {(() => {
+                    const leaveDateSet = new Set<string>();
+                    attendanceLeaves.forEach((leave) => {
+                      const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
+                      dates.forEach((d) => leaveDateSet.add(d));
+                    });
+                    const punchDateSet = new Set(groupedAttendance().map((d) => d.date));
+                    const leaveDatesWithNoPunch = Array.from(leaveDateSet)
+                      .filter((d) => !punchDateSet.has(d))
+                      .filter((d) => {
+                        const date = new Date(d);
+                        return date.getMonth() + 1 === attendanceMonth && date.getFullYear() === attendanceYear;
+                      })
+                      .sort((a, b) => b.localeCompare(a));
+                    return leaveDatesWithNoPunch.map((dateStr) => {
+                      const leave = attendanceLeaves.find((l) => (l.dates ?? [l.fromDate]).includes(dateStr));
+                      const displayDate = new Date(dateStr).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+                      return (
+                        <div key={`leave-${dateStr}`} className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50">
+                          <div className="flex items-center justify-between px-4 py-2 bg-purple-50">
+                            <span className="text-sm font-semibold text-secondary-800">{displayDate}</span>
+                            <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
+                          </div>
+                          <div className="px-4 py-2">
+                            <p className="text-xs text-purple-700">{leave?.reason || 'Leave'}</p>
+                          </div>
+                        </div>
+                      );
+                    });
                   })()}
                 </div>
               )}
