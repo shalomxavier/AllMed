@@ -1,40 +1,21 @@
-import { format, isToday, isYesterday, isThisWeek } from 'date-fns';
 import type { WhatsAppConversation } from '@/types/index';
+import { StatusBadge } from '@/pages/DMS/components/StatusBadge';
+import type { EnquiryStatus } from '@/pages/DMS/types';
 
 interface ConversationListProps {
   conversations: WhatsAppConversation[];
   activeConversationId: string | null;
   onSelectConversation: (conversationId: string) => void;
+  enquiryStatuses?: Record<string, EnquiryStatus>;
+  followUpDates?: Record<string, Date>;
 }
-
-const formatMessageTime = (date: Date | { toDate?: () => Date } | null | undefined): string => {
-  if (!date) return '';
-
-  // Handle Firestore Timestamp object
-  const jsDate = typeof date === 'object' && 'toDate' in date && typeof date.toDate === 'function'
-    ? date.toDate()
-    : date as Date;
-
-  if (!(jsDate instanceof Date) || isNaN(jsDate.getTime())) {
-    return '';
-  }
-
-  if (isToday(jsDate)) {
-    return format(jsDate, 'h:mm a');
-  }
-  if (isYesterday(jsDate)) {
-    return 'Yesterday';
-  }
-  if (isThisWeek(jsDate)) {
-    return format(jsDate, 'EEEE');
-  }
-  return format(jsDate, 'MM/dd/yyyy');
-};
 
 export const ConversationList: React.FC<ConversationListProps> = ({
   conversations,
   activeConversationId,
   onSelectConversation,
+  enquiryStatuses = {},
+  followUpDates = {},
 }) => {
   if (conversations.length === 0) {
     return (
@@ -56,7 +37,6 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         const { contact, id } = conversation;
         const isActive = id === activeConversationId;
         const hasUnread = contact.unreadCount > 0;
-        const messageTime = contact.lastMessageTime;
         const deliveryStatus = contact.deliveryStatus;
 
         // Determine background color based on priority: unread > delivery status
@@ -121,11 +101,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                 <h4 className={`font-medium truncate ${hasUnread ? 'text-secondary-900' : 'text-secondary-700'}`}>
                   {contact.name || contact.phoneNumber}
                 </h4>
-                {messageTime && (
-                  <span className={`text-xs flex-shrink-0 ${hasUnread ? 'text-green-600 font-medium' : 'text-secondary-600'}`}>
-                    {formatMessageTime(messageTime)}
-                  </span>
-                )}
+                <StatusBadge
+                  status={enquiryStatuses[id] || 'New'}
+                  showFollowUpDate={true}
+                  followUpDate={followUpDates[id]}
+                />
               </div>
 
               <div className="flex items-center gap-2 mt-0.5">
