@@ -1015,53 +1015,49 @@ export const EmployeesPage: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="flex flex-wrap gap-4">
             {filteredEmployees.map((employee) => (
               <div
                 key={employee.id}
-                className="card p-5 hover:shadow-md transition-shadow"
+                className="bg-white rounded-xl p-4 w-[300px] h-[200px] shrink-0 flex flex-col justify-between border border-[#ff700d] shadow-[0_2px_8px_rgba(255,112,13,0.15)] hover:shadow-[0_4px_16px_rgba(255,112,13,0.35)] transition-shadow"
               >
-                <div className="flex items-start mb-3">
-                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Users className="w-6 h-6 text-blue-600" />
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                    <Users className="w-5 h-5 text-[#ff700d]" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-secondary-900 truncate">
+                      {employee.employeeName || 'Unknown'}
+                    </h3>
+                    <div className="flex flex-wrap gap-x-3 text-xs text-secondary-500 mt-0.5">
+                      {employee.employeeId && <span><span className="font-medium">ID:</span> {employee.employeeId}</span>}
+                      {employee.employeeCodeInDevice && <span><span className="font-medium">Code:</span> {employee.employeeCodeInDevice}</span>}
+                    </div>
                   </div>
                 </div>
-                <h3 className="font-semibold text-secondary-900 mb-1">
-                  {employee.employeeName || 'Unknown'}
-                </h3>
-                <div className="space-y-1 text-sm text-secondary-600">
-                  {employee.employeeId && (
-                    <p>
-                      <span className="font-medium">ID:</span> {employee.employeeId}
-                    </p>
-                  )}
-                  {employee.employeeCodeInDevice && (
-                    <p>
-                      <span className="font-medium">Device Code:</span> {employee.employeeCodeInDevice}
-                    </p>
-                  )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleShiftsClick(employee)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                  >
+                    <Clock size={13} />
+                    Shifts
+                  </button>
+                  <button
+                    onClick={() => handleViewAttendanceClick(employee)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+                  >
+                    <Eye size={13} />
+                    Attendance
+                  </button>
+                  <button
+                    onClick={() => handleLeaveClick(employee)}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+                  >
+                    <Umbrella size={13} />
+                    Leave
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleShiftsClick(employee)}
-                  className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  <Clock size={16} />
-                  Shifts
-                </button>
-                <button
-                  onClick={() => handleViewAttendanceClick(employee)}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-                >
-                  <Eye size={16} />
-                  View Attendance
-                </button>
-                <button
-                  onClick={() => handleLeaveClick(employee)}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
-                >
-                  <Umbrella size={16} />
-                  Leave / Week Off
-                </button>
               </div>
             ))}
           </div>
@@ -1145,133 +1141,131 @@ export const EmployeesPage: React.FC = () => {
                 <div className="space-y-3">
                   {(() => {
                     const days = groupedAttendance();
-                    return days.map(({ date, punches }, dayIdx) => {
-                      // Check if this date also has a leave record
+                    const punchDateSet = new Set(days.map((d) => d.date));
+
+                    // Collect leave-only dates (no punch) for this month
+                    const leaveDateSet = new Set<string>();
+                    attendanceLeaves.forEach((leave) => {
+                      const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
+                      dates.forEach((d) => {
+                        const date = new Date(d);
+                        if (date.getMonth() + 1 === attendanceMonth && date.getFullYear() === attendanceYear && !punchDateSet.has(d)) {
+                          leaveDateSet.add(d);
+                        }
+                      });
+                    });
+
+                    // Build unified sorted list of entries
+                    type Entry = { date: string; type: 'punch'; punches: RawPunch[]; dayIdx: number } | { date: string; type: 'leave-only' };
+                    const entries: Entry[] = [
+                      ...days.map(({ date, punches }, dayIdx) => ({ date, type: 'punch' as const, punches, dayIdx })),
+                      ...Array.from(leaveDateSet).map((date) => ({ date, type: 'leave-only' as const })),
+                    ].sort((a, b) => b.date.localeCompare(a.date));
+
+                    return entries.map((entry) => {
+                      if (entry.type === 'leave-only') {
+                        const leave = attendanceLeaves.find((l) => (l.dates ?? [l.fromDate]).includes(entry.date));
+                        const displayDate = new Date(entry.date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+                        return (
+                          <div key={`leave-${entry.date}`} className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50">
+                            <div className="flex items-center justify-between px-4 py-2 bg-purple-50">
+                              <span className="text-sm font-semibold text-secondary-800">{displayDate}</span>
+                              <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
+                            </div>
+                            <div className="px-4 py-2">
+                              <p className="text-xs text-purple-700">{leave?.reason || 'Leave'}</p>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const { date, punches, dayIdx } = entry;
                       const dayLeave = attendanceLeaves.find((leave) => {
                         const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
                         return dates.includes(date);
                       });
                       return (
-                    <React.Fragment key={date}>
-                      <div className={`border border-secondary-200 rounded-lg overflow-hidden ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
-                      <div className={`flex items-center justify-between px-4 py-2 ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
-                        <span className="text-sm font-semibold text-secondary-800">
-                          {formatDisplayDate(punches[0].logDate)}
-                        </span>
-                      </div>
-                      <div className="divide-y divide-secondary-100">
-                        {punches.map((punch, idx) => {
-                          let lastIn: RawPunch | undefined = undefined;
-                          if (punch.direction === 'out') {
-                            lastIn = punches.slice(idx + 1).find(p => p.direction === 'in');
-                            if (!lastIn && dayIdx < days.length - 1) {
-                              const nextDayPunches = days[dayIdx + 1].punches;
-                              lastIn = nextDayPunches.find(p => p.direction === 'in');
-                            }
-                          }
-                          const duration = lastIn
-                            ? (() => { const inD = toDate(lastIn!.logDate); const outD = toDate(punch.logDate); return inD && outD ? outD.getTime() - inD.getTime() : null; })()
-                            : null;
-
-                          let shift = findShiftForDate(date, employeeAttendanceShifts);
-                          if (punch.direction === 'out' && !shift) {
-                            const prevDate = new Date(date);
-                            prevDate.setDate(prevDate.getDate() - 1);
-                            const prevDateStr = prevDate.toISOString().split('T')[0];
-                            shift = findShiftForDate(prevDateStr, employeeAttendanceShifts);
-                          }
-
-                          const punchMinutes = getPunchTimeInMinutes(punch.logDate);
-                          let shiftIndicator: React.ReactNode = null;
-                          if (shift && punchMinutes !== null) {
-                            if (punch.direction === 'in') {
-                              const shiftStart = getShiftTimeInMinutes(shift.startTime);
-                              const diff = punchMinutes - shiftStart;
-                              if (diff > 0) {
-                                shiftIndicator = <span className="text-xs text-red-500 font-medium">Late by {formatMinutesDiff(diff)}</span>;
-                              }
-                              // Removed "Early by" for IN punches
-                            } else if (punch.direction === 'out') {
-                              const shiftEnd = getShiftTimeInMinutes(shift.endTime);
-                              const diff = shiftEnd - punchMinutes;
-                              if (diff > 0) {
-                                shiftIndicator = <span className="text-xs text-orange-500 font-medium">Early out by {formatMinutesDiff(diff)}</span>;
-                              }
-                              // Removed "Late out by" for OUT punches
-                            }
-                          }
-
-                          return (
-                          <div key={punch.id} className={`flex items-center justify-between px-4 py-2 ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
-                            <div className="flex flex-wrap items-center gap-2 w-32">
-                              {punch.direction === 'in' ? (
-                                <span className="flex items-center gap-1 text-sm font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full">
-                                  <LogIn size={14} /> IN
-                                </span>
-                              ) : punch.direction === 'out' ? (
-                                <span className="flex items-center gap-1 text-sm font-medium text-red-700 bg-red-50 px-2 py-1 rounded-full">
-                                  <LogOut size={14} /> OUT
-                                </span>
-                              ) : (
-                                <span className="text-sm font-medium text-secondary-500 bg-secondary-100 px-2 py-1 rounded-full">
-                                  {punch.direction || '—'}
-                                </span>
-                              )}
-                              {shiftIndicator}
-                              {duration !== null && duration > 0 && (
-                                <span className="text-sm text-blue-500">Duration: {formatDuration(duration)}</span>
+                        <React.Fragment key={date}>
+                          <div className={`border border-secondary-200 rounded-lg overflow-hidden ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
+                            <div className={`flex items-center justify-between px-4 py-2 ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
+                              <span className="text-sm font-semibold text-secondary-800">
+                                {formatDisplayDate(punches[0].logDate)}
+                              </span>
+                              {dayLeave && (
+                                <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
                               )}
                             </div>
-                            <span className={`text-base font-mono ${punch.direction === 'in' ? 'text-green-600' : punch.direction === 'out' ? 'text-red-500' : 'text-secondary-700'}`}>{formatTime(punch.logDate)}</span>
-                            <span className="text-sm text-secondary-400">Device {punch.deviceId ?? '—'}</span>
+                            <div className="divide-y divide-secondary-100">
+                              {punches.map((punch, idx) => {
+                                let lastIn: RawPunch | undefined = undefined;
+                                if (punch.direction === 'out') {
+                                  lastIn = punches.slice(idx + 1).find(p => p.direction === 'in');
+                                  if (!lastIn && dayIdx < days.length - 1) {
+                                    const nextDayPunches = days[dayIdx + 1].punches;
+                                    lastIn = nextDayPunches.find(p => p.direction === 'in');
+                                  }
+                                }
+                                const duration = lastIn
+                                  ? (() => { const inD = toDate(lastIn!.logDate); const outD = toDate(punch.logDate); return inD && outD ? outD.getTime() - inD.getTime() : null; })()
+                                  : null;
+
+                                let shift = findShiftForDate(date, employeeAttendanceShifts);
+                                if (punch.direction === 'out' && !shift) {
+                                  const prevDate = new Date(date);
+                                  prevDate.setDate(prevDate.getDate() - 1);
+                                  const prevDateStr = prevDate.toISOString().split('T')[0];
+                                  shift = findShiftForDate(prevDateStr, employeeAttendanceShifts);
+                                }
+
+                                const punchMinutes = getPunchTimeInMinutes(punch.logDate);
+                                let shiftIndicator: React.ReactNode = null;
+                                if (shift && punchMinutes !== null) {
+                                  if (punch.direction === 'in') {
+                                    const shiftStart = getShiftTimeInMinutes(shift.startTime);
+                                    const diff = punchMinutes - shiftStart;
+                                    if (diff > 0) {
+                                      shiftIndicator = <span className="text-xs text-red-500 font-medium">Late by {formatMinutesDiff(diff)}</span>;
+                                    }
+                                    // Removed "Early by" for IN punches
+                                  } else if (punch.direction === 'out') {
+                                    const shiftEnd = getShiftTimeInMinutes(shift.endTime);
+                                    const diff = shiftEnd - punchMinutes;
+                                    if (diff > 0) {
+                                      shiftIndicator = <span className="text-xs text-orange-500 font-medium">Early out by {formatMinutesDiff(diff)}</span>;
+                                    }
+                                    // Removed "Late out by" for OUT punches
+                                  }
+                                }
+
+                                return (
+                                  <div key={punch.id} className={`flex items-center justify-between px-4 py-2 ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
+                                    <div className="flex flex-wrap items-center gap-2 w-32">
+                                      {punch.direction === 'in' ? (
+                                        <span className="flex items-center gap-1 text-sm font-medium text-green-700 bg-green-50 px-2 py-1 rounded-full">
+                                          <LogIn size={14} /> IN
+                                        </span>
+                                      ) : punch.direction === 'out' ? (
+                                        <span className="flex items-center gap-1 text-sm font-medium text-red-700 bg-red-50 px-2 py-1 rounded-full">
+                                          <LogOut size={14} /> OUT
+                                        </span>
+                                      ) : (
+                                        <span className="text-sm font-medium text-secondary-500 bg-secondary-100 px-2 py-1 rounded-full">
+                                          {punch.direction || '—'}
+                                        </span>
+                                      )}
+                                      {shiftIndicator}
+                                      {duration !== null && duration > 0 && (
+                                        <span className="text-sm text-blue-500">Duration: {formatDuration(duration)}</span>
+                                      )}
+                                    </div>
+                                    <span className={`text-base font-mono ${punch.direction === 'in' ? 'text-green-600' : punch.direction === 'out' ? 'text-red-500' : 'text-secondary-700'}`}>{formatTime(punch.logDate)}</span>
+                                    <span className="text-sm text-secondary-400">Device {punch.deviceId ?? '—'}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    {dayLeave && (
-                      <div className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50">
-                        <div className="flex items-center justify-between px-4 py-2 bg-purple-50">
-                          <span className="text-sm font-semibold text-secondary-800">{formatDisplayDate(punches[0].logDate)}</span>
-                          <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
-                        </div>
-                        <div className="px-4 py-2">
-                          <p className="text-xs text-purple-700">{dayLeave.reason || 'Leave'}</p>
-                        </div>
-                      </div>
-                    )}
-                    </React.Fragment>
-                    );
-                    });
-                  })()}
-                  {/* Leave-only days (no punch records) */}
-                  {(() => {
-                    const leaveDateSet = new Set<string>();
-                    attendanceLeaves.forEach((leave) => {
-                      const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-                      dates.forEach((d) => leaveDateSet.add(d));
-                    });
-                    const punchDateSet = new Set(groupedAttendance().map((d) => d.date));
-                    const leaveDatesWithNoPunch = Array.from(leaveDateSet)
-                      .filter((d) => !punchDateSet.has(d))
-                      .filter((d) => {
-                        const date = new Date(d);
-                        return date.getMonth() + 1 === attendanceMonth && date.getFullYear() === attendanceYear;
-                      })
-                      .sort((a, b) => b.localeCompare(a));
-                    return leaveDatesWithNoPunch.map((dateStr) => {
-                      const leave = attendanceLeaves.find((l) => (l.dates ?? [l.fromDate]).includes(dateStr));
-                      const displayDate = new Date(dateStr).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
-                      return (
-                        <div key={`leave-${dateStr}`} className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50">
-                          <div className="flex items-center justify-between px-4 py-2 bg-purple-50">
-                            <span className="text-sm font-semibold text-secondary-800">{displayDate}</span>
-                            <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
-                          </div>
-                          <div className="px-4 py-2">
-                            <p className="text-xs text-purple-700">{leave?.reason || 'Leave'}</p>
-                          </div>
-                        </div>
+                        </React.Fragment>
                       );
                     });
                   })()}
@@ -2225,6 +2219,12 @@ export const EmployeesPage: React.FC = () => {
                         <form onSubmit={handleSaveLeave} className="space-y-3 border-t border-secondary-200 pt-3">
                           <p className="text-sm font-medium text-secondary-700">Select Leave Dates</p>
 
+                          {weekOffDays.length > 0 && (
+                            <p className="text-xs text-secondary-600">
+                              Week off: {weekOffDays.join(', ')}{existingWeekOff ? ' (saved)' : ''}
+                            </p>
+                          )}
+
                           {/* Custom Calendar */}
                           {(() => {
                             const MONTH_NAMES_CAL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -2248,14 +2248,17 @@ export const EmployeesPage: React.FC = () => {
                                     if (!day) return <div key={i} />;
                                     const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                                     const selected = selectedLeaveDates.includes(dateStr);
+                                    const dayName = new Date(calendarYear, calendarMonth, day).toLocaleDateString('en-US', { weekday: 'long' });
+                                    const isWeekOff = weekOffDays.includes(dayName) || weekOffDays.includes(dayName.toLowerCase());
                                     return (
                                       <button
                                         key={i}
                                         type="button"
                                         onClick={() => setSelectedLeaveDates(prev => selected ? prev.filter(d => d !== dateStr) : [...prev, dateStr])}
                                         className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                          selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
+                                          selected ? 'bg-purple-600 text-white font-semibold' : isWeekOff ? 'bg-green-100 text-green-700 font-semibold' : 'hover:bg-purple-100 text-secondary-800'
                                         }`}
+                                        title={isWeekOff ? 'Week off' : undefined}
                                       >
                                         {day}
                                       </button>

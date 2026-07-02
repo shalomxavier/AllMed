@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Palmtree, TrendingDown, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -414,13 +414,13 @@ export const LeavesPage: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-wrap gap-3 content-start">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
+          <div className="w-full flex items-center justify-center py-16">
             <div className="w-7 h-7 border-2 border-secondary-300 border-t-purple-600 rounded-full animate-spin" />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-full flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
               <Umbrella className="w-8 h-8 text-purple-400" />
             </div>
@@ -442,7 +442,7 @@ export const LeavesPage: React.FC = () => {
               const typeCount = leaveCountsByEmployee.get(empCode)?.get(typeKey) ?? 0;
               const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
               return (
-                <div key={record.data.id} className="bg-white border border-secondary-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
+                <div key={record.data.id} className="bg-white border border-purple-700 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow w-[300px] h-[200px] shrink-0" onClick={() => {
                           const leaveDetails = leaves
                             .filter((l) => l.employeeCode === empCode)
                             .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
@@ -480,24 +480,25 @@ export const LeavesPage: React.FC = () => {
                           });
                           setModalOpen(true);
                         }}>
-                  <div className="px-4 py-3">
+                  <div className="p-3 h-full">
                     <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2">
-                          <p className="text-base font-semibold text-blue-700">{data.employeeName || '—'}</p>
-                          <span className="text-xs text-secondary-500">{data.employeeCode}</span>
-                        </div>
-                        <p className="text-sm font-semibold text-secondary-800">
+                        <p className="text-sm font-semibold text-purple-700 inline-flex items-center gap-1">
+                          <Calendar size={13} />
                           {dates.length === 1
                             ? formatDate(dates[0])
                             : `${formatDate(dates[0])} — ${formatDate(dates[dates.length - 1])}`}
                           {dates.length > 1 && <span className="text-xs text-secondary-500 ml-1">({dates.length} days)</span>}
                         </p>
+                        <div className="flex flex-col gap-0.5">
+                          <p className="text-sm font-semibold text-black leading-tight">{data.employeeName || '—'}</p>
+                          <span className="text-xs text-secondary-500">{data.employeeCode}</span>
+                        </div>
                         {data.reason && (
                           <span className={`text-xs font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full self-start`}>{data.reason}</span>
                         )}
                         <div className="flex flex-col gap-1.5 mt-1">
                           <span
-                            className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-purple-100 transition-colors self-start"
+                            className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-purple-100 transition-colors self-start inline-flex items-center gap-1"
                             onClick={(e) => {
                               e.stopPropagation();
                               const details = leaves
@@ -536,10 +537,10 @@ export const LeavesPage: React.FC = () => {
                               setModalOpen(true);
                             }}
                           >
-                            <strong>{typeCount}</strong> {typeKey} in last 30 days
+                            <Palmtree size={12} /><strong>{typeCount}</strong> {typeKey} in last 30 days
                           </span>
                           <span
-                            className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-pink-100 transition-colors self-start"
+                            className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-pink-100 transition-colors self-start inline-flex items-center gap-1"
                             onClick={(e) => {
                               e.stopPropagation();
                               const leaveDetails = leaves
@@ -580,7 +581,7 @@ export const LeavesPage: React.FC = () => {
                               setModalOpen(true);
                             }}
                           >
-                            <strong>{totalCount}</strong> total days off in last 30 days
+                            <TrendingDown size={12} /><strong>{totalCount}</strong> total days off in last 30 days
                           </span>
                         </div>
                     </div>
@@ -591,7 +592,7 @@ export const LeavesPage: React.FC = () => {
               const empCode = data.employeeCode ?? '';
               const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
               return (
-                <div key={record.data.id} className="bg-white border border-secondary-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
+                <div key={record.data.id} className="bg-white border border-purple-700 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow w-[300px] h-[200px] shrink-0" onClick={() => {
                           const leaveDetails = leaves
                             .filter((l) => l.employeeCode === empCode)
                             .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
@@ -617,11 +618,11 @@ export const LeavesPage: React.FC = () => {
                           });
                           setModalOpen(true);
                         }}>
-                  <div className="px-4 py-3">
+                  <div className="p-3 h-full">
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <p className="text-base font-semibold text-blue-700">{data.employeeName || '—'}</p>
+                        <div className="flex flex-col gap-0.5 mb-2">
+                          <p className="text-sm font-semibold text-blue-700 leading-tight">{data.employeeName || '—'}</p>
                           <span className="text-xs text-secondary-500">{data.employeeCode}</span>
                         </div>
                         <p className="text-xs font-semibold text-secondary-700 mb-2">Week Off Days</p>
