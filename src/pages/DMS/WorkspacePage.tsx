@@ -7,6 +7,7 @@ import { LostReasonModal } from './components/LostReasonModal';
 import { useToast } from './components/Toast';
 import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { updateDeliveryStatus } from '@/services/whatsapp';
+import { enquiriesService } from '@/services/firestore/enquiriesService';
 import type { EnquiryStatus } from './types';
 import type { LostReason as LostReasonType } from './constants/LOST_REASONS';
 
@@ -112,6 +113,28 @@ export const WorkspacePage: React.FC = () => {
         'not_delivered',
         lostReasonModalData.lostReason === 'Other' ? lostReasonModalData.otherReason : lostReasonModalData.lostReason
       );
+
+      // Save internal notes to enquiries collection
+      if (lostReasonModalData.internalNotes) {
+        try {
+          const enquiry = await enquiriesService.getEnquiryByConversationId(activeConversation.id);
+          if (enquiry) {
+            await enquiriesService.updateNotes(enquiry.enquiryId, lostReasonModalData.internalNotes);
+          } else {
+            // Create enquiry if it doesn't exist
+            await enquiriesService.createEnquiry({
+              conversationId: activeConversation.id,
+              status: 'Lost',
+              lostReason: lostReasonModalData.lostReason as any,
+              otherReason: lostReasonModalData.otherReason,
+              notes: lostReasonModalData.internalNotes,
+            });
+          }
+        } catch (err) {
+          console.error('Error saving internal notes:', err);
+        }
+      }
+
       showToast('success', 'Customer marked as Lost');
     } catch (err) {
       console.error('Error updating delivery status:', err);

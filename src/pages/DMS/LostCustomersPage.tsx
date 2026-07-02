@@ -5,17 +5,20 @@ import { LostCustomerList } from './components/LostCustomerList';
 import { LostCustomerDetail } from './components/LostCustomerDetail';
 import { subscribeToLostCustomers } from '@/services/lostCustomerService';
 import { subscribeToLostReasonDistribution } from '@/services/analyticsService';
+import { subscribeToMessages } from '@/services/whatsapp';
 import type { LostCustomer } from './lostCustomerTypes';
 import type { LostReasonCount } from '@/services/analyticsService';
+import type { WhatsAppMessage } from '@/types/index';
 
 export const LostCustomersPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [showMobileChat, setShowMobileChat] = useState(false);
-  const [showDetailPanel, setShowDetailPanel] = useState(true);
+  const [showMobileDetail, setShowMobileDetail] = useState(false);
   const [lostCustomers, setLostCustomers] = useState<LostCustomer[]>([]);
   const [lostReasonDistribution, setLostReasonDistribution] = useState<LostReasonCount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const selectedCustomer = lostCustomers.find((c) => c.id === selectedCustomerId) || null;
@@ -54,12 +57,34 @@ export const LostCustomersPage: React.FC = () => {
     };
   }, []);
 
+  // Subscribe to real-time messages for the selected conversation
+  useEffect(() => {
+    if (!selectedCustomer) {
+      setMessages([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToMessages(
+      selectedCustomer.conversationId,
+      (updatedMessages) => {
+        setMessages(updatedMessages);
+      },
+      (error) => {
+        console.error('[LostCustomersPage] Error loading messages:', error);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedCustomer?.conversationId]);
+
   // Scroll to bottom when messages change
   useEffect(() => {
     if (messagesEndRef.current && selectedCustomer) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [selectedCustomerId]);
+  }, [messages, selectedCustomer?.conversationId]);
 
   const handleSelectCustomer = (customerId: string) => {
     setSelectedCustomerId(customerId);
@@ -68,6 +93,7 @@ export const LostCustomersPage: React.FC = () => {
 
   const handleBackToList = () => {
     setShowMobileChat(false);
+    setShowMobileDetail(false);
   };
 
   const handleReopenFollowUp = (customerId: string) => {
@@ -123,42 +149,30 @@ export const LostCustomersPage: React.FC = () => {
                   unreadCount: 0,
                   isArchived: false,
                   labels: [],
+                  deliveryStatus: selectedCustomer.deliveryStatus,
                 }}
                 onBack={handleBackToList}
+                enquiryStatus="Lost"
               />
 
               {/* Messages - Read Only */}
               <div className="flex-1 overflow-y-auto p-4 bg-secondary-50">
-                {selectedCustomer.messages.length === 0 ? (
+                {messages.length === 0 ? (
                   <div className="text-center text-secondary-500 py-8">
                     <p className="text-sm">No messages available</p>
                   </div>
                 ) : (
-                  selectedCustomer.messages.map((message) => (
-                    <MessageBubble
-                      key={message.id}
-                      message={{
-                        id: message.id,
-                        conversationId: selectedCustomer.conversationId,
-                        senderId: message.isIncoming ? 'customer' : 'store',
-                        senderName: message.senderName,
-                        senderPhone: selectedCustomer.storeWhatsAppNumber,
-                        content: message.content,
-                        type: message.type,
-                        timestamp: message.timestamp,
-                        status: 'read',
-                        isIncoming: message.isIncoming,
-                      }}
-                    />
+                  messages.map((message) => (
+                    <MessageBubble key={message.id} message={message} />
                   ))
                 )}
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Disabled Message Input */}
+              {/* Read-only indicator (no message input) */}
               <div className="p-4 bg-white border-t border-secondary-200">
-                <div className="px-4 py-3 bg-secondary-100 rounded-lg text-secondary-500 text-sm">
-                  Read-only mode - Cannot send messages
+                <div className="px-4 py-3 bg-secondary-100 rounded-lg text-secondary-500 text-sm text-center">
+                  Read-only conversation - sending messages is disabled
                 </div>
               </div>
             </>
@@ -178,7 +192,7 @@ export const LostCustomersPage: React.FC = () => {
         </div>
 
         {/* Right Panel - Customer Detail (25%) */}
-        <div className={`w-[25%] flex-shrink-0 flex flex-col card overflow-hidden ${showDetailPanel ? 'hidden xl:flex' : 'hidden'}`}>
+        <div className="w-[25%] flex-shrink-0 hidden xl:flex flex-col card overflow-hidden">
           {selectedCustomer ? (
             <LostCustomerDetail
               customer={selectedCustomer}
@@ -197,8 +211,9 @@ export const LostCustomersPage: React.FC = () => {
         {selectedCustomer && (
           <div className="xl:hidden fixed bottom-4 right-4 z-10">
             <button
-              onClick={() => setShowDetailPanel(!showDetailPanel)}
+              onClick={() => setShowMobileDetail(!showMobileDetail)}
               className="p-3 bg-green-600 text-white rounded-full shadow-lg hover:bg-green-700 transition-colors"
+              aria-label="Toggle enquiry details"
             >
               ℹ️
             </button>
@@ -206,14 +221,15 @@ export const LostCustomersPage: React.FC = () => {
         )}
 
         {/* Mobile Detail Bottom Sheet */}
-        {showDetailPanel && selectedCustomer && (
+        {showMobileDetail && selectedCustomer && (
           <div className="xl:hidden fixed inset-0 z-50 bg-black/50 flex items-end">
             <div className="bg-white w-full max-h-[80vh] rounded-t-2xl overflow-hidden flex flex-col">
               <div className="p-4 border-b border-secondary-200 flex items-center justify-between">
-                <h3 className="font-semibold text-secondary-900">Customer Details</h3>
+                <h3 className="font-semibold text-secondary-900">Enquiry Details</h3>
                 <button
-                  onClick={() => setShowDetailPanel(false)}
+                  onClick={() => setShowMobileDetail(false)}
                   className="p-1 rounded hover:bg-secondary-100"
+                  aria-label="Close details"
                 >
                   ✕
                 </button>

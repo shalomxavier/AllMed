@@ -1,7 +1,8 @@
 import { db } from '@/firebase/firebase';
-import { collection, query, where, onSnapshot, orderBy, type Unsubscribe } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, getDocs, type Unsubscribe } from 'firebase/firestore';
 import type { LostCustomer } from '@/pages/DMS/lostCustomerTypes';
 import type { LostReason } from '@/pages/DMS/types';
+import type { DeliveryStatus } from '@/types/index';
 
 /**
  * Subscribe to lost customers with real-time updates
@@ -21,22 +22,48 @@ export const subscribeToLostCustomers = (
 
   return onSnapshot(
     q,
-    (snapshot) => {
-      const customers: LostCustomer[] = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          conversationId: doc.id,
-          customerName: data.contact?.name || 'Unknown',
-          customerPhone: data.contact?.phoneNumber || 'Unknown',
-          storeWhatsAppNumber: data.businessPhoneNumberId || 'Unknown',
-          storeName: data.storeName || 'Main Store',
-          lostReason: data.contact?.deliveryReason || 'Other',
-          customReason: data.contact?.customReason || undefined,
-          lostDate: data.updatedAt?.toDate() || new Date(),
-          messages: [], // Messages will be loaded separately if needed
-        };
-      });
+    async (snapshot) => {
+      const customers: LostCustomer[] = await Promise.all(
+        snapshot.docs.map(async (doc) => {
+          const data = doc.data();
+          const contact = data.contact || {};
+
+          // Fetch internal notes from enquiries collection
+          let internalNotes: string | undefined = undefined;
+          try {
+            const enquiryQuery = query(
+              collection(db, 'enquiries'),
+              where('conversationId', '==', doc.id)
+            );
+            const enquirySnapshot = await getDocs(enquiryQuery);
+            if (!enquirySnapshot.empty) {
+              const enquiryDoc = enquirySnapshot.docs[0].data();
+              internalNotes = enquiryDoc.notes || undefined;
+            }
+          } catch (err) {
+            console.error('[LostCustomerService] Error fetching enquiry notes:', err);
+          }
+
+          return {
+            id: doc.id,
+            conversationId: doc.id,
+            customerName: contact.name || 'Unknown',
+            customerPhone: contact.phoneNumber || 'Unknown',
+            businessPhoneNumber: data.businessPhoneNumber || data.businessPhoneNumberId || 'Unknown',
+            storeWhatsAppNumber: data.businessPhoneNumberId || data.businessPhoneNumber || 'Unknown',
+            storeName: data.storeName || 'Main Store',
+            deliveryStatus: (contact.deliveryStatus ?? data.deliveryStatus ?? 'not_delivered') as DeliveryStatus,
+            lostReason: (contact.deliveryReason || 'Other') as LostReason,
+            customReason: contact.customReason || data.customReason || undefined,
+            internalNotes,
+            createdAt: data.createdAt?.toDate() || new Date(),
+            updatedAt: data.updatedAt?.toDate() || new Date(),
+            lostDate: data.updatedAt?.toDate() || new Date(),
+            responseTime: contact.responseTime || data.responseTime || undefined,
+            messages: [], // Messages are loaded via subscribeToMessages in the page
+          };
+        })
+      );
 
       callback(customers);
     },
