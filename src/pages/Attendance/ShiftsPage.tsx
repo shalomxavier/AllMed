@@ -281,10 +281,10 @@ export const ShiftsPage: React.FC = () => {
             <p className="text-sm text-secondary-500 max-w-sm">Shifts will appear here once assigned to employees.</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="flex flex-wrap gap-4">
             {slots.map((slot) => (
-              <div key={slot.key} className="bg-white rounded-xl border border-secondary-200 px-5 py-4 flex items-center justify-between gap-4 hover:shadow-md transition-shadow">
-                <div className="flex items-center gap-4 cursor-pointer flex-1" onClick={() => setSelectedSlot(slot)}>
+              <div key={slot.key} className="bg-white rounded-xl border border-secondary-200 p-4 hover:shadow-md transition-shadow w-[200px] h-[200px] shrink-0 flex flex-col justify-between">
+                <div className="flex flex-col gap-3 cursor-pointer flex-1" onClick={() => setSelectedSlot(slot)}>
                   <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
                     <Clock className="w-5 h-5 text-orange-600" />
                   </div>
@@ -295,7 +295,7 @@ export const ShiftsPage: React.FC = () => {
                     <p className="text-xs text-secondary-500 mt-0.5">{slot.count} {slot.count === 1 ? 'employee' : 'employees'}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
                     onClick={() => {
