@@ -129,7 +129,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                       <div className="flex justify-between pt-1 border-t border-secondary-100 mt-1">
                         <span className="text-secondary-500">Updated:</span>
                         <span className="font-medium text-secondary-900">
-                          {new Date(lastEnquiryInfo.updatedAt).toLocaleString()}
+                          {(() => {
+                            const date = new Date(lastEnquiryInfo.updatedAt);
+                            return isNaN(date.getTime()) ? 'N/A' : date.toLocaleString();
+                          })()}
                         </span>
                       </div>
                     )}

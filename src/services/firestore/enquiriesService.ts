@@ -20,14 +20,17 @@ export const enquiriesService = {
   async getEnquiry(enquiryId: string): Promise<EnquiryDocument | null> {
     const docRef = doc(db, 'enquiries', enquiryId);
     const docSnap = await getDoc(docRef);
-    
+
     if (!docSnap.exists()) {
       return null;
     }
-    
+
+    const data = docSnap.data();
     return {
       enquiryId: docSnap.id,
-      ...docSnap.data(),
+      ...data,
+      createdAt: data.createdAt?.toDate?.() || data.createdAt || new Date(),
+      updatedAt: data.updatedAt?.toDate?.() || data.updatedAt || new Date(),
     } as EnquiryDocument;
   },
 
@@ -36,16 +39,19 @@ export const enquiriesService = {
       collection(db, 'enquiries'),
       where('conversationId', '==', conversationId)
     );
-    
+
     const querySnapshot = await getDocs(q);
     if (querySnapshot.empty) {
       return null;
     }
-    
+
     const doc = querySnapshot.docs[0];
+    const data = doc.data();
     return {
       enquiryId: doc.id,
-      ...doc.data(),
+      ...data,
+      createdAt: data.createdAt?.toDate?.() || data.createdAt || new Date(),
+      updatedAt: data.updatedAt?.toDate?.() || data.updatedAt || new Date(),
     } as EnquiryDocument;
   },
 
@@ -119,16 +125,19 @@ export const enquiriesService = {
     callback: (enquiry: EnquiryDocument | null) => void
   ): Unsubscribe {
     const docRef = doc(db, 'enquiries', enquiryId);
-    
+
     return onSnapshot(docRef, (doc) => {
       if (!doc.exists()) {
         callback(null);
         return;
       }
-      
+
+      const data = doc.data();
       callback({
         enquiryId: doc.id,
-        ...doc.data(),
+        ...data,
+        createdAt: data.createdAt?.toDate?.() || data.createdAt || new Date(),
+        updatedAt: data.updatedAt?.toDate?.() || data.updatedAt || new Date(),
       } as EnquiryDocument);
     });
   },
