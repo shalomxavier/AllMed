@@ -21,6 +21,7 @@ export const DashboardPage: React.FC = () => {
 
   // Subscribe to real-time dashboard statistics
   useEffect(() => {
+    setLoading(true);
     const unsubscribe = subscribeToDashboardStats(
       (updatedStats) => {
         setStats(updatedStats);
@@ -29,13 +30,14 @@ export const DashboardPage: React.FC = () => {
       (error) => {
         console.error('Error loading dashboard stats:', error);
         setLoading(false);
-      }
+      },
+      selectedDateRange
     );
 
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [selectedDateRange]);
 
   return (
     <PageContainer>

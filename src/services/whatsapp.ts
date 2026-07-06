@@ -32,10 +32,14 @@ export const subscribeToConversations = (
   callback: (conversations: WhatsAppConversation[]) => void,
   onError?: (error: Error) => void
 ): Unsubscribe => {
+  // Note: we intentionally do NOT orderBy('updatedAt') here, because
+  // `updatedAt` gets bumped by unrelated actions (marking a chat as read,
+  // changing delivery status, etc). Ordering is instead computed client-side
+  // below, based on the actual last-message timestamp, so the list stays in
+  // stable chronological order like real WhatsApp.
   const q = query(
     conversationsRef,
     where('isActive', '==', true),
-    orderBy('updatedAt', 'desc'),
     limit(100)
   );
 
@@ -44,9 +48,10 @@ export const subscribeToConversations = (
     (snapshot) => {
       const conversations = snapshot.docs.map((doc) => {
         const data = doc.data();
-        console.log('[DEBUG] conv raw data:', JSON.stringify({ id: doc.id, lastMessage: data.lastMessage, lastMessageTime: data.lastMessageTime, contact: data.contact }));
         const contact = data.contact || {};
-        const rawLastMsgTime = contact.lastMessageTime ?? data.lastMessageTime;
+        // Fall back to updatedAt if no explicit last-message timestamp is stored,
+        // so the list always shows a timestamp like WhatsApp does.
+        const rawLastMsgTime = contact.lastMessageTime ?? data.lastMessageTime ?? data.updatedAt;
         return {
           id: doc.id,
           contact: {
@@ -62,6 +67,14 @@ export const subscribeToConversations = (
           isActive: data.isActive,
         } as WhatsAppConversation;
       });
+
+      // Sort by actual last-message activity, newest first.
+      conversations.sort((a, b) => {
+        const aTime = a.contact.lastMessageTime ? new Date(a.contact.lastMessageTime).getTime() : 0;
+        const bTime = b.contact.lastMessageTime ? new Date(b.contact.lastMessageTime).getTime() : 0;
+        return bTime - aTime;
+      });
+
       callback(conversations);
     },
     (error) => {
@@ -181,7 +194,6 @@ export const markConversationRead = async (conversationId: string): Promise<void
   await updateDoc(docRef, {
     'contact.unreadCount': 0,
     unreadCount: 0,
-    updatedAt: serverTimestamp(),
   });
 };
 

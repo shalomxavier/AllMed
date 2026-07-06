@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Search } from 'lucide-react';
 import { PageContainer, PageHeader } from '@/components/common';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
+import type { LastEnquiryInfo } from '@/components/whatsapp/ChatHeader';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { LostReasonModal } from './components/LostReasonModal';
 import { useToast } from './components/Toast';
@@ -27,6 +28,7 @@ export const WorkspacePage: React.FC = () => {
   // Local state for enquiry outcome tracking (minimal)
   const [status, setStatus] = useState<EnquiryStatus>('New');
   const [internalNotes, setInternalNotes] = useState('');
+  const [lastEnquiryInfo, setLastEnquiryInfo] = useState<LastEnquiryInfo | null>(null);
 
   // Conversation outcome modal state
   const [showDeliveredConfirmation, setShowDeliveredConfirmation] = useState(false);
@@ -45,6 +47,41 @@ export const WorkspacePage: React.FC = () => {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [activeConversation?.messages]);
+
+  // Fetch last recorded enquiry info (lost reason / internal notes) for the active conversation
+  useEffect(() => {
+    if (!activeConversation) {
+      setLastEnquiryInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    enquiriesService
+      .getEnquiryByConversationId(activeConversation.id)
+      .then((enquiry) => {
+        if (cancelled) return;
+        if (enquiry) {
+          setLastEnquiryInfo({
+            status: enquiry.status,
+            lostReason: enquiry.lostReason,
+            otherReason: enquiry.otherReason,
+            notes: enquiry.notes,
+            updatedAt: enquiry.updatedAt,
+          });
+        } else {
+          setLastEnquiryInfo(null);
+        }
+      })
+      .catch((err) => {
+        console.error('Error fetching last enquiry info:', err);
+        if (!cancelled) setLastEnquiryInfo(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversation?.id]);
 
   // Filter conversations based on search
   const filteredConversations = conversations.filter((conv) => {
@@ -115,24 +152,35 @@ export const WorkspacePage: React.FC = () => {
       );
 
       // Save internal notes to enquiries collection
-      if (lostReasonModalData.internalNotes) {
-        try {
-          const enquiry = await enquiriesService.getEnquiryByConversationId(activeConversation.id);
-          if (enquiry) {
-            await enquiriesService.updateNotes(enquiry.enquiryId, lostReasonModalData.internalNotes);
-          } else {
-            // Create enquiry if it doesn't exist
-            await enquiriesService.createEnquiry({
-              conversationId: activeConversation.id,
-              status: 'Lost',
-              lostReason: lostReasonModalData.lostReason as any,
-              otherReason: lostReasonModalData.otherReason,
-              notes: lostReasonModalData.internalNotes,
-            });
-          }
-        } catch (err) {
-          console.error('Error saving internal notes:', err);
+      try {
+        const enquiry = await enquiriesService.getEnquiryByConversationId(activeConversation.id);
+        if (enquiry) {
+          await enquiriesService.updateEnquiry(enquiry.enquiryId, {
+            status: 'Lost',
+            lostReason: lostReasonModalData.lostReason as LostReasonType,
+            otherReason: lostReasonModalData.otherReason,
+            notes: lostReasonModalData.internalNotes,
+          });
+        } else {
+          // Create enquiry if it doesn't exist
+          await enquiriesService.createEnquiry({
+            conversationId: activeConversation.id,
+            status: 'Lost',
+            lostReason: lostReasonModalData.lostReason as LostReasonType,
+            otherReason: lostReasonModalData.otherReason,
+            notes: lostReasonModalData.internalNotes,
+          });
         }
+
+        setLastEnquiryInfo({
+          status: 'Lost',
+          lostReason: lostReasonModalData.lostReason as LostReasonType,
+          otherReason: lostReasonModalData.otherReason,
+          notes: lostReasonModalData.internalNotes,
+          updatedAt: new Date(),
+        });
+      } catch (err) {
+        console.error('Error saving lost reason / internal notes:', err);
       }
 
       showToast('success', 'Customer marked as Lost');
@@ -188,6 +236,7 @@ export const WorkspacePage: React.FC = () => {
                 enquiryStatus={status}
                 onDelivered={handleDeliveredClick}
                 onNotDelivered={handleNotDeliveredClick}
+                lastEnquiryInfo={lastEnquiryInfo}
               />
 
               {/* Messages */}

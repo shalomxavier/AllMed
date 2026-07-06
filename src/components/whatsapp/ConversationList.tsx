@@ -10,6 +10,33 @@ interface ConversationListProps {
   followUpDates?: Record<string, Date>;
 }
 
+/**
+ * Format a timestamp the same way WhatsApp does in the chat list:
+ * - Today: "14:49" (24-hour time)
+ * - Yesterday: "Yesterday"
+ * - Within the last week: weekday name, e.g. "Wednesday"
+ * - Older: short date, e.g. "20/05/2026"
+ */
+const formatConversationTime = (date?: Date): string => {
+  if (!date) return '';
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - startOfTarget.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+  if (diffDays === 1) {
+    return 'Yesterday';
+  }
+  if (diffDays > 1 && diffDays < 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'long' });
+  }
+  return date.toLocaleDateString('en-GB'); // DD/MM/YYYY
+};
+
 export const ConversationList: React.FC<ConversationListProps> = ({
   conversations,
   activeConversationId,
@@ -101,17 +128,22 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                 <h4 className={`font-medium truncate ${hasUnread ? 'text-secondary-900' : 'text-secondary-700'}`}>
                   {contact.name || contact.phoneNumber}
                 </h4>
-                <StatusBadge
-                  status={enquiryStatuses[id] || 'New'}
-                  showFollowUpDate={true}
-                  followUpDate={followUpDates[id]}
-                />
+                <span className={`text-xs font-medium flex-shrink-0 ${hasUnread ? 'text-green-700 font-semibold' : 'text-secondary-600'}`}>
+                  {formatConversationTime(contact.lastMessageTime)}
+                </span>
               </div>
 
               <div className="flex items-center gap-2 mt-0.5">
-                <p className={`text-sm truncate flex-1 ${hasUnread ? 'text-secondary-900 font-medium' : 'text-secondary-700'}`}>
+                <p className={`text-sm truncate flex-1 ${hasUnread ? 'text-secondary-900 font-medium' : 'text-secondary-800'}`}>
                   {contact.lastMessage || 'No messages yet'}
                 </p>
+                {enquiryStatuses[id] && (
+                  <StatusBadge
+                    status={enquiryStatuses[id]}
+                    showFollowUpDate={true}
+                    followUpDate={followUpDates[id]}
+                  />
+                )}
               </div>
 
               {/* Labels */}

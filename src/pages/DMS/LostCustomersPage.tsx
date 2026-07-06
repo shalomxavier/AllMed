@@ -153,6 +153,13 @@ export const LostCustomersPage: React.FC = () => {
                 }}
                 onBack={handleBackToList}
                 enquiryStatus="Lost"
+                lastEnquiryInfo={{
+                  status: 'Lost',
+                  lostReason: selectedCustomer.lostReason,
+                  otherReason: selectedCustomer.customReason,
+                  notes: selectedCustomer.internalNotes,
+                  updatedAt: selectedCustomer.updatedAt,
+                }}
               />
 
               {/* Messages - Read Only */}
