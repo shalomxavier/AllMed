@@ -7,6 +7,7 @@ import { RawPunchesPage } from '@pages/Attendance/RawPunchesPage';
 import { ShiftsPage } from '@pages/Attendance/ShiftsPage';
 import { LeavesPage } from '@pages/Attendance/LeavesPage';
 import { DevicesPage } from '@pages/Attendance/DevicesPage';
+import { UsersPage } from '@pages/Users/UsersPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
 import { WorkspacePage } from '@pages/DMS/WorkspacePage';
@@ -18,6 +19,7 @@ import { StoresPage } from '@pages/DMS/StoresPage';
 import { SettingsPage } from '@pages/DMS/SettingsPage';
 import { DashboardLayout } from '@components/layout/DashboardLayout';
 import { ProtectedRoute } from './ProtectedRoute';
+import { RoleProtectedRoute } from './RoleProtectedRoute';
 import { AuthLoadingScreen } from '@/components/common';
 
 // Route guard for authenticated users visiting /login
@@ -42,7 +44,9 @@ const AppRoutesContent: React.FC = () => {
       <Route
         element={
           <ProtectedRoute>
-            <DashboardLayout />
+            <RoleProtectedRoute>
+              <DashboardLayout />
+            </RoleProtectedRoute>
           </ProtectedRoute>
         }
       >
@@ -52,6 +56,7 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/attendance/shifts" element={<ShiftsPage />} />
         <Route path="/attendance/leaves" element={<LeavesPage />} />
         <Route path="/attendance/devices" element={<DevicesPage />} />
+        <Route path="/users" element={<UsersPage />} />
         <Route path="/dms" element={<DMSPage />} />
         <Route path="/dms/workspace" element={<WorkspacePage />} />
         <Route path="/dms/dashboard" element={<DashboardPage />} />

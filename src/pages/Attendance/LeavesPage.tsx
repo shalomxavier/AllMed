@@ -1,26 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Palmtree, TrendingDown, Calendar } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Palmtree, TrendingDown, Calendar, Pencil, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 
 interface LeaveRecord {
   id: string;
+  type?: 'leave' | 'weekoff';
   employeeCode?: string;
   employeeName?: string;
   dates?: string[];
+  days?: string[];
   fromDate?: string;
   toDate?: string;
   reason?: string;
   createdAt?: any;
 }
 
-interface WeekOffRecord {
-  id: string;
-  employeeCode?: string;
-  employeeName?: string;
-  days?: string[];
-}
+type WeekOffRecord = LeaveRecord;
 
 interface RawPunch {
   id: string;
@@ -40,6 +37,13 @@ const ALL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 const formatDate = (dateStr: string) => {
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+const getLatestLeaveDate = (r: LeaveRecord): string => {
+  if (r.toDate) return r.toDate;
+  if (r.fromDate) return r.fromDate;
+  if (r.dates && r.dates.length > 0) return [...r.dates].sort().pop() ?? '';
+  return '';
 };
 
 const toDate = (logDate: any): Date | null => {
@@ -72,11 +76,17 @@ const getLeaveColor = (reason?: string) => {
 
 export const LeavesPage: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser } = useAuthContext();
+  const { currentUser, userData } = useAuthContext();
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [weekOffs, setWeekOffs] = useState<WeekOffRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [fromDateFilter, setFromDateFilter] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA');
+  });
+  const [toDateFilter, setToDateFilter] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [typeFilter, setTypeFilter] = useState<'all' | 'leave' | 'weekoff' | 'sick' | 'casual' | 'holiday' | 'maternity' | 'earned'>('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState<{ employeeCode: string; employeeName: string; type: 'type' | 'total'; typeKey?: string; details: any[] } | null>(null);
   const [unauthorizedModalOpen, setUnauthorizedModalOpen] = useState(false);
@@ -92,25 +102,45 @@ export const LeavesPage: React.FC = () => {
   const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
   const [isSavingBulkLeave, setIsSavingBulkLeave] = useState(false);
 
+  const [editLeaveOpen, setEditLeaveOpen] = useState(false);
+  const [editingLeave, setEditingLeave] = useState<LeaveRecord | null>(null);
+  const [editLeaveForm, setEditLeaveForm] = useState({ reason: '', dates: [] as string[] });
+  const [editCalMonth, setEditCalMonth] = useState(new Date().getMonth());
+  const [editCalYear, setEditCalYear] = useState(new Date().getFullYear());
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingLeave, setDeletingLeave] = useState<LeaveRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const fetchData = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
       const db = getFirestore();
-      const [leavesSnap, weekOffsSnap, employeesSnap] = await Promise.all([
-        getDocs(query(collection(db, 'leaves'), orderBy('fromDate', 'desc'))),
-        getDocs(collection(db, 'weekOffs')),
+      const [leavesSnap, employeesSnap] = await Promise.all([
+        getDocs(query(collection(db, 'leaves'), orderBy('createdAt', 'desc'))),
         getDocs(query(collection(db, 'employees'), orderBy('employeeName'))),
       ]);
-      const leavesData: LeaveRecord[] = [];
-      leavesSnap.forEach((d) => leavesData.push({ id: d.id, ...d.data() }));
-      const weekOffsData: WeekOffRecord[] = [];
-      weekOffsSnap.forEach((d) => weekOffsData.push({ id: d.id, ...d.data() }));
+      const allLeavesData: LeaveRecord[] = [];
+      leavesSnap.forEach((d) => allLeavesData.push({ id: d.id, ...d.data() }));
+      const leavesData = allLeavesData.filter(r => r.type !== 'weekoff');
+      const weekOffsData = allLeavesData.filter(r => r.type === 'weekoff');
       const employeesData: any[] = [];
       employeesSnap.forEach((d) => employeesData.push({ id: d.id, ...d.data() }));
-      setLeaves(leavesData);
-      setWeekOffs(weekOffsData);
-      setEmployees(employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del')));
+      const filteredEmployees = employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
+      
+      // Filter leaves by branch manager if current user is a Branch Manager
+      if (userData?.designation === 'Branch Manager') {
+        const assignedEmployeeCodes = new Set(filteredEmployees.filter((e) => e.branchManagerId === userData.id).map((e) => e.employeeCode));
+        setLeaves(leavesData.filter((l) => l.employeeCode && assignedEmployeeCodes.has(l.employeeCode)));
+        setWeekOffs(weekOffsData.filter((w) => w.employeeCode && assignedEmployeeCodes.has(w.employeeCode)));
+        setEmployees(filteredEmployees.filter((e) => e.branchManagerId === userData.id));
+      } else {
+        setLeaves(leavesData);
+        setWeekOffs(weekOffsData);
+        setEmployees(filteredEmployees);
+      }
     } catch (e) {
       console.error('Error fetching data:', e);
     } finally {
@@ -118,7 +148,62 @@ export const LeavesPage: React.FC = () => {
     }
   };
 
-  useEffect(() => { fetchData(); }, [currentUser]);
+  useEffect(() => { if (currentUser) fetchData(); }, [currentUser, userData]);
+
+  const openEditLeave = (leave: LeaveRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingLeave(leave);
+    const dates = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
+    setEditLeaveForm({ reason: leave.reason ?? '', dates });
+    if (dates.length > 0) {
+      const d = new Date(dates[0]);
+      setEditCalMonth(d.getMonth());
+      setEditCalYear(d.getFullYear());
+    }
+    setEditLeaveOpen(true);
+  };
+
+  const handleEditLeaveSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLeave || editLeaveForm.dates.length === 0) return;
+    setIsSavingEdit(true);
+    try {
+      const db = getFirestore();
+      const sorted = [...editLeaveForm.dates].sort();
+      await updateDoc(doc(db, 'leaves', editingLeave.id), {
+        dates: sorted,
+        fromDate: sorted[0],
+        toDate: sorted[sorted.length - 1],
+        reason: editLeaveForm.reason,
+      });
+      setEditLeaveOpen(false);
+      setEditingLeave(null);
+      fetchData();
+    } catch (err) { console.error(err); }
+    finally { setIsSavingEdit(false); }
+  };
+
+  const handleDeleteLeave = (leave: LeaveRecord, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDeletingLeave(leave);
+    setDeleteModalOpen(true);
+  };
+
+  const confirmDeleteLeave = async () => {
+    if (!deletingLeave) return;
+    setIsDeleting(true);
+    try {
+      const db = getFirestore();
+      await deleteDoc(doc(db, 'leaves', deletingLeave.id));
+      fetchData();
+      setDeleteModalOpen(false);
+      setDeletingLeave(null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const closeBulkLeaveModal = () => {
     setBulkLeaveModalOpen(false);
@@ -148,17 +233,20 @@ export const LeavesPage: React.FC = () => {
       for (const empId of bulkLeaveSelectedIds) {
         const employee = employees.find((e) => e.id === empId);
         if (!employee) continue;
-        await addDoc(collection(db, 'leaves'), {
-          employeeId: employee.id,
-          employeeCode: employee.employeeCode,
-          employeeName: employee.employeeName,
-          dates: sorted,
-          fromDate: sorted[0],
-          toDate: sorted[sorted.length - 1],
-          reason: bulkLeaveForm.reason,
-          createdAt: serverTimestamp(),
-          createdBy: currentUser?.uid,
-        });
+        for (const date of sorted) {
+          await addDoc(collection(db, 'leaves'), {
+            type: 'leave',
+            employeeId: employee.id,
+            employeeCode: employee.employeeCode,
+            employeeName: employee.employeeName,
+            dates: [date],
+            fromDate: date,
+            toDate: date,
+            reason: bulkLeaveForm.reason,
+            createdAt: serverTimestamp(),
+            createdBy: currentUser?.uid,
+          });
+        }
       }
       fetchData();
       closeBulkLeaveModal();
@@ -193,10 +281,10 @@ export const LeavesPage: React.FC = () => {
         }
       });
 
-      // Fetch all leaves
+      // Fetch all leaves (type=leave only, not weekoff)
       const leavesSnap = await getDocs(collection(db, 'leaves'));
       const leavesData: LeaveRecord[] = [];
-      leavesSnap.forEach((d) => leavesData.push({ id: d.id, ...d.data() }));
+      leavesSnap.forEach((d) => { const rec = { id: d.id, ...d.data() } as LeaveRecord; if (rec.type !== 'weekoff') leavesData.push(rec); });
 
       // Fetch raw punches for 2026 and filter by month in memory
       const punchesSnap = await getDocs(query(collection(db, 'rawPunches'), where('year', '==', 2026)));
@@ -255,7 +343,7 @@ export const LeavesPage: React.FC = () => {
           // Skip approved leave days
           if (leaveDates.has(dateStr)) continue;
 
-          // Skip week-offs
+          // Skip week-offs (from unified leaves collection with type=weekoff)
           const wo = weekOffs.find((w) => w.employeeCode === empCode);
           if (wo?.days?.includes(dayName)) continue;
 
@@ -342,33 +430,55 @@ export const LeavesPage: React.FC = () => {
   weekOffs.forEach((wo) => {
     const empCode = wo.employeeCode ?? '';
     const days = wo.days ?? [];
-    // Count how many of the week-off days fall in the last 30 days
-    const count = days.filter((dayName) => {
-      const dayIndex = ALL_DAYS.indexOf(dayName);
-      if (dayIndex === -1) return false;
-      let dayCount = 0;
-      for (let i = 0; i < 30; i++) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        if (d.getDay() === dayIndex) dayCount++;
-      }
-      return dayCount > 0;
-    }).length;
+    let count = 0;
+    for (let i = 0; i < 30; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      if (days.includes(ALL_DAYS[d.getDay()])) count++;
+    }
     if (count > 0) {
       totalDaysByEmployee.set(empCode, (totalDaysByEmployee.get(empCode) ?? 0) + count);
     }
   });
 
-  // Flatten all records into a single list
-  const allRecords: Array<{ type: 'leave' | 'weekoff'; data: LeaveRecord | WeekOffRecord }> = [
+  // Flatten all records into a single list and sort by latest date descending
+  const allRecords: Array<{ type: 'leave' | 'weekoff'; data: LeaveRecord }> = [
     ...leaves.map((l) => ({ type: 'leave' as const, data: l })),
     ...weekOffs.map((w) => ({ type: 'weekoff' as const, data: w })),
-  ];
+  ].sort((a, b) => getLatestLeaveDate(b.data).localeCompare(getLatestLeaveDate(a.data)));
 
   const filtered = allRecords.filter((r) => {
-    const name = (r.data as any).employeeName?.toLowerCase() ?? '';
-    const code = (r.data as any).employeeCode?.toLowerCase() ?? '';
-    return name.includes(searchQuery.toLowerCase()) || code.includes(searchQuery.toLowerCase());
+    const data = r.data as any;
+    const name = data.employeeName?.toLowerCase() ?? '';
+    const code = data.employeeCode?.toLowerCase() ?? '';
+    const matchesSearch = name.includes(searchQuery.toLowerCase()) || code.includes(searchQuery.toLowerCase());
+
+    // Type filter
+    if (typeFilter === 'weekoff' && r.type !== 'weekoff') return false;
+    if (typeFilter === 'leave' && r.type !== 'leave') return false;
+    if (r.type === 'leave' && typeFilter !== 'all' && typeFilter !== 'leave') {
+      const reason = data.reason?.toLowerCase() ?? '';
+      if (typeFilter === 'sick' && !(reason.includes('sick') || reason.includes('medical'))) return false;
+      if (typeFilter === 'casual' && !(reason.includes('casual') || reason.includes('personal'))) return false;
+      if (typeFilter === 'holiday' && !(reason.includes('holiday') || reason.includes('festival'))) return false;
+      if (typeFilter === 'maternity' && !(reason.includes('maternity') || reason.includes('paternity'))) return false;
+      if (typeFilter === 'earned' && !(reason.includes('earned') || reason.includes('privilege'))) return false;
+    }
+
+    if (r.type === 'weekoff') return matchesSearch;
+
+    const dates = data.dates ?? [];
+    if (dates.length > 0) {
+      return matchesSearch && dates.some((d: string) => d >= fromDateFilter && d <= toDateFilter);
+    }
+
+    const from = data.fromDate;
+    const to = data.toDate || from;
+    if (from && to) {
+      return matchesSearch && from <= toDateFilter && to >= fromDateFilter;
+    }
+
+    return matchesSearch;
   });
 
   return (
@@ -387,10 +497,10 @@ export const LeavesPage: React.FC = () => {
         </button>
       </div>
 
-      {/* Search */}
+      {/* Search & Date Filter */}
       <div className="px-4 pt-3 pb-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex-1 relative">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex-1 relative min-w-[200px]">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
             <input
               type="text"
@@ -399,6 +509,35 @@ export const LeavesPage: React.FC = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
             />
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={fromDateFilter}
+              onChange={(e) => setFromDateFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+            />
+            <span className="text-sm text-secondary-500">→</span>
+            <input
+              type="date"
+              value={toDateFilter}
+              onChange={(e) => setToDateFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+            />
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as any)}
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+            >
+              <option value="all">All Types</option>
+              <option value="leave">All Leaves</option>
+              <option value="weekoff">Week Off</option>
+              <option value="sick">Sick Leave</option>
+              <option value="casual">Casual Leave</option>
+              <option value="holiday">Holiday</option>
+              <option value="maternity">Maternity/Paternity</option>
+              <option value="earned">Earned Leave</option>
+            </select>
           </div>
           <div className="flex items-center gap-3 ml-auto">
             <button onClick={() => setBulkLeaveModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shrink-0">
@@ -414,7 +553,7 @@ export const LeavesPage: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 flex flex-wrap gap-3 content-start">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3 content-start">
         {loading ? (
           <div className="w-full flex items-center justify-center py-16">
             <div className="w-7 h-7 border-2 border-secondary-300 border-t-purple-600 rounded-full animate-spin" />
@@ -427,10 +566,10 @@ export const LeavesPage: React.FC = () => {
             <p className="text-sm font-medium text-secondary-700">No records found</p>
           </div>
         ) : (
-          filtered.map((record) => {
+          filtered.flatMap((record) => {
             const data = record.data as any;
             if (record.type === 'leave') {
-              const dates: string[] = data.dates ?? (data.fromDate ? [data.fromDate] : []);
+              const dates: string[] = [...(data.dates ?? (data.fromDate ? [data.fromDate] : []))].sort((a, b) => b.localeCompare(a));
               const colors = getLeaveColor(data.reason);
               const empCode = data.employeeCode ?? '';
               const reason = data.reason?.toLowerCase() ?? 'other';
@@ -441,8 +580,10 @@ export const LeavesPage: React.FC = () => {
                              reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
               const typeCount = leaveCountsByEmployee.get(empCode)?.get(typeKey) ?? 0;
               const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
-              return (
-                <div key={record.data.id} className="bg-white border border-purple-700 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow w-[300px] h-[200px] shrink-0" onClick={() => {
+              
+              // Create a separate card for each date
+              return dates.map((date) => (
+                <div key={`${record.data.id}-${date}`} className="bg-white border border-purple-700/30 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow h-[200px]" onClick={() => {
                           const leaveDetails = leaves
                             .filter((l) => l.employeeCode === empCode)
                             .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
@@ -452,13 +593,7 @@ export const LeavesPage: React.FC = () => {
                                 const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
                                 return dates.includes(d) && l.employeeCode === empCode;
                               });
-                              const reason = leave?.reason?.toLowerCase() ?? 'other';
-                              const tk = reason.includes('sick') || reason.includes('medical') ? 'sick' :
-                                      reason.includes('casual') || reason.includes('personal') ? 'casual' :
-                                      reason.includes('holiday') || reason.includes('festival') ? 'holiday' :
-                                      reason.includes('maternity') || reason.includes('paternity') ? 'maternity' :
-                                      reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
-                              return { date: d, type: 'leave', leaveType: tk.charAt(0).toUpperCase() + tk.slice(1) };
+                              return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
                             });
                           const wo = weekOffs.find((w) => w.employeeCode === empCode);
                           const woDays = wo?.days ?? [];
@@ -482,13 +617,12 @@ export const LeavesPage: React.FC = () => {
                         }}>
                   <div className="p-3 h-full">
                     <div className="flex flex-col gap-1.5">
-                        <p className="text-sm font-semibold text-purple-700 inline-flex items-center gap-1">
-                          <Calendar size={13} />
-                          {dates.length === 1
-                            ? formatDate(dates[0])
-                            : `${formatDate(dates[0])} — ${formatDate(dates[dates.length - 1])}`}
-                          {dates.length > 1 && <span className="text-xs text-secondary-500 ml-1">({dates.length} days)</span>}
-                        </p>
+                        <div className="flex items-start justify-between gap-1">
+                          <p className="text-sm font-semibold text-purple-700 inline-flex items-center gap-1 flex-1 min-w-0">
+                            <Calendar size={13} className="shrink-0" />
+                            {formatDate(date)}
+                          </p>
+                        </div>
                         <div className="flex flex-col gap-0.5">
                           <p className="text-sm font-semibold text-black leading-tight">{data.employeeName || '—'}</p>
                           <span className="text-xs text-secondary-500">{data.employeeCode}</span>
@@ -497,6 +631,16 @@ export const LeavesPage: React.FC = () => {
                           <span className={`text-xs font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full self-start`}>{data.reason}</span>
                         )}
                         <div className="flex flex-col gap-1.5 mt-1">
+                          <button type="button" onClick={(e) => openEditLeave(record.data, e)}
+                            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors">
+                            <Pencil size={16} />
+                            Edit
+                          </button>
+                          <button type="button" onClick={(e) => handleDeleteLeave(record.data, e)}
+                            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
+                            <Trash2 size={16} />
+                            Delete
+                          </button>
                           <span
                             className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-purple-100 transition-colors self-start inline-flex items-center gap-1"
                             onClick={(e) => {
@@ -525,13 +669,7 @@ export const LeavesPage: React.FC = () => {
                                     const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
                                     return dates.includes(d) && l.employeeCode === empCode;
                                   });
-                                  const reason = leave?.reason?.toLowerCase() ?? 'other';
-                                  const tk = reason.includes('sick') || reason.includes('medical') ? 'sick' :
-                                          reason.includes('casual') || reason.includes('personal') ? 'casual' :
-                                          reason.includes('holiday') || reason.includes('festival') ? 'holiday' :
-                                          reason.includes('maternity') || reason.includes('paternity') ? 'maternity' :
-                                          reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
-                                  return { date: d, type: 'leave', leaveType: tk.charAt(0).toUpperCase() + tk.slice(1) };
+                                  return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
                                 }),
                               });
                               setModalOpen(true);
@@ -552,13 +690,7 @@ export const LeavesPage: React.FC = () => {
                                     const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
                                     return dates.includes(d) && l.employeeCode === empCode;
                                   });
-                                  const reason = leave?.reason?.toLowerCase() ?? 'other';
-                                  const tk = reason.includes('sick') || reason.includes('medical') ? 'sick' :
-                                          reason.includes('casual') || reason.includes('personal') ? 'casual' :
-                                          reason.includes('holiday') || reason.includes('festival') ? 'holiday' :
-                                          reason.includes('maternity') || reason.includes('paternity') ? 'maternity' :
-                                          reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
-                                  return { date: d, type: 'leave', leaveType: tk.charAt(0).toUpperCase() + tk.slice(1) };
+                                  return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
                                 });
                               const wo = weekOffs.find((w) => w.employeeCode === empCode);
                               const woDays = wo?.days ?? [];
@@ -587,12 +719,12 @@ export const LeavesPage: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              );
+              ));
             } else {
               const empCode = data.employeeCode ?? '';
               const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
               return (
-                <div key={record.data.id} className="bg-white border border-purple-700 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow w-[300px] h-[200px] shrink-0" onClick={() => {
+                <div key={record.data.id} className="bg-white border border-purple-700/30 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow h-[200px]" onClick={() => {
                           const leaveDetails = leaves
                             .filter((l) => l.employeeCode === empCode)
                             .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
@@ -669,15 +801,6 @@ export const LeavesPage: React.FC = () => {
               </button>
             </div>
             <div className="p-4 overflow-y-auto max-h-[60vh]">
-              {modalData.type === 'type' ? (
-                <span className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full mb-3 inline-block">
-                  {modalData.typeKey ? modalData.typeKey.charAt(0).toUpperCase() + modalData.typeKey.slice(1) : 'Other'} leaves in last 30 days
-                </span>
-              ) : (
-                <span className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full mb-3 inline-block">
-                  Total days off in last 30 days
-                </span>
-              )}
               <div className="space-y-2">
                 {modalData.details.map((detail, idx) => {
                   if (detail.type === 'leave') {
@@ -847,6 +970,7 @@ export const LeavesPage: React.FC = () => {
                 <select value={bulkLeaveForm.reason} onChange={(e) => setBulkLeaveForm({ reason: e.target.value })}
                   className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
                   <option value="">Select leave type...</option>
+                  <option value="Week Off">Week Off</option>
                   <option value="Casual Leave">Casual Leave</option>
                   <option value="Earned Leave">Earned Leave</option>
                   <option value="Holiday Off">Holiday Off</option>
@@ -863,6 +987,119 @@ export const LeavesPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Leave Modal */}
+      {editLeaveOpen && editingLeave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+              <div>
+                <h2 className="text-base font-semibold text-secondary-900">Edit Leave</h2>
+                <p className="text-xs text-secondary-500 mt-0.5">{editingLeave.employeeName} · {editingLeave.employeeCode}</p>
+              </div>
+              <button onClick={() => setEditLeaveOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
+            </div>
+            <form onSubmit={handleEditLeaveSubmit} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Calendar */}
+              <div className="border border-secondary-300 rounded-lg p-3">
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Dates ({editLeaveForm.dates.length} selected)</label>
+                {(() => {
+                  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                  const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+                  const firstDay = new Date(editCalYear, editCalMonth, 1).getDay();
+                  const daysInMonth = new Date(editCalYear, editCalMonth + 1, 0).getDate();
+                  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_, i) => i + 1)];
+                  while (cells.length % 7 !== 0) cells.push(null);
+                  return (
+                    <div className="border border-secondary-200 rounded-lg overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2 bg-purple-50">
+                        <button type="button" onClick={() => { if (editCalMonth === 0) { setEditCalMonth(11); setEditCalYear(y => y - 1); } else setEditCalMonth(m => m - 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronLeft size={14}/></button>
+                        <span className="text-sm font-semibold text-secondary-800">{MONTHS[editCalMonth]} {editCalYear}</span>
+                        <button type="button" onClick={() => { if (editCalMonth === 11) { setEditCalMonth(0); setEditCalYear(y => y + 1); } else setEditCalMonth(m => m + 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronRight size={14}/></button>
+                      </div>
+                      <div className="grid grid-cols-7 border-b border-secondary-100">
+                        {DAYS.map(d => <div key={d} className="text-center text-xs font-medium text-secondary-500 py-1">{d}</div>)}
+                      </div>
+                      <div className="grid grid-cols-7 p-1 gap-0.5">
+                        {cells.map((day, i) => {
+                          if (!day) return <div key={i} />;
+                          const dateStr = `${editCalYear}-${String(editCalMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                          const selected = editLeaveForm.dates.includes(dateStr);
+                          return (
+                            <button key={i} type="button"
+                              onClick={() => setEditLeaveForm(f => ({ ...f, dates: selected ? f.dates.filter(d => d !== dateStr) : [...f.dates, dateStr] }))}
+                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'}`}>{day}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              {/* Leave type */}
+              <div className="border border-secondary-300 rounded-lg p-3">
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
+                <select value={editLeaveForm.reason} onChange={(e) => setEditLeaveForm(f => ({ ...f, reason: e.target.value }))}
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
+                  <option value="">Select leave type...</option>
+                  <option value="Week Off">Week Off</option>
+                  <option value="Casual Leave">Casual Leave</option>
+                  <option value="Earned Leave">Earned Leave</option>
+                  <option value="Holiday Off">Holiday Off</option>
+                  <option value="Overtime Off">Overtime Off</option>
+                </select>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setEditLeaveOpen(false)}
+                  className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
+                <button type="submit" disabled={isSavingEdit || editLeaveForm.dates.length === 0 || !editLeaveForm.reason}
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
+                  {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalOpen && deletingLeave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <Trash2 size={20} className="text-red-600" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-secondary-900">Delete Leave</h2>
+                  <p className="text-xs text-secondary-500">{deletingLeave.employeeName} · {deletingLeave.employeeCode}</p>
+                </div>
+              </div>
+              <p className="text-sm text-secondary-700 mb-6">
+                Are you sure you want to delete this leave record? This action cannot be undone.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDeleteModalOpen(false)}
+                  className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteLeave}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-60"
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

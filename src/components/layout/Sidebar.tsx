@@ -1,4 +1,4 @@
-import { X, CalendarDays, Truck, LogOut } from 'lucide-react';
+import { X, CalendarDays, Truck, Users, LogOut } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import type { SidebarProps } from '@/types/index';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -20,11 +20,29 @@ const navItems: NavItem[] = [
     label: 'DMS',
     icon: <Truck size={20} />,
   },
+  {
+    path: '/users',
+    label: 'Users',
+    icon: <Users size={20} />,
+  },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
-  const { logout } = useAuthContext();
+  const { logout, userData } = useAuthContext();
+
+  const visibleNavItems = (() => {
+    if (userData?.designation === 'HR') {
+      return navItems.filter((item) => item.path === '/attendance' || item.path === '/users');
+    }
+    if (userData?.designation === 'Operations Manager') {
+      return navItems.filter((item) => item.path === '/dms' || item.path === '/users');
+    }
+    if (userData?.designation === 'Branch Manager') {
+      return navItems.filter((item) => item.path === '/attendance');
+    }
+    return navItems;
+  })();
 
   return (
     <>
@@ -64,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
         {/* Navigation */}
         <nav className="p-4 space-y-1">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <NavLink
@@ -73,11 +91,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 onClick={() => onClose()}
                 className={`flex items-center gap-3 px-4 py-3 font-medium transition-colors duration-200 ${
                   isActive
-                    ? 'bg-primary-50 text-primary-700 border-l-4 border-primary-600 rounded-r-lg'
-                    : 'text-secondary-600 hover:bg-secondary-50 hover:text-secondary-900 rounded-lg'
+                    ? 'bg-primary-50 text-primary-700 rounded-lg'
+                    : 'text-black hover:bg-secondary-50 hover:text-secondary-900 rounded-lg'
                 }`}
               >
-                <span className={isActive ? 'text-primary-600' : 'text-secondary-400'}>
+                <span className={isActive ? 'text-primary-700' : 'text-black'}>
                   {item.icon}
                 </span>
                 {item.label}

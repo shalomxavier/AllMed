@@ -64,11 +64,12 @@ interface Employee {
   employeeId?: string;
   employeeName?: string;
   syncedAt?: any;
+  branchManagerId?: string;
 }
 
 export const EmployeesPage: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser } = useAuthContext();
+  const { currentUser, userData } = useAuthContext();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -139,8 +140,8 @@ export const EmployeesPage: React.FC = () => {
   const [leaveEmployee, setLeaveEmployee] = useState<Employee | null>(null);
   const [leaveTab, setLeaveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [weekOffDays, setWeekOffDays] = useState<string[]>([]); // Used for week-off functionality
-  const [leaveForm, setLeaveForm] = useState({ reason: '' });
-  const [selectedLeaveDates, setSelectedLeaveDates] = useState<string[]>([]);
+  const [leaveDateMap, setLeaveDateMap] = useState<Record<string, string>>({}); // date -> leaveType
+  const [leaveTooltipDate, setLeaveTooltipDate] = useState<string | null>(null);
   const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [isSavingLeave, setIsSavingLeave] = useState(false);
@@ -158,8 +159,8 @@ export const EmployeesPage: React.FC = () => {
   const [bulkLeaveModalOpen, setBulkLeaveModalOpen] = useState(false);
   const [bulkLeaveSelectedIds, setBulkLeaveSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLeaveSearchQuery, setBulkLeaveSearchQuery] = useState('');
-  const [bulkLeaveForm, setBulkLeaveForm] = useState({ reason: '' });
-  const [bulkLeaveSelectedDates, setBulkLeaveSelectedDates] = useState<string[]>([]);
+  const [bulkLeaveDateMap, setBulkLeaveDateMap] = useState<Record<string, string>>({}); // date -> leaveType
+  const [bulkLeaveTooltipDate, setBulkLeaveTooltipDate] = useState<string | null>(null);
   const [bulkLeaveCalendarMonth, setBulkLeaveCalendarMonth] = useState(new Date().getMonth());
   const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
   const [isSavingBulkLeave, setIsSavingBulkLeave] = useState(false);
@@ -181,7 +182,12 @@ export const EmployeesPage: React.FC = () => {
         });
       });
       
-      setEmployees(employeesData);
+      // Filter by branch manager if current user is a Branch Manager
+      if (userData?.designation === 'Branch Manager') {
+        setEmployees(employeesData.filter((e) => e.branchManagerId === userData.id));
+      } else {
+        setEmployees(employeesData);
+      }
     } catch (error) {
       console.error('Error fetching employees:', error);
     } finally {
@@ -190,8 +196,9 @@ export const EmployeesPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!currentUser) return;
     fetchEmployees();
-  }, [currentUser]);
+  }, [currentUser, userData]);
 
   const filteredEmployees = employees.filter((emp) => {
     // Exclude employees with device code starting with "Del"
@@ -323,7 +330,7 @@ export const EmployeesPage: React.FC = () => {
       const q = query(collection(db, 'leaves'), where('employeeCode', '==', employee.employeeCode), orderBy('fromDate', 'desc'));
       const snapshot = await getDocs(q);
       const leaves: any[] = [];
-      snapshot.forEach((d) => leaves.push({ id: d.id, ...d.data() }));
+      snapshot.forEach((d) => { const rec = { id: d.id, ...d.data() } as any; if (rec.type !== 'weekoff') leaves.push(rec); });
       setEmployeeLeaves(leaves);
     } catch (e) {
       console.error('Error fetching leaves:', e);
@@ -336,8 +343,8 @@ export const EmployeesPage: React.FC = () => {
     setLeaveEmployee(employee);
     setLeaveTab('upcoming');
     setWeekOffDays([]);
-    setLeaveForm({ reason: '' });
-    setSelectedLeaveDates([]);
+    setLeaveDateMap({});
+    setLeaveTooltipDate(null);
     setCalendarMonth(new Date().getMonth());
     setCalendarYear(new Date().getFullYear());
     setExistingWeekOff(null);
@@ -347,7 +354,7 @@ export const EmployeesPage: React.FC = () => {
     fetchLeavesForEmployee(employee);
     try {
       const db = getFirestore();
-      const q = query(collection(db, 'weekOffs'), where('employeeCode', '==', employee.employeeCode));
+      const q = query(collection(db, 'leaves'), where('employeeCode', '==', employee.employeeCode), where('type', '==', 'weekoff'));
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
         const data = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
@@ -416,8 +423,8 @@ export const EmployeesPage: React.FC = () => {
     setBulkLeaveModalOpen(false);
     setBulkLeaveSelectedIds(new Set());
     setBulkLeaveSearchQuery('');
-    setBulkLeaveForm({ reason: '' });
-    setBulkLeaveSelectedDates([]);
+    setBulkLeaveDateMap({});
+    setBulkLeaveTooltipDate(null);
     setBulkLeaveCalendarMonth(new Date().getMonth());
     setBulkLeaveCalendarYear(new Date().getFullYear());
   };
@@ -432,25 +439,28 @@ export const EmployeesPage: React.FC = () => {
 
   const handleBulkLeaveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (bulkLeaveSelectedIds.size === 0 || bulkLeaveSelectedDates.length === 0 || !bulkLeaveForm.reason) return;
+    const dateEntries = Object.entries(bulkLeaveDateMap);
+    if (bulkLeaveSelectedIds.size === 0 || dateEntries.length === 0) return;
     setIsSavingBulkLeave(true);
     try {
       const db = getFirestore();
-      const sorted = [...bulkLeaveSelectedDates].sort();
       for (const empId of bulkLeaveSelectedIds) {
         const employee = employees.find((e) => e.id === empId);
         if (!employee) continue;
-        await addDoc(collection(db, 'leaves'), {
-          employeeId: employee.id,
-          employeeCode: employee.employeeCode,
-          employeeName: employee.employeeName,
-          dates: sorted,
-          fromDate: sorted[0],
-          toDate: sorted[sorted.length - 1],
-          reason: bulkLeaveForm.reason,
-          createdAt: serverTimestamp(),
-          createdBy: currentUser?.uid,
-        });
+        for (const [date, reason] of dateEntries) {
+          await addDoc(collection(db, 'leaves'), {
+            type: 'leave',
+            employeeId: employee.id,
+            employeeCode: employee.employeeCode,
+            employeeName: employee.employeeName,
+            dates: [date],
+            fromDate: date,
+            toDate: date,
+            reason,
+            createdAt: serverTimestamp(),
+            createdBy: currentUser?.uid,
+          });
+        }
       }
       setSuccessMessage(`Leave added for ${bulkLeaveSelectedIds.size} employee(s) successfully`);
       setShowSuccessDialog(true);
@@ -464,26 +474,29 @@ export const EmployeesPage: React.FC = () => {
 
   const handleSaveLeave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leaveEmployee || selectedLeaveDates.length === 0) return;
+    const dateEntries = Object.entries(leaveDateMap);
+    if (!leaveEmployee || dateEntries.length === 0) return;
     setIsSavingLeave(true);
     try {
       const db = getFirestore();
-      const sorted = [...selectedLeaveDates].sort();
-      await addDoc(collection(db, 'leaves'), {
-        employeeId: leaveEmployee.id,
+      for (const [date, reason] of dateEntries) {
+        await addDoc(collection(db, 'leaves'), {
+          type: 'leave',
+          employeeId: leaveEmployee.id,
         employeeCode: leaveEmployee.employeeCode,
         employeeName: leaveEmployee.employeeName,
-        dates: sorted,
-        fromDate: sorted[0],
-        toDate: sorted[sorted.length - 1],
-        reason: leaveForm.reason,
-        createdAt: serverTimestamp(),
-        createdBy: currentUser?.uid
-      });
+          dates: [date],
+          fromDate: date,
+          toDate: date,
+          reason,
+          createdAt: serverTimestamp(),
+          createdBy: currentUser?.uid
+        });
+      }
       setSuccessMessage('Leave Assigned Successfully');
       setShowSuccessDialog(true);
-      setLeaveForm({ reason: '' });
-      setSelectedLeaveDates([]);
+      setLeaveDateMap({});
+      setLeaveTooltipDate(null);
       setShowAddLeaveForm(false);
       fetchLeavesForEmployee(leaveEmployee);
     } catch (e) {
@@ -597,6 +610,17 @@ export const EmployeesPage: React.FC = () => {
   const formatShiftDate = (dateString: string) => {
     const d = new Date(dateString);
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const getLeaveColor = (reason?: string) => {
+    const r = reason?.toLowerCase() ?? '';
+    if (r.includes('sick') || r.includes('medical')) return { bg: 'bg-red-50', text: 'text-red-600', badge: 'bg-red-100' };
+    if (r.includes('casual') || r.includes('personal')) return { bg: 'bg-green-50', text: 'text-green-600', badge: 'bg-green-100' };
+    if (r.includes('holiday') || r.includes('festival')) return { bg: 'bg-yellow-50', text: 'text-yellow-600', badge: 'bg-yellow-100' };
+    if (r.includes('maternity') || r.includes('paternity')) return { bg: 'bg-pink-50', text: 'text-pink-600', badge: 'bg-pink-100' };
+    if (r.includes('earned') || r.includes('privilege')) return { bg: 'bg-indigo-50', text: 'text-indigo-600', badge: 'bg-indigo-100' };
+    if (r.includes('week off') || r.includes('weekoff')) return { bg: 'bg-blue-50', text: 'text-blue-600', badge: 'bg-blue-100' };
+    return { bg: 'bg-purple-50', text: 'text-purple-600', badge: 'bg-purple-100' };
   };
 
   const formatTime12 = (time24: string) => {
@@ -723,12 +747,12 @@ export const EmployeesPage: React.FC = () => {
 
       // Check for overlaps excluding the current shift being edited
       const shiftsRef = collection(db, 'shifts');
-      const q = query(shiftsRef, where('employeeCode', '==', selectedEmployee.employeeCode));
-      const snapshot = await getDocs(q);
-      const existingShifts: any[] = [];
+      const snapshot = await getDocs(query(shiftsRef));
+      const allDocs: any[] = [];
       snapshot.forEach((doc) => {
-        if (doc.id !== selectedShift.id) existingShifts.push({ id: doc.id, ...doc.data() });
+        if (doc.id !== selectedShift.id) allDocs.push({ id: doc.id, ...doc.data() });
       });
+      const existingShifts = allDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === selectedEmployee.employeeCode));
 
       const overlaps = findOverlappingShifts(newShiftData, existingShifts);
       if (overlaps.length > 0) {
@@ -1015,49 +1039,53 @@ export const EmployeesPage: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredEmployees.map((employee) => (
               <div
                 key={employee.id}
-                className="bg-white rounded-xl p-4 w-[300px] h-[200px] shrink-0 flex flex-col justify-between border border-[#ff700d] shadow-[0_2px_8px_rgba(255,112,13,0.15)] hover:shadow-[0_4px_16px_rgba(255,112,13,0.35)] transition-shadow"
+                className="card p-5 hover:shadow-md transition-shadow flex flex-col"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
-                    <Users className="w-5 h-5 text-[#ff700d]" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-semibold text-secondary-900 truncate">
-                      {employee.employeeName || 'Unknown'}
-                    </h3>
-                    <div className="flex flex-wrap gap-x-3 text-xs text-secondary-500 mt-0.5">
-                      {employee.employeeId && <span><span className="font-medium">ID:</span> {employee.employeeId}</span>}
-                      {employee.employeeCodeInDevice && <span><span className="font-medium">Code:</span> {employee.employeeCodeInDevice}</span>}
-                    </div>
+                <div className="flex items-start mb-3">
+                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+                    <Users className="w-6 h-6 text-blue-600" />
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleShiftsClick(employee)}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                  >
-                    <Clock size={13} />
-                    Shifts
-                  </button>
-                  <button
-                    onClick={() => handleViewAttendanceClick(employee)}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-                  >
-                    <Eye size={13} />
-                    Attendance
-                  </button>
-                  <button
-                    onClick={() => handleLeaveClick(employee)}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
-                  >
-                    <Umbrella size={13} />
-                    Leave
-                  </button>
+                <h3 className="font-semibold text-secondary-900 mb-1">
+                  {employee.employeeName || 'Unknown'}
+                </h3>
+                <div className="space-y-1 text-sm text-secondary-600">
+                  {employee.employeeId && (
+                    <p>
+                      <span className="font-medium">ID:</span> {employee.employeeId}
+                    </p>
+                  )}
+                  {employee.employeeCodeInDevice && (
+                    <p>
+                      <span className="font-medium">Device Code:</span> {employee.employeeCodeInDevice}
+                    </p>
+                  )}
                 </div>
+                <button
+                  onClick={() => handleShiftsClick(employee)}
+                  className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                >
+                  <Clock size={16} />
+                  Shifts
+                </button>
+                <button
+                  onClick={() => handleViewAttendanceClick(employee)}
+                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+                >
+                  <Eye size={16} />
+                  View Attendance
+                </button>
+                <button
+                  onClick={() => handleLeaveClick(employee)}
+                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+                >
+                  <Umbrella size={16} />
+                  Leave / Week Off
+                </button>
               </div>
             ))}
           </div>
@@ -1156,34 +1184,51 @@ export const EmployeesPage: React.FC = () => {
                     });
 
                     // Build unified sorted list of entries
-                    type Entry = { date: string; type: 'punch'; punches: RawPunch[]; dayIdx: number } | { date: string; type: 'leave-only' };
-                    const entries: Entry[] = [
-                      ...days.map(({ date, punches }, dayIdx) => ({ date, type: 'punch' as const, punches, dayIdx })),
-                      ...Array.from(leaveDateSet).map((date) => ({ date, type: 'leave-only' as const })),
-                    ].sort((a, b) => b.date.localeCompare(a.date));
+                    type Entry = { date: string; type: 'punch'; punches: RawPunch[]; dayIdx: number } | { date: string; type: 'leave' };
+                    const entries: Entry[] = [];
+                    
+                    days.forEach(({ date, punches }, dayIdx) => {
+                      const dayLeave = attendanceLeaves.find((leave) => {
+                        const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
+                        return dates.includes(date);
+                      });
+                      
+                      // If date has leave, add leave entry first
+                      if (dayLeave) {
+                        entries.push({ date, type: 'leave' });
+                      }
+                      // Always add punch entry
+                      entries.push({ date, type: 'punch', punches, dayIdx });
+                    });
+                    
+                    // Add leave-only dates (no punch)
+                    leaveDateSet.forEach((date) => {
+                      if (!punchDateSet.has(date)) {
+                        entries.push({ date, type: 'leave' });
+                      }
+                    });
+                    
+                    entries.sort((a, b) => b.date.localeCompare(a.date));
 
                     return entries.map((entry) => {
-                      if (entry.type === 'leave-only') {
+                      if (entry.type === 'leave') {
                         const leave = attendanceLeaves.find((l) => (l.dates ?? [l.fromDate]).includes(entry.date));
                         const displayDate = new Date(entry.date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+                        const colors = getLeaveColor(leave?.reason);
                         return (
-                          <div key={`leave-${entry.date}`} className="border border-purple-200 rounded-lg overflow-hidden bg-purple-50">
-                            <div className="flex items-center justify-between px-4 py-2 bg-purple-50">
+                          <div key={`leave-${entry.date}`} className={`border rounded-lg overflow-hidden ${colors.bg}`}>
+                            <div className={`flex items-center justify-between px-4 py-2 ${colors.bg}`}>
                               <span className="text-sm font-semibold text-secondary-800">{displayDate}</span>
-                              <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
+                              <span className={`text-xs font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full`}>{leave?.reason || 'Leave'}</span>
                             </div>
                             <div className="px-4 py-2">
-                              <p className="text-xs text-purple-700">{leave?.reason || 'Leave'}</p>
+                              <p className={`text-xs ${colors.text}`}>{leave?.reason || 'Leave'}</p>
                             </div>
                           </div>
                         );
                       }
 
                       const { date, punches, dayIdx } = entry;
-                      const dayLeave = attendanceLeaves.find((leave) => {
-                        const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-                        return dates.includes(date);
-                      });
                       return (
                         <React.Fragment key={date}>
                           <div className={`border border-secondary-200 rounded-lg overflow-hidden ${dayIdx % 2 === 0 ? 'bg-green-50' : 'bg-gray-100'}`}>
@@ -1191,9 +1236,6 @@ export const EmployeesPage: React.FC = () => {
                               <span className="text-sm font-semibold text-secondary-800">
                                 {formatDisplayDate(punches[0].logDate)}
                               </span>
-                              {dayLeave && (
-                                <span className="text-xs font-medium text-purple-600 bg-purple-100 px-2 py-0.5 rounded-full">Leave</span>
-                              )}
                             </div>
                             <div className="divide-y divide-secondary-100">
                               {punches.map((punch, idx) => {
@@ -1691,7 +1733,7 @@ export const EmployeesPage: React.FC = () => {
 
               {/* Calendar */}
               <div className="border border-secondary-300 rounded-lg p-3">
-                <label className="block text-sm font-medium text-secondary-700 mb-2">Select Leave Dates ({bulkLeaveSelectedDates.length} selected)</label>
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Select Leave Dates ({Object.keys(bulkLeaveDateMap).length} selected)</label>
                 {(() => {
                   const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
                   const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
@@ -1713,13 +1755,50 @@ export const EmployeesPage: React.FC = () => {
                         {cells.map((day, i) => {
                           if (!day) return <div key={i} />;
                           const dateStr = `${bulkLeaveCalendarYear}-${String(bulkLeaveCalendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                          const selected = bulkLeaveSelectedDates.includes(dateStr);
+                          const leaveType = bulkLeaveDateMap[dateStr];
+                          const selected = !!leaveType;
+                          const isTooltipOpen = bulkLeaveTooltipDate === dateStr;
+                          const BULK_LEAVE_TYPES = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
+                          const getBulkLeaveColor = (t: string) => {
+                            const tl = t.toLowerCase();
+                            if (tl.includes('week off')) return 'bg-blue-600';
+                            if (tl.includes('casual')) return 'bg-green-600';
+                            if (tl.includes('earned') || tl.includes('privilege')) return 'bg-indigo-600';
+                            if (tl.includes('holiday') || tl.includes('festival')) return 'bg-yellow-500';
+                            if (tl.includes('overtime')) return 'bg-orange-500';
+                            return 'bg-purple-600';
+                          };
                           return (
-                            <button key={i} type="button"
-                              onClick={() => setBulkLeaveSelectedDates(prev => selected ? prev.filter(d => d !== dateStr) : [...prev, dateStr])}
-                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
-                              }`}>{day}</button>
+                            <div key={i} className="relative">
+                              <button type="button"
+                                onClick={() => setBulkLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
+                                className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
+                                  selected ? `${getBulkLeaveColor(leaveType)} text-white font-semibold` : 'hover:bg-purple-100 text-secondary-800'
+                                }`}
+                                title={leaveType ?? undefined}
+                              >{day}</button>
+                              {isTooltipOpen && (
+                                <>
+                                  <div className="fixed inset-0 z-[9]" onClick={() => setBulkLeaveTooltipDate(null)} />
+                                  <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                    ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
+                                    ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
+                                    {BULK_LEAVE_TYPES.map(lt => (
+                                      <button key={lt} type="button"
+                                        onClick={() => { setBulkLeaveDateMap(prev => ({ ...prev, [dateStr]: lt })); setBulkLeaveTooltipDate(null); }}
+                                        className={`w-full text-left px-2 py-1.5 text-sm rounded transition-colors hover:opacity-80 ${leaveType === lt ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-secondary-700 hover:bg-secondary-50'}`}
+                                      >{lt}</button>
+                                    ))}
+                                    {selected && (
+                                      <button type="button"
+                                        onClick={() => { setBulkLeaveDateMap(prev => { const n = { ...prev }; delete n[dateStr]; return n; }); setBulkLeaveTooltipDate(null); }}
+                                        className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
+                                      >Remove</button>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -1728,23 +1807,10 @@ export const EmployeesPage: React.FC = () => {
                 })()}
               </div>
 
-              {/* Leave type */}
-              <div className="border border-secondary-300 rounded-lg p-3">
-                <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
-                <select value={bulkLeaveForm.reason} onChange={(e) => setBulkLeaveForm({ reason: e.target.value })}
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
-                  <option value="">Select leave type...</option>
-                  <option value="Casual Leave">Casual Leave</option>
-                  <option value="Earned Leave">Earned Leave</option>
-                  <option value="Holiday Off">Holiday Off</option>
-                  <option value="Overtime Off">Overtime Off</option>
-                </select>
-              </div>
-
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeBulkLeaveModal}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || bulkLeaveSelectedDates.length === 0}
+                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
                   className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
                   {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
                 </button>
@@ -2157,6 +2223,7 @@ export const EmployeesPage: React.FC = () => {
                                   <select value={editLeaveForm.reason} onChange={(e) => setEditLeaveForm({ reason: e.target.value })}
                                     className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
                                     <option value="">Select leave type...</option>
+                                    <option value="Week Off">Week Off</option>
                                     <option value="Casual Leave">Casual Leave</option>
                                     <option value="Earned Leave">Earned Leave</option>
                                     <option value="Holiday Off">Holiday Off</option>
@@ -2200,13 +2267,7 @@ export const EmployeesPage: React.FC = () => {
                                   </div>
                                 </div>
                                 {leave.reason && (
-                                  <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${
-                                    leave.reason === 'Casual Leave'   ? 'bg-blue-100 text-blue-700' :
-                                    leave.reason === 'Earned Leave'   ? 'bg-green-100 text-green-700' :
-                                    leave.reason === 'Holiday Off'    ? 'bg-orange-100 text-orange-700' :
-                                    leave.reason === 'Overtime Off'   ? 'bg-rose-100 text-rose-700' :
-                                    'bg-secondary-100 text-secondary-600'
-                                  }`}>{leave.reason}</span>
+                                  <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${getLeaveColor(leave.reason).badge} ${getLeaveColor(leave.reason).text}`}>{leave.reason}</span>
                                 )}
                               </>
                             )}
@@ -2247,21 +2308,55 @@ export const EmployeesPage: React.FC = () => {
                                   {cells.map((day, i) => {
                                     if (!day) return <div key={i} />;
                                     const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                                    const selected = selectedLeaveDates.includes(dateStr);
+                                    const leaveType = leaveDateMap[dateStr];
+                                    const selected = !!leaveType;
+                                    const isTooltipOpen = leaveTooltipDate === dateStr;
                                     const dayName = new Date(calendarYear, calendarMonth, day).toLocaleDateString('en-US', { weekday: 'long' });
                                     const isWeekOff = weekOffDays.includes(dayName) || weekOffDays.includes(dayName.toLowerCase());
+                                    const ADD_LEAVE_TYPES = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
+                                    const getAddLeaveColor = (t: string) => {
+                                      const tl = t.toLowerCase();
+                                      if (tl.includes('week off')) return 'bg-blue-600';
+                                      if (tl.includes('casual')) return 'bg-green-600';
+                                      if (tl.includes('earned') || tl.includes('privilege')) return 'bg-indigo-600';
+                                      if (tl.includes('holiday') || tl.includes('festival')) return 'bg-yellow-500';
+                                      if (tl.includes('overtime')) return 'bg-orange-500';
+                                      return 'bg-purple-600';
+                                    };
                                     return (
-                                      <button
-                                        key={i}
-                                        type="button"
-                                        onClick={() => setSelectedLeaveDates(prev => selected ? prev.filter(d => d !== dateStr) : [...prev, dateStr])}
-                                        className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                          selected ? 'bg-purple-600 text-white font-semibold' : isWeekOff ? 'bg-green-100 text-green-700 font-semibold' : 'hover:bg-purple-100 text-secondary-800'
-                                        }`}
-                                        title={isWeekOff ? 'Week off' : undefined}
-                                      >
-                                        {day}
-                                      </button>
+                                      <div key={i} className="relative">
+                                        <button
+                                          type="button"
+                                          onClick={() => setLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
+                                          className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
+                                            selected ? `${getAddLeaveColor(leaveType)} text-white font-semibold` : isWeekOff ? 'bg-green-100 text-green-700 font-semibold' : 'hover:bg-purple-100 text-secondary-800'
+                                          }`}
+                                          title={leaveType ?? (isWeekOff ? 'Week off' : undefined)}
+                                        >
+                                          {day}
+                                        </button>
+                                        {isTooltipOpen && (
+                                          <>
+                                            <div className="fixed inset-0 z-[9]" onClick={() => setLeaveTooltipDate(null)} />
+                                            <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                              ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
+                                              ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
+                                              {ADD_LEAVE_TYPES.map(lt => (
+                                                <button key={lt} type="button"
+                                                  onClick={() => { setLeaveDateMap(prev => ({ ...prev, [dateStr]: lt })); setLeaveTooltipDate(null); }}
+                                                  className={`w-full text-left px-2 py-1.5 text-sm rounded transition-colors hover:opacity-80 ${leaveType === lt ? 'bg-purple-100 text-purple-700 font-semibold' : 'text-secondary-700 hover:bg-secondary-50'}`}
+                                                >{lt}</button>
+                                              ))}
+                                              {selected && (
+                                                <button type="button"
+                                                  onClick={() => { setLeaveDateMap(prev => { const n = { ...prev }; delete n[dateStr]; return n; }); setLeaveTooltipDate(null); }}
+                                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
+                                                >Remove</button>
+                                              )}
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
                                     );
                                   })}
                                 </div>
@@ -2269,25 +2364,10 @@ export const EmployeesPage: React.FC = () => {
                             );
                           })()}
 
-                          {selectedLeaveDates.length > 0 && (
-                            <p className="text-xs text-purple-700 font-medium">{selectedLeaveDates.length} date{selectedLeaveDates.length > 1 ? 's' : ''} selected</p>
+                          {Object.keys(leaveDateMap).length > 0 && (
+                            <p className="text-xs text-purple-700 font-medium">{Object.keys(leaveDateMap).length} date{Object.keys(leaveDateMap).length > 1 ? 's' : ''} selected</p>
                           )}
 
-                          <div>
-                            <label className="block text-xs font-medium text-secondary-600 mb-1">Leave Type</label>
-                            <select
-                              value={leaveForm.reason}
-                              onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
-                              className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-                              required
-                            >
-                              <option value="">Select leave type...</option>
-                              <option value="Casual Leave">Casual Leave</option>
-                              <option value="Earned Leave">Earned Leave</option>
-                              <option value="Holiday Off">Holiday Off</option>
-                              <option value="Overtime Off">Overtime Off</option>
-                            </select>
-                          </div>
                           <div className="flex gap-2">
                             <button
                               type="button"
@@ -2298,7 +2378,7 @@ export const EmployeesPage: React.FC = () => {
                             </button>
                             <button
                               type="submit"
-                              disabled={isSavingLeave}
+                              disabled={isSavingLeave || Object.keys(leaveDateMap).length === 0}
                               className="flex-1 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
                             >
                               {isSavingLeave ? 'Saving...' : 'Save'}

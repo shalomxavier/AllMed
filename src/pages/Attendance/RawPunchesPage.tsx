@@ -43,9 +43,11 @@ const SEARCH_LIMIT = 1000;
 
 export const RawPunchesPage: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser } = useAuthContext();
+  const { currentUser, userData } = useAuthContext();
 
   const [allPunches, setAllPunches] = useState<RawPunch[]>([]);
+  const [allowedUserIds, setAllowedUserIds] = useState<Set<string>>(new Set());
+  const [isBranchManager, setIsBranchManager] = useState(false);
   const [loading, setLoading] = useState(true);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
   const [devicesMap, setDevicesMap] = useState<Record<string, string>>({});
@@ -58,11 +60,39 @@ export const RawPunchesPage: React.FC = () => {
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [shiftsMap, setShiftsMap] = useState<Record<string, any[]>>({});
   const [locationFilter, setLocationFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDateFilter, setToDateFilter] = useState('');
+
+  useEffect(() => {
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const formatDateLocal = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    setFromDate(formatDateLocal(firstDayOfMonth));
+    setToDateFilter(formatDateLocal(today));
+  }, []);
 
   const fetchPage = async (afterDoc: QueryDocumentSnapshot<DocumentData> | null) => {
     if (!currentUser) return;
     setLoading(true);
     try {
+      // For Branch Managers, fetch a larger batch and store all filtered records for in-memory pagination
+      if (isBranchManager) {
+        const snapshot = await getDocs(query(collection(db, 'rawPunches'), orderBy('logDate', 'desc'), limit(SEARCH_LIMIT)));
+        const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const filteredData = data.filter((p) => p.userId && allowedUserIds.has(p.userId.trim().toLowerCase()));
+        setAllPunches(filteredData);
+        setHasNextPage(filteredData.length > PAGE_SIZE);
+        setCurrentPageIndex(0);
+        setLastDocOnPage(null);
+        setCursorStack([null]);
+        return;
+      }
+
       const ref = collection(db, 'rawPunches');
       const constraints: any[] = [orderBy('logDate', 'desc'), limit(PAGE_SIZE + 1)];
       if (afterDoc) constraints.push(startAfter(afterDoc));
@@ -84,10 +114,11 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!currentUser) return;
     fetchEmployees();
     fetchShifts();
     fetchDevices();
-  }, [currentUser]);
+  }, [currentUser, userData]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 500);
@@ -112,7 +143,11 @@ export const RawPunchesPage: React.FC = () => {
     try {
       const snapshot = await getDocs(query(collection(db, 'rawPunches'), orderBy('logDate', 'desc'), limit(SEARCH_LIMIT)));
       const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setAllPunches(data);
+      // Filter by branch manager if current user is a Branch Manager
+      const filteredData = isBranchManager
+        ? data.filter((p) => p.userId && allowedUserIds.has(p.userId.trim().toLowerCase()))
+        : data;
+      setAllPunches(filteredData);
       setCurrentPageIndex(0);
       setHasNextPage(false);
     } catch (error) {
@@ -127,12 +162,20 @@ export const RawPunchesPage: React.FC = () => {
     try {
       const snapshot = await getDocs(collection(db, 'employees'));
       const map: Record<string, string> = {};
+      const allowedIds = new Set<string>();
       snapshot.forEach((doc) => {
         const data = doc.data();
         const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
-        if (key) map[key] = data.employeeName ?? '';
+        if (key) {
+          map[key] = data.employeeName ?? '';
+          if (userData?.designation === 'Branch Manager' && data.branchManagerId === userData.id) {
+            allowedIds.add(key);
+          }
+        }
       });
       setEmployeeMap(map);
+      setAllowedUserIds(allowedIds);
+      setIsBranchManager(userData?.designation === 'Branch Manager');
     } catch (error) {
       console.error('Error fetching employees:', error);
     }
@@ -235,7 +278,12 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleNextPage = () => {
-    if (!hasNextPage || !lastDocOnPage) return;
+    if (!hasNextPage) return;
+    if (isBranchManager) {
+      setCurrentPageIndex(currentPageIndex + 1);
+      return;
+    }
+    if (!lastDocOnPage) return;
     const newStack = [...cursorStack, lastDocOnPage];
     setCursorStack(newStack);
     setCurrentPageIndex(currentPageIndex + 1);
@@ -244,6 +292,10 @@ export const RawPunchesPage: React.FC = () => {
 
   const handlePrevPage = () => {
     if (currentPageIndex === 0) return;
+    if (isBranchManager) {
+      setCurrentPageIndex(currentPageIndex - 1);
+      return;
+    }
     const newIndex = currentPageIndex - 1;
     const prevCursor = cursorStack[newIndex] ?? null;
     const newStack = cursorStack.slice(0, newIndex + 1);
@@ -253,6 +305,17 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const filteredPunches = allPunches.filter((p: RawPunch) => {
+    const punchDate = toDate(p.logDate);
+    if (fromDate && punchDate) {
+      const from = new Date(fromDate);
+      from.setHours(0, 0, 0, 0);
+      if (punchDate < from) return false;
+    }
+    if (toDateFilter && punchDate) {
+      const to = new Date(toDateFilter);
+      to.setHours(23, 59, 59, 999);
+      if (punchDate > to) return false;
+    }
     if (!isSearchMode) {
       if (locationFilter) {
         const location = resolveDeviceLocation(p.deviceId);
@@ -278,7 +341,7 @@ export const RawPunchesPage: React.FC = () => {
   });
 
   const totalPages = Math.ceil(filteredPunches.length / PAGE_SIZE);
-  const paginatedPunches = isSearchMode
+  const paginatedPunches = isSearchMode || isBranchManager
     ? filteredPunches.slice(currentPageIndex * PAGE_SIZE, (currentPageIndex + 1) * PAGE_SIZE)
     : filteredPunches;
 
@@ -323,18 +386,40 @@ export const RawPunchesPage: React.FC = () => {
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
         {/* Search */}
-        <div className="mb-4 flex gap-3">
-          <div className="relative max-w-md flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
+        <div className="mb-4 flex gap-3 flex-wrap items-end">
+          <div className="relative max-w-md flex-1 min-w-[200px]">
+            <label className="block text-xs font-medium text-secondary-600 mb-1">Search</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
+              <input
+                type="text"
+                placeholder="Search by user ID, device, direction..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+          <div className="w-40">
+            <label className="block text-xs font-medium text-secondary-600 mb-1">From</label>
             <input
-              type="text"
-              placeholder="Search by user ID, device, direction..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
+          </div>
+          <div className="w-40">
+            <label className="block text-xs font-medium text-secondary-600 mb-1">To</label>
+            <input
+              type="date"
+              value={toDateFilter}
+              onChange={(e) => setToDateFilter(e.target.value)}
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
           <div className="w-48">
+            <label className="block text-xs font-medium text-secondary-600 mb-1">Location</label>
             <select
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}

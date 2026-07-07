@@ -5,10 +5,20 @@ import {
   onAuthStateChanged,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { auth } from '../firebase/firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase/firebase';
+
+export interface UserData {
+  id: string;
+  name: string;
+  email: string;
+  designation: string;
+  branch: string;
+}
 
 export interface AuthContextType {
   currentUser: FirebaseUser | null;
+  userData: UserData | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -55,12 +65,28 @@ const getAuthErrorMessage = (errorCode: string): string => {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
+      if (user) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists()) {
+            setUserData({ id: userDoc.id, ...userDoc.data() } as UserData);
+          } else {
+            setUserData(null);
+          }
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          setUserData(null);
+        }
+      } else {
+        setUserData(null);
+      }
       setLoading(false);
     });
 
@@ -97,6 +123,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const value: AuthContextType = {
     currentUser,
+    userData,
     loading,
     login,
     logout,
