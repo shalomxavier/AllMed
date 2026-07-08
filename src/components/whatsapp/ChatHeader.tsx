@@ -20,6 +20,7 @@ interface ChatHeaderProps {
   enquiryStatus?: EnquiryStatus;
   onDelivered?: () => void;
   onNotDelivered?: () => void;
+  onActiveEnquiry?: () => void;
   lastEnquiryInfo?: LastEnquiryInfo | null;
 }
 
@@ -29,6 +30,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onBack,
   onDelivered,
   onNotDelivered,
+  onActiveEnquiry,
+  enquiryStatus,
   lastEnquiryInfo,
 }) => {
   const navigate = useNavigate();
@@ -43,7 +46,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   };
 
   return (
-    <div className="flex items-center justify-between px-4 py-3 bg-secondary-50 border-b border-secondary-200">
+    <div className="flex items-center justify-between px-4 py-3 border-b bg-white" style={{ borderColor: '#e9edef' }}>
       <div className="flex items-center gap-3">
         <button
           onClick={handleBack}
@@ -62,7 +65,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               className="w-10 h-10 rounded-full object-cover"
             />
           ) : (
-            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center ring-1 ring-gray-300">
               <span className="text-green-700 font-semibold text-sm">
                 {(contact.name || contact.phoneNumber).charAt(0).toUpperCase()}
               </span>
@@ -78,7 +81,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           <h3 className="font-semibold text-secondary-900 truncate">
             {contact.name || contact.phoneNumber}
           </h3>
-          <p className="text-xs text-secondary-500">
+          <p className="text-xs text-black">
             {isOnline ? 'Online' : contact.phoneNumber}
           </p>
         </div>
@@ -90,7 +93,16 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             className="p-1.5 rounded-full text-secondary-500 hover:text-secondary-900 hover:bg-secondary-200 transition-colors"
             aria-label="View last enquiry status"
           >
-            <Info size={18} />
+            <Info 
+              size={18} 
+              className={
+                enquiryStatus === 'Converted' 
+                  ? 'text-blue-500' 
+                  : enquiryStatus === 'Lost' 
+                  ? 'text-red-500' 
+                  : 'text-yellow-500'
+              } 
+            />
           </button>
 
           {showInfoPopover && (
@@ -100,8 +112,34 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                 onClick={() => setShowInfoPopover(false)}
               />
               <div className="absolute left-0 top-full mt-2 w-72 bg-white border border-secondary-200 rounded-lg shadow-lg z-20 p-4">
-                <h4 className="text-sm font-semibold text-secondary-900 mb-2">Last Enquiry Status</h4>
-                {lastEnquiryInfo ? (
+                <h4 className="text-sm font-semibold text-secondary-900 mb-2">Status</h4>
+                {enquiryStatus === 'New' ? (
+                  <p className="text-yellow-600 font-medium text-sm">Active Enquiry</p>
+                ) : enquiryStatus === 'Converted' ? (
+                  <p className="text-blue-600 font-medium text-sm">Delivered</p>
+                ) : enquiryStatus === 'Lost' ? (
+                  <div className="space-y-1.5 text-sm">
+                    <p className="text-red-600 font-medium">Not Delivered</p>
+                    {lastEnquiryInfo?.lostReason && (
+                      <div>
+                        <span className="text-secondary-500 block">Reason:</span>
+                        <span className="font-medium text-secondary-900">{lastEnquiryInfo.lostReason}</span>
+                      </div>
+                    )}
+                    {lastEnquiryInfo?.lostReason === 'Other' && lastEnquiryInfo?.otherReason && (
+                      <div>
+                        <span className="text-secondary-500 block">Specified Reason:</span>
+                        <span className="font-medium text-secondary-900">{lastEnquiryInfo.otherReason}</span>
+                      </div>
+                    )}
+                    {lastEnquiryInfo?.notes && (
+                      <div>
+                        <span className="text-secondary-500 block">Notes:</span>
+                        <span className="font-medium text-secondary-900 whitespace-pre-wrap">{lastEnquiryInfo.notes}</span>
+                      </div>
+                    )}
+                  </div>
+                ) : lastEnquiryInfo ? (
                   <div className="space-y-1.5 text-sm">
                     <div className="flex justify-between">
                       <span className="text-secondary-500">Status:</span>
@@ -121,7 +159,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                     )}
                     {lastEnquiryInfo.notes && (
                       <div>
-                        <span className="text-secondary-500 block">Internal Notes:</span>
+                        <span className="text-secondary-500 block">Notes:</span>
                         <span className="font-medium text-secondary-900 whitespace-pre-wrap">{lastEnquiryInfo.notes}</span>
                       </div>
                     )}
@@ -154,6 +192,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <ConversationOutcomeMenu
           onDelivered={onDelivered}
           onNotDelivered={onNotDelivered}
+          onActiveEnquiry={onActiveEnquiry}
         />
       )}
     </div>

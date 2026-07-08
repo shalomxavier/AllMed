@@ -1,14 +1,16 @@
-import { MoreVertical, CheckCircle, XCircle } from 'lucide-react';
+import { MoreVertical, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
 interface ConversationOutcomeMenuProps {
   onDelivered: () => void;
   onNotDelivered: () => void;
+  onActiveEnquiry?: () => void;
 }
 
 export const ConversationOutcomeMenu: React.FC<ConversationOutcomeMenuProps> = ({
   onDelivered,
   onNotDelivered,
+  onActiveEnquiry,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -56,6 +58,18 @@ export const ConversationOutcomeMenu: React.FC<ConversationOutcomeMenuProps> = (
             <XCircle size={16} className="text-red-600" />
             <span className="text-secondary-700">Not Delivered</span>
           </button>
+          {onActiveEnquiry && (
+            <button
+              onClick={() => {
+                onActiveEnquiry();
+                setIsOpen(false);
+              }}
+              className="w-full px-4 py-3 text-left text-sm hover:bg-secondary-50 transition-colors flex items-center gap-3"
+            >
+              <Clock size={16} className="text-yellow-600" />
+              <span className="text-secondary-700">Active Enquiry</span>
+            </button>
+          )}
         </div>
       )}
     </div>

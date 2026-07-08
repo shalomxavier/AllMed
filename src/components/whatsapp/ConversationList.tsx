@@ -59,7 +59,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   }
 
   return (
-    <div className="divide-y divide-secondary-100">
+    <div className="divide-y" style={{ borderColor: '#e9edef' }}>
       {conversations.map((conversation) => {
         const { contact, id } = conversation;
         const isActive = id === activeConversationId;
@@ -79,7 +79,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         } else if (deliveryStatus === 'not_delivered') {
           bgClass = 'bg-red-100';
           borderClass = 'border-red-600';
-        } else if (deliveryStatus === 'pending' || deliveryStatus === null) {
+        } else {
           bgClass = 'bg-yellow-100';
           borderClass = 'border-yellow-600';
         }

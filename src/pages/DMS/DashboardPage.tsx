@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { PageContainer, PageHeader } from '@/components/common';
+import { PageContainer } from '@/components/common';
 import { SummaryCards } from './dashboard/SummaryCards';
 import { FilterBar } from './dashboard/FilterBar';
 import { subscribeToDashboardStats } from '@/services/dashboardService';
@@ -41,15 +41,8 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-6">
-        <PageHeader
-          title="Manager Dashboard"
-          description="Monitor customer enquiries, staff performance and pharmacy conversions."
-        />
-      </div>
-
       {/* Filters */}
-      <div className="mt-6">
+      <div className="mt-4">
         <FilterBar
           selectedStore={selectedStore}
           onStoreChange={setSelectedStore}

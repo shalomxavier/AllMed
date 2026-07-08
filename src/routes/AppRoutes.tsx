@@ -13,10 +13,6 @@ import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
 import { WorkspacePage } from '@pages/DMS/WorkspacePage';
 import { DashboardPage } from '@pages/DMS/DashboardPage';
 import { LostCustomersPage } from '@pages/DMS/LostCustomersPage';
-import { AnalyticsPage } from '@pages/DMS/AnalyticsPage';
-import { ReportsPage } from '@pages/DMS/ReportsPage';
-import { StoresPage } from '@pages/DMS/StoresPage';
-import { SettingsPage } from '@pages/DMS/SettingsPage';
 import { DashboardLayout } from '@components/layout/DashboardLayout';
 import { ProtectedRoute } from './ProtectedRoute';
 import { RoleProtectedRoute } from './RoleProtectedRoute';
@@ -61,10 +57,6 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/dms/workspace" element={<WorkspacePage />} />
         <Route path="/dms/dashboard" element={<DashboardPage />} />
         <Route path="/dms/lost-customers" element={<LostCustomersPage />} />
-        <Route path="/dms/analytics" element={<AnalyticsPage />} />
-        <Route path="/dms/reports" element={<ReportsPage />} />
-        <Route path="/dms/stores" element={<StoresPage />} />
-        <Route path="/dms/settings" element={<SettingsPage />} />
         <Route path="/dms/whatsapp-enquiry" element={<WhatsAppEnquiryPage />} />
       </Route>
       <Route path="/" element={<Navigate to="/attendance" replace />} />

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Search } from 'lucide-react';
-import { PageContainer, PageHeader } from '@/components/common';
+import { PageContainer } from '@/components/common';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
 import type { LastEnquiryInfo } from '@/components/whatsapp/ChatHeader';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
@@ -12,8 +12,17 @@ import { enquiriesService } from '@/services/firestore/enquiriesService';
 import type { EnquiryStatus } from './types';
 import type { LostReason as LostReasonType } from './constants/LOST_REASONS';
 
+type ConversationFilter = 'all' | 'unread' | 'not_delivered';
+
+const FILTERS: { key: ConversationFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'unread', label: 'Unread' },
+  { key: 'not_delivered', label: 'Not Delivered' },
+];
+
 export const WorkspacePage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<ConversationFilter>('all');
   const [showMobileChat, setShowMobileChat] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -83,19 +92,36 @@ export const WorkspacePage: React.FC = () => {
     };
   }, [activeConversation?.id]);
 
-  // Filter conversations based on search
+  // Filter conversations based on search and active filter bubble
   const filteredConversations = conversations.filter((conv) => {
     const searchLower = searchQuery.toLowerCase();
-    const nameMatch = conv.contact.name?.toLowerCase().includes(searchLower);
+    const nameMatch = conv.contact.name?.toLowerCase().includes(searchLower) ?? false;
     const phoneMatch = conv.contact.phoneNumber.includes(searchQuery);
-    const messageMatch = conv.contact.lastMessage?.toLowerCase().includes(searchLower);
-    return nameMatch || phoneMatch || messageMatch;
+    const messageMatch = conv.contact.lastMessage?.toLowerCase().includes(searchLower) ?? false;
+    const matchesSearch = nameMatch || phoneMatch || messageMatch;
+
+    let matchesFilter = true;
+    if (activeFilter === 'unread') {
+      matchesFilter = conv.contact.unreadCount > 0;
+    } else if (activeFilter === 'not_delivered') {
+      matchesFilter = conv.contact.deliveryStatus === 'not_delivered';
+    }
+
+    return matchesSearch && matchesFilter;
   });
 
   const handleSelectConversation = (conversationId: string) => {
+    const conv = conversations.find((c) => c.id === conversationId);
+    const deliveryStatus = conv?.contact?.deliveryStatus;
+    if (deliveryStatus === 'delivered') {
+      setStatus('Converted');
+    } else if (deliveryStatus === 'not_delivered') {
+      setStatus('Lost');
+    } else {
+      setStatus('New');
+    }
     selectConversation(conversationId);
     setShowMobileChat(true);
-    setStatus('New'); // Reset status when switching conversations
   };
 
   const handleBackToList = () => {
@@ -121,6 +147,19 @@ export const WorkspacePage: React.FC = () => {
     try {
       await updateDeliveryStatus(activeConversation.id, 'delivered');
       showToast('success', 'Customer marked as Converted');
+    } catch (err) {
+      console.error('Error updating delivery status:', err);
+      showToast('error', 'Failed to update status');
+    }
+  };
+
+  const handleActiveEnquiry = async () => {
+    if (!activeConversation) return;
+    setStatus('New');
+    setLastEnquiryInfo(null);
+    try {
+      await updateDeliveryStatus(activeConversation.id, 'pending');
+      showToast('success', 'Customer marked as Active Enquiry');
     } catch (err) {
       console.error('Error updating delivery status:', err);
       showToast('error', 'Failed to update status');
@@ -192,32 +231,52 @@ export const WorkspacePage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-6">
-        <PageHeader
-          title="Customer Workspace"
-          description="Manage customer enquiries received through WhatsApp."
-        />
-      </div>
-
-      <div className="mt-6 h-[calc(100vh-200px)] min-h-[600px] flex gap-4">
+      <div className="h-[calc(100vh-200px)] min-h-[600px] flex gap-4">
         {/* Left Panel - Conversation List */}
         <div className={`w-80 flex-shrink-0 flex flex-col card overflow-hidden ${showMobileChat ? 'hidden lg:flex' : 'flex'}`}>
-          {/* Search and Filters */}
-          <div className="p-4 border-b border-secondary-200">
-            <div className="relative">
+          {/* Header, Search and Filters */}
+          <div className="p-4 border-b bg-white" style={{ borderColor: '#e9edef' }}>
+            <h2 className="text-xl font-semibold text-green-600 mb-3">WhatsApp</h2>
+
+            <div className="relative mb-4">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" size={18} />
               <input
                 type="text"
-                placeholder="Search conversations..."
+                placeholder="Search or start new chat"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                style={{ background: '#f6f5f4' }}
               />
+            </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto">
+              {FILTERS.map((filter) => (
+                <button
+                  key={filter.key}
+                  onClick={() => setActiveFilter(filter.key)}
+                  className={`px-3 py-1 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
+                    activeFilter === filter.key
+                      ? 'bg-green-100 text-green-700 border border-green-200'
+                      : 'bg-white text-secondary-600 border border-secondary-300 hover:bg-secondary-100'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
             </div>
           </div>
 
           {/* Conversation List */}
-          <div className="flex-1 overflow-y-auto">
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{
+              backgroundColor: '#efeae2',
+              backgroundImage: "url('/chat-bg.jpg')",
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+            }}
+          >
             <ConversationList
               conversations={filteredConversations}
               activeConversationId={activeConversation?.id || null}
@@ -236,28 +295,44 @@ export const WorkspacePage: React.FC = () => {
                 enquiryStatus={status}
                 onDelivered={handleDeliveredClick}
                 onNotDelivered={handleNotDeliveredClick}
+                onActiveEnquiry={handleActiveEnquiry}
                 lastEnquiryInfo={lastEnquiryInfo}
               />
 
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-4 bg-secondary-50">
-                {activeConversation.messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
-                ))}
-                <div ref={messagesEndRef} />
-              </div>
+              {/* Messages + Input */}
+              <div
+                className="flex-1 flex flex-col overflow-hidden"
+                style={{
+                  backgroundColor: '#efeae2',
+                  backgroundImage: "url('/whatsapp-bg.png')",
+                  backgroundRepeat: 'repeat',
+                }}
+              >
+                <div className="flex-1 overflow-y-auto p-4">
+                  {activeConversation.messages.map((message) => (
+                    <MessageBubble key={message.id} message={message} />
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
 
-              {/* Message Input */}
-              <MessageInput onSendMessage={handleSendMessage} />
+                <MessageInput onSendMessage={handleSendMessage} />
+              </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center bg-secondary-50">
+            <div
+              className="flex-1 flex items-center justify-center bg-secondary-50"
+              style={{
+                backgroundImage: "url('/whatsapp-bg.png')",
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+              }}
+            >
               <div className="text-center">
                 <div className="w-16 h-16 rounded-full bg-secondary-100 flex items-center justify-center mx-auto mb-3">
                   <span className="text-2xl">💬</span>
                 </div>
                 <p className="text-secondary-600 font-medium">Select a conversation</p>
-                <p className="text-sm text-secondary-400 mt-1">
+                <p className="text-sm text-secondary-600 mt-1">
                   Choose a conversation from the list to start chatting
                 </p>
               </div>

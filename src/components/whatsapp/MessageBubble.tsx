@@ -30,11 +30,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, showSende
       className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'} mb-3`}
     >
       <div
-        className={`max-w-[75%] lg:max-w-[65%] rounded-2xl px-4 py-2.5 ${
+        className={`max-w-[75%] lg:max-w-[65%] rounded-2xl px-4 py-2.5 shadow-sm ${
           isOutgoing
-            ? 'bg-green-600 text-white rounded-br-md'
-            : 'bg-white border border-secondary-200 text-secondary-900 rounded-bl-md shadow-sm'
+            ? 'rounded-br-md'
+            : 'rounded-bl-md'
         }`}
+        style={isOutgoing ? { background: '#d9fdd3', color: '#111b21' } : { background: '#ffffff', color: '#111b21' }}
       >
         {showSender && message.isIncoming && (
           <p className="text-xs font-medium text-green-600 mb-1">
@@ -84,7 +85,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, showSende
         )}
 
         {/* Timestamp and status */}
-        <div className={`flex items-center justify-end gap-1 mt-1 ${isOutgoing ? 'text-green-100' : 'text-secondary-400'}`}>
+        <div className={`flex items-center justify-end gap-1 mt-1 ${isOutgoing ? 'text-green-700' : 'text-secondary-400'}`}>
           <span className="text-xs">{formattedTime}</span>
           {isOutgoing && (
             <span title={statusLabels[message.status]}>

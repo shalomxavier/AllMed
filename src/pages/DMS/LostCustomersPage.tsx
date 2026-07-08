@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { PageContainer, PageHeader } from '@/components/common';
+import { PageContainer } from '@/components/common';
 import { ChatHeader, MessageBubble } from '@/components/whatsapp';
 import { LostCustomerList } from './components/LostCustomerList';
 import { LostCustomerDetail } from './components/LostCustomerDetail';
@@ -104,15 +104,8 @@ export const LostCustomersPage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-6">
-        <PageHeader
-          title="Lost Customers"
-          description="View and manage lost customer enquiries and conversations."
-        />
-      </div>
-
       {/* Lost Reason Summary Cards */}
-      <div className="mt-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+      <div className="mt-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
         {lostReasonDistribution.map((item) => (
           <div key={item.reason} className="card p-3 bg-red-50 border border-red-200">
             <p className="text-xs text-red-600 font-medium mb-1 truncate">{item.reason}</p>

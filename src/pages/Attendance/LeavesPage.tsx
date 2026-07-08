@@ -465,8 +465,6 @@ export const LeavesPage: React.FC = () => {
       if (typeFilter === 'earned' && !(reason.includes('earned') || reason.includes('privilege'))) return false;
     }
 
-    if (r.type === 'weekoff') return matchesSearch;
-
     const dates = data.dates ?? [];
     if (dates.length > 0) {
       return matchesSearch && dates.some((d: string) => d >= fromDateFilter && d <= toDateFilter);

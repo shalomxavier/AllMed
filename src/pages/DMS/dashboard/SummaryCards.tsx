@@ -73,7 +73,7 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({ stats }) => {
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4">
       {cardConfig.map((config) => {
         const Icon = config.icon;
         const value = stats[config.key as keyof DashboardStats];
@@ -86,18 +86,16 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({ stats }) => {
           <div
             key={config.key}
             onClick={() => handleCardClick(config.key)}
-            className={`card p-4 ${config.bgColor} border ${config.borderColor} ${
+            className={`card p-5 ${config.bgColor} border ${config.borderColor} aspect-square ${
               isClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
             }`}
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-secondary-600 font-medium mb-1">{config.label}</p>
-                <p className="text-2xl font-bold text-secondary-900">{displayValue}</p>
+            <div className="h-full flex flex-col items-center justify-center text-center">
+              <div className={`p-3 rounded-full ${config.bgColor} mb-3`}>
+                <Icon size={28} className={config.iconColor} />
               </div>
-              <div className={`p-2 rounded-lg ${config.bgColor}`}>
-                <Icon size={20} className={config.iconColor} />
-              </div>
+              <p className="text-3xl font-bold text-secondary-900 mb-1">{displayValue}</p>
+              <p className="text-sm text-secondary-600 font-medium">{config.label}</p>
             </div>
           </div>
         );

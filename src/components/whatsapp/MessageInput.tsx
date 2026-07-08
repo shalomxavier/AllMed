@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Paperclip, Smile, Mic } from 'lucide-react';
+import { Send, Plus, Smile, Mic } from 'lucide-react';
 
 interface MessageInputProps {
   onSendMessage: (content: string) => void;
@@ -10,7 +10,7 @@ interface MessageInputProps {
 export const MessageInput: React.FC<MessageInputProps> = ({
   onSendMessage,
   disabled = false,
-  placeholder = 'Type a message...',
+  placeholder = 'Type a message',
 }) => {
   const [message, setMessage] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -48,21 +48,21 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   const showSendButton = message.trim().length > 0;
 
   return (
-    <div className="px-4 py-3 bg-secondary-50 border-t border-secondary-200">
-      <div className="flex items-end gap-2">
+    <div className="px-4 py-3">
+      <div className="flex items-end gap-2 bg-white rounded-full shadow-sm px-3 py-1">
         {/* Attachment Button */}
         <button
-          className="p-2 rounded-full text-secondary-500 hover:text-secondary-700 hover:bg-secondary-200 transition-colors flex-shrink-0"
+          className="p-2.5 rounded-full text-black hover:bg-secondary-200 transition-colors flex-shrink-0"
           aria-label="Attach file"
           title="Attach file"
           disabled={disabled}
         >
-          <Paperclip size={20} />
+          <Plus size={20} />
         </button>
 
         {/* Emoji Button */}
         <button
-          className="p-2 rounded-full text-secondary-500 hover:text-secondary-700 hover:bg-secondary-200 transition-colors flex-shrink-0 hidden sm:block"
+          className="p-2.5 rounded-full text-black hover:bg-secondary-200 transition-colors flex-shrink-0"
           aria-label="Add emoji"
           title="Add emoji"
           disabled={disabled}
@@ -80,8 +80,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             placeholder={disabled ? 'Sending...' : placeholder}
             disabled={disabled}
             rows={1}
-            className="w-full px-4 py-2.5 bg-white border border-secondary-300 rounded-2xl text-secondary-900 placeholder-secondary-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none max-h-32"
-            style={{ minHeight: '44px' }}
+            className="w-full px-2 py-2.5 bg-transparent text-secondary-900 placeholder-secondary-500 focus:outline-none resize-none max-h-32 leading-5"
           />
         </div>
 
@@ -90,7 +89,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           <button
             onClick={handleSend}
             disabled={disabled}
-            className="p-2.5 rounded-full bg-green-600 text-white hover:bg-green-700 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="p-2.5 rounded-full text-black hover:bg-secondary-200 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="Send message"
           >
             <Send size={20} />
@@ -99,11 +98,11 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           <button
             onClick={() => setIsRecording(!isRecording)}
             disabled={disabled}
-            className={`p-2.5 rounded-full transition-colors flex-shrink-0 ${
-              isRecording 
-                ? 'bg-primary-600 text-white' 
-                : 'bg-green-600 text-white hover:bg-green-700'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`p-2.5 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+              isRecording
+                ? 'text-primary-600 hover:bg-primary-100'
+                : 'text-black hover:bg-secondary-200'
+            }`}
             aria-label={isRecording ? 'Stop recording' : 'Record voice message'}
           >
             <Mic size={20} />
