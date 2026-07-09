@@ -36,12 +36,20 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
     allowed = isDmsPath || isUsersPath;
   } else if (designation === 'Branch Manager') {
     allowed = isAttendancePath;
+  } else if (designation === 'WhatsApp Messager') {
+    allowed = isDmsPath;
   } else {
     allowed = true;
   }
 
   if (!allowed) {
-    return <Navigate to={designation === 'Operations Manager' ? '/dms' : '/attendance'} replace />;
+    const defaultPath = designation === 'Operations Manager' || designation === 'WhatsApp Messager' ? '/dms' : '/attendance';
+    return <Navigate to={defaultPath} replace />;
+  }
+
+  // Redirect WhatsApp Messager directly to WhatsApp Enquiry page
+  if (designation === 'WhatsApp Messager' && path === '/dms') {
+    return <Navigate to="/dms/whatsapp-enquiry" replace />;
   }
 
   return <>{children}</>;

@@ -85,7 +85,10 @@ export const LeavesPage: React.FC = () => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1).toLocaleDateString('en-CA');
   });
-  const [toDateFilter, setToDateFilter] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [toDateFilter, setToDateFilter] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth() + 1, 0).toLocaleDateString('en-CA');
+  });
   const [typeFilter, setTypeFilter] = useState<'all' | 'leave' | 'weekoff' | 'sick' | 'casual' | 'holiday' | 'maternity' | 'earned'>('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState<{ employeeCode: string; employeeName: string; type: 'type' | 'total'; typeKey?: string; details: any[] } | null>(null);
@@ -262,8 +265,8 @@ export const LeavesPage: React.FC = () => {
     setCheckingAbsences(true);
     try {
       const db = getFirestore();
-      const PERIOD_END = new Date('2026-06-10');
-      const PERIOD_START = new Date('2026-06-10');
+      const PERIOD_END = new Date();
+      const PERIOD_START = new Date();
       PERIOD_START.setDate(PERIOD_START.getDate() - 29);
 
       // Fetch all shifts

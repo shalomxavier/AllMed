@@ -41,6 +41,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     if (userData?.designation === 'Branch Manager') {
       return navItems.filter((item) => item.path === '/attendance');
     }
+    if (userData?.designation === 'WhatsApp Messager') {
+      return navItems.filter((item) => item.path === '/dms');
+    }
     return navItems;
   })();
 

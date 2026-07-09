@@ -1,4 +1,4 @@
-import { Users, UserCheck, UserX, Calendar, TrendingUp } from 'lucide-react';
+import { Users, UserCheck, UserX, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { DashboardStats } from './types';
 
@@ -6,7 +6,9 @@ interface SummaryCardsProps {
   stats: DashboardStats;
 }
 
-const cardConfig = [
+type NumericStatKey = 'totalConversations' | 'activeConversations' | 'deliveredCustomers' | 'lostCustomers' | 'conversionRate';
+
+const cardConfig: { key: NumericStatKey; label: string; icon: typeof Users; color: string; bgColor: string; iconColor: string; borderColor: string }[] = [
   {
     key: 'totalConversations',
     label: 'Total Conversations',
@@ -44,15 +46,6 @@ const cardConfig = [
     borderColor: 'border-red-200',
   },
   {
-    key: 'pendingCustomers',
-    label: 'Pending Customers',
-    icon: Calendar,
-    color: 'purple',
-    bgColor: 'bg-purple-50',
-    iconColor: 'text-purple-600',
-    borderColor: 'border-purple-200',
-  },
-  {
     key: 'conversionRate',
     label: 'Conversion Rate',
     icon: TrendingUp,
@@ -73,10 +66,10 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({ stats }) => {
   };
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-4">
       {cardConfig.map((config) => {
         const Icon = config.icon;
-        const value = stats[config.key as keyof DashboardStats];
+        const value = stats[config.key];
         const displayValue = typeof value === 'number' && config.key === 'conversionRate'
           ? `${value}%`
           : value;
@@ -86,7 +79,7 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({ stats }) => {
           <div
             key={config.key}
             onClick={() => handleCardClick(config.key)}
-            className={`card p-5 ${config.bgColor} border ${config.borderColor} aspect-square ${
+            className={`card p-5 ${config.bgColor} border ${config.borderColor} ${
               isClickable ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
             }`}
           >

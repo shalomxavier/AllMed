@@ -79,19 +79,26 @@ export const subscribeToDashboardStats = (
       // Calculate statistics
       const totalConversations = conversations.length;
 
-      // "Active" = conversation has not been archived/closed (isActive flag).
-      // Kept distinct from Pending/Delivered/Lost, which classify by outcome.
-      const activeConversations = conversations.filter((c) => c.isActive).length;
-
+      // A conversation can only be in one of three states:
+      // active, delivered, or not_delivered. These are mutually exclusive.
       const deliveredCustomers = conversations.filter((c) => c.deliveryStatus === 'delivered').length;
       const lostCustomers = conversations.filter((c) => c.deliveryStatus === 'not_delivered').length;
-      const pendingCustomers = conversations.filter(
-        (c) => c.deliveryStatus === 'pending' || c.deliveryStatus === null
-      ).length;
+      const activeConversations = totalConversations - deliveredCustomers - lostCustomers;
+
+      // Aggregate lost reasons for not-delivered conversations
+      const lostReasons: Record<string, number> = {};
+      conversations
+        .filter((c) => c.deliveryStatus === 'not_delivered')
+        .forEach((c) => {
+          const data = snapshot.docs.find((doc) => doc.id === c.id)?.data() || {};
+          const contact = data.contact || {};
+          const reason = (contact.deliveryReason || data.deliveryReason || 'Other') as string;
+          lostReasons[reason] = (lostReasons[reason] || 0) + 1;
+        });
 
       // Calculate conversion rate
-      const conversionRate = totalConversations > 0 
-        ? Math.round((deliveredCustomers / totalConversations) * 100) 
+      const conversionRate = totalConversations > 0
+        ? Math.round((deliveredCustomers / totalConversations) * 100)
         : 0;
 
       // Average response time (placeholder - would need message timestamps for accurate calculation)
@@ -102,9 +109,9 @@ export const subscribeToDashboardStats = (
         activeConversations,
         deliveredCustomers,
         lostCustomers,
-        pendingCustomers,
         averageResponseTime,
         conversionRate,
+        lostReasons,
       };
 
       callback(stats);

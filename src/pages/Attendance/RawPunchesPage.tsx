@@ -1,7 +1,7 @@
- import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Search, RefreshCw, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit, startAfter, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 
@@ -30,13 +30,21 @@ const toDate = (logDate: any): Date | null => {
 const formatDate = (logDate: any): string => {
   const d = toDate(logDate);
   if (!d) return '—';
-  return d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+  const year = d.getUTCFullYear();
+  return `${day}-${month}-${year}`;
 };
 
 const formatTime = (logDate: any): string => {
   const d = toDate(logDate);
   if (!d) return '—';
-  return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const hours = d.getUTCHours();
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(d.getUTCSeconds()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  const displayHours = hours % 12 || 12;
+  return `${String(displayHours).padStart(2, '0')}:${minutes}:${seconds} ${ampm}`;
 };
 
 const SEARCH_LIMIT = 1000;
@@ -49,19 +57,20 @@ export const RawPunchesPage: React.FC = () => {
   const [allowedUserIds, setAllowedUserIds] = useState<Set<string>>(new Set());
   const [isBranchManager, setIsBranchManager] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
   const [devicesMap, setDevicesMap] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [cursorStack, setCursorStack] = useState<(QueryDocumentSnapshot<DocumentData> | null)[]>([null]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [lastDocOnPage, setLastDocOnPage] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
-  const [hasNextPage, setHasNextPage] = useState(false);
-  const [isSearchMode, setIsSearchMode] = useState(false);
   const [shiftsMap, setShiftsMap] = useState<Record<string, any[]>>({});
+  const [employeesLoaded, setEmployeesLoaded] = useState(false);
   const [locationFilter, setLocationFilter] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDateFilter, setToDateFilter] = useState('');
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const activeFilters = useRef({ fromDate: '', toDateFilter: '', locationFilter: '' });
 
   useEffect(() => {
     const today = new Date();
@@ -76,36 +85,50 @@ export const RawPunchesPage: React.FC = () => {
     setToDateFilter(formatDateLocal(today));
   }, []);
 
-  const fetchPage = async (afterDoc: QueryDocumentSnapshot<DocumentData> | null) => {
+  const getDeviceIdsForLocation = (loc: string): number[] => {
+    if (!loc) return [];
+    return Object.entries(devicesMap)
+      .filter(([, locationName]) => locationName === loc)
+      .map(([deviceId]) => Number(deviceId))
+      .filter((id) => !isNaN(id));
+  };
+
+  const buildQueryConstraints = (from: string, to: string, deviceIds: number[], cursor?: QueryDocumentSnapshot<DocumentData>) => {
+    const constraints: any[] = [orderBy('logDate', 'desc')];
+    if (from) {
+      const fromTs = Timestamp.fromDate(new Date(from + 'T00:00:00'));
+      constraints.push(where('logDate', '>=', fromTs));
+    }
+    if (to) {
+      const toTs = Timestamp.fromDate(new Date(to + 'T23:59:59'));
+      constraints.push(where('logDate', '<=', toTs));
+    }
+    if (deviceIds.length > 0) {
+      constraints.push(where('deviceId', 'in', deviceIds.slice(0, 30)));
+    }
+    if (cursor) constraints.push(startAfter(cursor));
+    constraints.push(limit(SEARCH_LIMIT));
+    return constraints;
+  };
+
+  const applyBranchFilter = (data: RawPunch[]) =>
+    isBranchManager ? data.filter((p) => p.userId && allowedUserIds.has(p.userId.trim().toLowerCase())) : data;
+
+  const fetchPage = async (from = fromDate, to = toDateFilter, loc = locationFilter) => {
     if (!currentUser) return;
+    activeFilters.current = { fromDate: from, toDateFilter: to, locationFilter: loc };
     setLoading(true);
     try {
-      // For Branch Managers, fetch a larger batch and store all filtered records for in-memory pagination
-      if (isBranchManager) {
-        const snapshot = await getDocs(query(collection(db, 'rawPunches'), orderBy('logDate', 'desc'), limit(SEARCH_LIMIT)));
-        const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        const filteredData = data.filter((p) => p.userId && allowedUserIds.has(p.userId.trim().toLowerCase()));
-        setAllPunches(filteredData);
-        setHasNextPage(filteredData.length > PAGE_SIZE);
-        setCurrentPageIndex(0);
-        setLastDocOnPage(null);
-        setCursorStack([null]);
-        return;
-      }
-
-      const ref = collection(db, 'rawPunches');
-      const constraints: any[] = [orderBy('logDate', 'desc'), limit(PAGE_SIZE + 1)];
-      if (afterDoc) constraints.push(startAfter(afterDoc));
-      const snapshot = await getDocs(query(ref, ...constraints));
-
-      const docs = snapshot.docs;
-      const hasMore = docs.length > PAGE_SIZE;
-      const pageDocs = hasMore ? docs.slice(0, PAGE_SIZE) : docs;
-
-      const data: RawPunch[] = pageDocs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const deviceIds = getDeviceIdsForLocation(loc);
+      const constraints = buildQueryConstraints(from, to, deviceIds);
+      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+      console.log('[fetchPage] docs returned:', snapshot.docs.length, 'hasMore:', snapshot.docs.length === SEARCH_LIMIT);
+      let data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      data = applyBranchFilter(data);
       setAllPunches(data);
-      setHasNextPage(hasMore);
-      setLastDocOnPage(pageDocs[pageDocs.length - 1] ?? null);
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1] ?? null);
+      setHasMore(snapshot.docs.length === SEARCH_LIMIT);
+      setCurrentPageIndex(0);
     } catch (error) {
       console.error('Error fetching rawPunches:', error);
     } finally {
@@ -113,12 +136,49 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
+  const fetchMorePunches = async () => {
+    if (!currentUser || !lastDoc || loadingMore) return;
+    const { fromDate: from, toDateFilter: to, locationFilter: loc } = activeFilters.current;
+    setLoadingMore(true);
+    try {
+      const deviceIds = getDeviceIdsForLocation(loc);
+      const constraints = buildQueryConstraints(from, to, deviceIds, lastDoc);
+      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+      let data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      data = applyBranchFilter(data);
+      setAllPunches((prev) => {
+        const merged = [...prev, ...data];
+        setCurrentPageIndex(Math.floor(prev.length / PAGE_SIZE));
+        return merged;
+      });
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1] ?? null);
+      setHasMore(snapshot.docs.length === SEARCH_LIMIT);
+    } catch (error) {
+      console.error('Error fetching more rawPunches:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
   useEffect(() => {
     if (!currentUser) return;
+    setEmployeesLoaded(false);
     fetchEmployees();
     fetchShifts();
     fetchDevices();
   }, [currentUser, userData]);
+
+  useEffect(() => {
+    if (!currentUser || !employeesLoaded) return;
+    fetchPage(fromDate, toDateFilter, locationFilter);
+  }, [currentUser, employeesLoaded]);
+
+  useEffect(() => {
+    if (!currentUser || !employeesLoaded) return;
+    setLastDoc(null);
+    setHasMore(false);
+    fetchPage(fromDate, toDateFilter, locationFilter);
+  }, [fromDate, toDateFilter, locationFilter]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 500);
@@ -126,36 +186,9 @@ export const RawPunchesPage: React.FC = () => {
   }, [searchQuery]);
 
   useEffect(() => {
-    if (debouncedSearch.trim()) {
-      performSearch();
-    } else {
-      setIsSearchMode(false);
-      setCursorStack([null]);
-      setCurrentPageIndex(0);
-      fetchPage(null);
-    }
-  }, [debouncedSearch]);
+    setCurrentPageIndex(0);
+  }, [debouncedSearch, fromDate, toDateFilter, locationFilter]);
 
-  const performSearch = async () => {
-    if (!currentUser) return;
-    setLoading(true);
-    setIsSearchMode(true);
-    try {
-      const snapshot = await getDocs(query(collection(db, 'rawPunches'), orderBy('logDate', 'desc'), limit(SEARCH_LIMIT)));
-      const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      // Filter by branch manager if current user is a Branch Manager
-      const filteredData = isBranchManager
-        ? data.filter((p) => p.userId && allowedUserIds.has(p.userId.trim().toLowerCase()))
-        : data;
-      setAllPunches(filteredData);
-      setCurrentPageIndex(0);
-      setHasNextPage(false);
-    } catch (error) {
-      console.error('Error searching rawPunches:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchEmployees = async () => {
     if (!currentUser) return;
@@ -176,6 +209,7 @@ export const RawPunchesPage: React.FC = () => {
       setEmployeeMap(map);
       setAllowedUserIds(allowedIds);
       setIsBranchManager(userData?.designation === 'Branch Manager');
+      setEmployeesLoaded(true);
     } catch (error) {
       console.error('Error fetching employees:', error);
     }
@@ -232,7 +266,7 @@ export const RawPunchesPage: React.FC = () => {
     if (!shifts || shifts.length === 0) return null;
     const d = toDate(logDate);
     if (!d) return null;
-    const punchDateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const punchDateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
     return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
   };
 
@@ -278,84 +312,37 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleNextPage = () => {
-    if (!hasNextPage) return;
-    if (isBranchManager) {
+    if (currentPageIndex < totalPages - 1) {
       setCurrentPageIndex(currentPageIndex + 1);
-      return;
+    } else if (hasMore) {
+      fetchMorePunches();
     }
-    if (!lastDocOnPage) return;
-    const newStack = [...cursorStack, lastDocOnPage];
-    setCursorStack(newStack);
-    setCurrentPageIndex(currentPageIndex + 1);
-    fetchPage(lastDocOnPage);
   };
 
   const handlePrevPage = () => {
-    if (currentPageIndex === 0) return;
-    if (isBranchManager) {
-      setCurrentPageIndex(currentPageIndex - 1);
-      return;
-    }
-    const newIndex = currentPageIndex - 1;
-    const prevCursor = cursorStack[newIndex] ?? null;
-    const newStack = cursorStack.slice(0, newIndex + 1);
-    setCursorStack(newStack);
-    setCurrentPageIndex(newIndex);
-    fetchPage(prevCursor);
-  };
-
-  const filteredPunches = allPunches.filter((p: RawPunch) => {
-    const punchDate = toDate(p.logDate);
-    if (fromDate && punchDate) {
-      const from = new Date(fromDate);
-      from.setHours(0, 0, 0, 0);
-      if (punchDate < from) return false;
-    }
-    if (toDateFilter && punchDate) {
-      const to = new Date(toDateFilter);
-      to.setHours(23, 59, 59, 999);
-      if (punchDate > to) return false;
-    }
-    if (!isSearchMode) {
-      if (locationFilter) {
-        const location = resolveDeviceLocation(p.deviceId);
-        return location === locationFilter;
-      }
-      return true;
-    }
-    const q = debouncedSearch.toLowerCase();
-    const empName = resolveEmployeeName(p.userId).toLowerCase();
-    const matchesSearch = (
-      p.userId?.toLowerCase().includes(q) ||
-      empName.includes(q) ||
-      p.deviceLogId?.toLowerCase().includes(q) ||
-      p.direction?.toLowerCase().includes(q) ||
-      p.sourceTable?.toLowerCase().includes(q) ||
-      String(p.deviceId ?? '').includes(q)
-    );
-    if (locationFilter) {
-      const location = resolveDeviceLocation(p.deviceId);
-      return matchesSearch && location === locationFilter;
-    }
-    return matchesSearch;
-  });
-
-  const totalPages = Math.ceil(filteredPunches.length / PAGE_SIZE);
-  const paginatedPunches = isSearchMode || isBranchManager
-    ? filteredPunches.slice(currentPageIndex * PAGE_SIZE, (currentPageIndex + 1) * PAGE_SIZE)
-    : filteredPunches;
-
-  const handleNextPageSearch = () => {
-    if (currentPageIndex < totalPages - 1) {
-      setCurrentPageIndex(currentPageIndex + 1);
-    }
-  };
-
-  const handlePrevPageSearch = () => {
     if (currentPageIndex > 0) {
       setCurrentPageIndex(currentPageIndex - 1);
     }
   };
+
+  const filteredPunches = allPunches.filter((p: RawPunch) => {
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.toLowerCase();
+      const empName = resolveEmployeeName(p.userId).toLowerCase();
+      return (
+        p.userId?.toLowerCase().includes(q) ||
+        empName.includes(q) ||
+        p.deviceLogId?.toLowerCase().includes(q) ||
+        p.direction?.toLowerCase().includes(q) ||
+        p.sourceTable?.toLowerCase().includes(q) ||
+        String(p.deviceId ?? '').includes(q)
+      );
+    }
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredPunches.length / PAGE_SIZE));
+  const paginatedPunches = filteredPunches.slice(currentPageIndex * PAGE_SIZE, (currentPageIndex + 1) * PAGE_SIZE);
 
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
@@ -375,7 +362,7 @@ export const RawPunchesPage: React.FC = () => {
           </div>
         </div>
         <button
-          onClick={() => { setCursorStack([null]); setCurrentPageIndex(0); fetchPage(null); }}
+          onClick={() => { setLastDoc(null); setHasMore(false); setCurrentPageIndex(0); fetchPage(fromDate, toDateFilter, locationFilter); }}
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
         >
           <RefreshCw size={16} />
@@ -506,30 +493,25 @@ export const RawPunchesPage: React.FC = () => {
         {!loading && (
           <div className="mt-4 flex items-center justify-between text-sm text-secondary-500">
             <span>
-              {isSearchMode ? (
-                <>
-                  Page {currentPageIndex + 1} of {totalPages} &nbsp;·&nbsp; {filteredPunches.length} total match{filteredPunches.length !== 1 ? 'es' : ''}
-                </>
-              ) : (
-                <>
-                  Page {currentPageIndex + 1} &nbsp;·&nbsp; {paginatedPunches.length} record{paginatedPunches.length !== 1 ? 's' : ''} shown
-                </>
-              )}
+              <>
+                Page {currentPageIndex + 1} of {totalPages}{hasMore ? '+' : ''} &nbsp;·&nbsp; {filteredPunches.length} total match{filteredPunches.length !== 1 ? 'es' : ''}{hasMore ? '+' : ''}
+              </>
             </span>
             <div className="flex items-center gap-2">
               <button
-                onClick={isSearchMode ? handlePrevPageSearch : handlePrevPage}
+                onClick={handlePrevPage}
                 disabled={currentPageIndex === 0}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-secondary-200 bg-white hover:bg-secondary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft size={16} /> Prev
               </button>
               <button
-                onClick={isSearchMode ? handleNextPageSearch : handleNextPage}
-                disabled={isSearchMode ? currentPageIndex >= totalPages - 1 : !hasNextPage}
+                onClick={handleNextPage}
+                disabled={currentPageIndex >= totalPages - 1 && !hasMore || loadingMore}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-secondary-200 bg-white hover:bg-secondary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                Next <ChevronRight size={16} />
+                {loadingMore ? <div className="w-4 h-4 border-2 border-secondary-300 border-t-green-600 rounded-full animate-spin" /> : <ChevronRight size={16} />}
+                Next
               </button>
             </div>
           </div>

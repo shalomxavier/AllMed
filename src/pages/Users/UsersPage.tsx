@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, UserPlus, User, Search, Pencil, Trash2, X } from 'lucide-react';
+import { ArrowLeft, RefreshCw, UserPlus, User, Search, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, getDocs, collection, query, orderBy, updateDoc } from 'firebase/firestore';
-import { auth, db } from '@/firebase/firebase';
+import { db, firebaseConfig } from '@/firebase/firebase';
 
 interface Device {
   id: string;
@@ -139,6 +138,27 @@ export const UsersPage: React.FC = () => {
     });
   };
 
+  const createUserViaAPI = async (email: string, password: string) => {
+    const API_KEY = firebaseConfig.apiKey;
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+      returnSecureToken: true,
+        }),
+      }
+    );
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Failed to create user');
+    }
+    return data;
+  };
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddUserError('');
@@ -150,10 +170,10 @@ export const UsersPage: React.FC = () => {
 
     setAddingUser(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, addUserForm.email, addUserForm.password);
-      const user = userCredential.user;
+      const result = await createUserViaAPI(addUserForm.email, addUserForm.password);
+      const userId = result.localId;
 
-      await setDoc(doc(db, 'users', user.uid), {
+      await setDoc(doc(db, 'users', userId), {
         name: addUserForm.name,
         email: addUserForm.email,
         designation: addUserForm.designation,
@@ -165,13 +185,12 @@ export const UsersPage: React.FC = () => {
       setAddUserModalOpen(false);
       fetchUsers();
     } catch (error: any) {
-      const errorCode = error.code;
       let errorMessage = 'Failed to create user';
-      if (errorCode === 'auth/email-already-in-use') {
+      if (error.message.includes('EMAIL_EXISTS')) {
         errorMessage = 'An account with this email already exists';
-      } else if (errorCode === 'auth/weak-password') {
+      } else if (error.message.includes('WEAK_PASSWORD')) {
         errorMessage = 'Password should be at least 6 characters';
-      } else if (errorCode === 'auth/invalid-email') {
+      } else if (error.message.includes('INVALID_EMAIL')) {
         errorMessage = 'Please enter a valid email address';
       }
       setAddUserError(errorMessage);
@@ -206,10 +225,10 @@ export const UsersPage: React.FC = () => {
               placeholder="Search by name or email..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
             />
           </div>
-          <button onClick={() => setAddUserModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shrink-0">
+          <button onClick={() => setAddUserModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shrink-0">
             <UserPlus size={16} />
             Add User
           </button>
@@ -220,12 +239,12 @@ export const UsersPage: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4 content-start">
         {loading ? (
           <div className="w-full flex items-center justify-center py-16">
-            <div className="w-7 h-7 border-2 border-secondary-300 border-t-purple-600 rounded-full animate-spin" />
+            <div className="w-7 h-7 border-2 border-secondary-300 border-t-red-600 rounded-full animate-spin" />
           </div>
         ) : users.length === 0 ? (
           <div className="w-full flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
-              <UserPlus className="w-8 h-8 text-purple-400" />
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-3">
+              <UserPlus className="w-8 h-8 text-red-400" />
             </div>
             <p className="text-sm font-medium text-secondary-700">No users found</p>
           </div>
@@ -233,8 +252,8 @@ export const UsersPage: React.FC = () => {
           users.map((user) => (
             <div key={user.id} className="bg-white border border-secondary-200 rounded-lg p-5 hover:shadow-sm transition-shadow flex flex-col">
               <div className="flex items-start mb-3">
-                <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center">
-                  <User className="w-6 h-6 text-purple-600" />
+                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                  <User className="w-6 h-6 text-red-600" />
                 </div>
               </div>
               <h3 className="font-semibold text-secondary-900 mb-1">{user.name}</h3>
@@ -245,21 +264,11 @@ export const UsersPage: React.FC = () => {
               </div>
               <div className="flex flex-col gap-2 mt-3">
                 {user.designation === 'Branch Manager' && (
-                  <button onClick={() => openAssignEmployeesModal(user)} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors">
+                  <button onClick={() => openAssignEmployeesModal(user)} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
                     <UserPlus size={16} />
                     Employees
                   </button>
                 )}
-                <div className="flex items-center gap-2">
-                  <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors">
-                    <Pencil size={16} />
-                    Edit
-                  </button>
-                  <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
-                    <Trash2 size={16} />
-                    Delete
-                  </button>
-                </div>
               </div>
             </div>
           ))
@@ -284,7 +293,7 @@ export const UsersPage: React.FC = () => {
                   type="text"
                   value={addUserForm.name}
                   onChange={(e) => setAddUserForm({ ...addUserForm, name: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 />
               </div>
 
@@ -294,7 +303,7 @@ export const UsersPage: React.FC = () => {
                   type="email"
                   value={addUserForm.email}
                   onChange={(e) => setAddUserForm({ ...addUserForm, email: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 />
               </div>
 
@@ -304,7 +313,7 @@ export const UsersPage: React.FC = () => {
                   type="password"
                   value={addUserForm.password}
                   onChange={(e) => setAddUserForm({ ...addUserForm, password: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 />
               </div>
 
@@ -313,13 +322,14 @@ export const UsersPage: React.FC = () => {
                 <select
                   value={addUserForm.designation}
                   onChange={(e) => setAddUserForm({ ...addUserForm, designation: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 >
                   <option value="">Select designation</option>
                   <option value="Director">Director</option>
                   <option value="HR">HR</option>
                   <option value="Operations Manager">Operations Manager</option>
                   <option value="Branch Manager">Branch Manager</option>
+                  <option value="WhatsApp Messager">WhatsApp Messager</option>
                 </select>
               </div>
 
@@ -328,7 +338,7 @@ export const UsersPage: React.FC = () => {
                 <select
                   value={addUserForm.branch}
                   onChange={(e) => setAddUserForm({ ...addUserForm, branch: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 >
                   <option value="">Select branch</option>
                   {branchOptions.map((branch) => (
@@ -352,7 +362,7 @@ export const UsersPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={addingUser}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-70"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
                 >
                   {addingUser ? 'Adding...' : 'Add User'}
                 </button>
@@ -384,7 +394,7 @@ export const UsersPage: React.FC = () => {
                   placeholder="Search employees..."
                   value={employeeSearchQuery}
                   onChange={(e) => setEmployeeSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 />
               </div>
             </div>
@@ -413,11 +423,11 @@ export const UsersPage: React.FC = () => {
                       key={employee.id}
                       onClick={() => toggleEmployeeSelection(employee.id)}
                       className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                        selectedEmployeeIds.has(employee.id) ? 'bg-purple-50 border border-purple-200' : 'bg-secondary-50 border border-secondary-200 hover:bg-secondary-100'
+                        selectedEmployeeIds.has(employee.id) ? 'bg-red-50 border border-red-200' : 'bg-secondary-50 border border-secondary-200 hover:bg-secondary-100'
                       }`}
                     >
                       <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                        selectedEmployeeIds.has(employee.id) ? 'bg-purple-600 border-purple-600' : 'border-secondary-300'
+                        selectedEmployeeIds.has(employee.id) ? 'bg-red-600 border-red-600' : 'border-secondary-300'
                       }`}>
                         {selectedEmployeeIds.has(employee.id) && (
                           <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -445,7 +455,7 @@ export const UsersPage: React.FC = () => {
               <button
                 onClick={handleAssignEmployees}
                 disabled={assigningEmployees}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-70"
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
               >
                 {assigningEmployees ? 'Assigning...' : `Assign (${selectedEmployeeIds.size})`}
               </button>

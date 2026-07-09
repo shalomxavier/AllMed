@@ -3,7 +3,7 @@ export interface DashboardStats {
   activeConversations: number;
   deliveredCustomers: number;
   lostCustomers: number;
-  pendingCustomers: number;
   averageResponseTime: string;
   conversionRate: number;
+  lostReasons: Record<string, number>;
 }

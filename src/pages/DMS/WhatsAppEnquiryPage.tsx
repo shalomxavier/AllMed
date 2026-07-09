@@ -1,15 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, MessageSquare, Search, Plus, RefreshCw, AlertCircle } from 'lucide-react';
+import { ArrowLeft, MessageSquare, Search, Plus, RefreshCw, AlertCircle, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
 import { format } from 'date-fns';
+import { useAuthContext } from '@/contexts/AuthContext';
 
 export const WhatsAppEnquiryPage: React.FC = () => {
   const navigate = useNavigate();
+  const { userData, logout } = useAuthContext();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileChat, setShowMobileChat] = useState(false);
+  const isWhatsAppMessager = userData?.designation === 'WhatsApp Messager';
 
   const {
     conversations,
@@ -74,38 +77,62 @@ export const WhatsAppEnquiryPage: React.FC = () => {
   const messageGroups = groupMessagesByDate();
 
   return (
-    <div className="h-[calc(100vh-80px)] flex flex-col">
+    <div className={`${isWhatsAppMessager ? 'h-screen' : 'h-[calc(100vh-80px)]'} flex flex-col`}>
       {/* Page Header - Desktop */}
-      <div className="hidden lg:flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/dms')}
-            className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
-            aria-label="Go back"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-semibold text-secondary-900">WhatsApp Enquiry Tracker</h1>
-            <p className="text-sm text-secondary-500">
-              Manage customer enquiries via WhatsApp Business
-            </p>
+      {!isWhatsAppMessager && (
+        <div className="hidden lg:flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate('/dms')}
+              className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
+              aria-label="Go back"
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <div>
+              <h1 className="text-xl font-semibold text-secondary-900">WhatsApp Enquiry Tracker</h1>
+              <p className="text-sm text-secondary-500">
+                Manage customer enquiries via WhatsApp Business
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={refreshConversations}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+            >
+              <RefreshCw size={16} />
+              Refresh
+            </button>
+            <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
+              <Plus size={16} />
+              New Chat
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+      )}
+
+      {/* WhatsApp Messager Header - Full screen WhatsApp-like experience */}
+      {isWhatsAppMessager && (
+        <div className="hidden lg:flex items-center justify-between px-4 py-3 border-b border-secondary-200 bg-white">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-green-600 flex items-center justify-center">
+              <MessageSquare className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-green-600">WhatsApp</h1>
+              <p className="text-xs text-secondary-500">Business Messenger</p>
+            </div>
+          </div>
           <button
-            onClick={refreshConversations}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+            onClick={logout}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
-            <RefreshCw size={16} />
-            Refresh
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
-            <Plus size={16} />
-            New Chat
+            <LogOut size={16} />
+            Logout
           </button>
         </div>
-      </div>
+      )}
 
       {/* Mobile Header */}
       <div className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-secondary-200 bg-white">
@@ -118,23 +145,41 @@ export const WhatsAppEnquiryPage: React.FC = () => {
               <ArrowLeft size={20} />
             </button>
           ) : (
-            <button
-              onClick={() => navigate('/dms')}
-              className="p-1.5 -ml-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </button>
+            <>
+              {isWhatsAppMessager ? (
+                <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5 text-white" />
+                </div>
+              ) : (
+                <button
+                  onClick={() => navigate('/dms')}
+                  className="p-1.5 -ml-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+              )}
+            </>
           )}
           <h1 className="font-semibold text-secondary-900">WhatsApp</h1>
         </div>
-        {!showMobileChat && (
-          <button
-            onClick={refreshConversations}
-            className="p-2 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-          >
-            <RefreshCw size={18} />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {!showMobileChat && (
+            <button
+              onClick={refreshConversations}
+              className="p-2 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+            >
+              <RefreshCw size={18} />
+            </button>
+          )}
+          {isWhatsAppMessager && (
+            <button
+              onClick={logout}
+              className="p-2 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+            >
+              <LogOut size={18} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main Content */}

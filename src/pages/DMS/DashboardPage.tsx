@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { PageContainer } from '@/components/common';
 import { SummaryCards } from './dashboard/SummaryCards';
 import { FilterBar } from './dashboard/FilterBar';
+import { DashboardCharts } from './dashboard/DashboardCharts';
 import { subscribeToDashboardStats } from '@/services/dashboardService';
 import type { DashboardStats } from './dashboard/types';
 
@@ -13,9 +14,9 @@ export const DashboardPage: React.FC = () => {
     activeConversations: 0,
     deliveredCustomers: 0,
     lostCustomers: 0,
-    pendingCustomers: 0,
     averageResponseTime: '0 min 0 sec',
     conversionRate: 0,
+    lostReasons: {},
   });
   const [loading, setLoading] = useState(true);
 
@@ -57,6 +58,15 @@ export const DashboardPage: React.FC = () => {
           <div className="text-center py-8 text-secondary-500">Loading dashboard statistics...</div>
         ) : (
           <SummaryCards stats={stats} />
+        )}
+      </div>
+
+      {/* Charts */}
+      <div className="mt-6">
+        {loading ? (
+          <div className="text-center py-8 text-secondary-500">Loading charts...</div>
+        ) : (
+          <DashboardCharts stats={stats} />
         )}
       </div>
     </PageContainer>

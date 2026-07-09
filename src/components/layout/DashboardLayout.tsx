@@ -26,10 +26,21 @@ export const DashboardLayout: React.FC = () => {
   const location = useLocation();
   const pageTitle = getPageTitle(location.pathname);
   const isDmsWorkspace = location.pathname.startsWith('/dms/workspace');
+  const isWhatsAppMessager = userData?.designation === 'WhatsApp Messager';
+  const isWhatsAppEnquiryPage = location.pathname === '/dms/whatsapp-enquiry';
 
   const handleSidebarClose = (): void => {
     setIsSidebarOpen(false);
   };
+
+  // WhatsApp Messager gets a simplified layout - just the WhatsApp interface
+  if (isWhatsAppMessager && isWhatsAppEnquiryPage) {
+    return (
+      <div className="min-h-screen bg-secondary-50">
+        <Outlet />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-secondary-50 flex">
