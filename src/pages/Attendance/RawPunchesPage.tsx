@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, RefreshCw, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Search, RefreshCw, Calendar, ChevronLeft, ChevronRight, Download, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
+import ExcelJS from 'exceljs';
 
 interface RawPunch {
   id: string;
@@ -59,6 +60,7 @@ export const RawPunchesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
+  const [designationMap, setDesignationMap] = useState<Record<string, string>>({});
   const [devicesMap, setDevicesMap] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -71,6 +73,10 @@ export const RawPunchesPage: React.FC = () => {
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const activeFilters = useRef({ fromDate: '', toDateFilter: '', locationFilter: '' });
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFromDate, setExportFromDate] = useState('');
+  const [exportToDate, setExportToDate] = useState('');
+  const [exportLocation, setExportLocation] = useState('');
 
   useEffect(() => {
     const today = new Date();
@@ -83,6 +89,8 @@ export const RawPunchesPage: React.FC = () => {
     };
     setFromDate(formatDateLocal(firstDayOfMonth));
     setToDateFilter(formatDateLocal(today));
+    setExportFromDate(formatDateLocal(firstDayOfMonth));
+    setExportToDate(formatDateLocal(today));
   }, []);
 
   const getDeviceIdsForLocation = (loc: string): number[] => {
@@ -195,18 +203,21 @@ export const RawPunchesPage: React.FC = () => {
     try {
       const snapshot = await getDocs(collection(db, 'employees'));
       const map: Record<string, string> = {};
+      const desigMap: Record<string, string> = {};
       const allowedIds = new Set<string>();
       snapshot.forEach((doc) => {
         const data = doc.data();
         const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
         if (key) {
           map[key] = data.employeeName ?? '';
+          desigMap[key] = data.designation ?? '';
           if (userData?.designation === 'Branch Manager' && data.branchManagerId === userData.id) {
             allowedIds.add(key);
           }
         }
       });
       setEmployeeMap(map);
+      setDesignationMap(desigMap);
       setAllowedUserIds(allowedIds);
       setIsBranchManager(userData?.designation === 'Branch Manager');
       setEmployeesLoaded(true);
@@ -311,6 +322,306 @@ export const RawPunchesPage: React.FC = () => {
     return devicesMap[String(deviceId)] ?? String(deviceId);
   };
 
+  const resolveDesignation = (userId?: string): string => {
+    if (!userId) return '—';
+    return designationMap[userId.trim().toLowerCase()] ?? '—';
+  };
+
+  const handleExport = async () => {
+    if (!exportFromDate || !exportToDate) return;
+
+    try {
+      // Fetch all employees
+      const employeesSnapshot = await getDocs(collection(db, 'employees'));
+      const employees: any[] = [];
+      employeesSnapshot.forEach((doc) => {
+        const data = doc.data();
+        employees.push({
+          id: doc.id,
+          employeeCode: data.employeeCode,
+          employeeCodeInDevice: data.employeeCodeInDevice,
+          employeeName: data.employeeName,
+          designation: data.designation
+        });
+      });
+
+      // Fetch all punches in date range
+      const deviceIds = getDeviceIdsForLocation(exportLocation);
+      const constraints = buildQueryConstraints(exportFromDate, exportToDate, deviceIds);
+      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+      let punches: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      punches = applyBranchFilter(punches);
+
+      // Fetch leaves for week off detection
+      const leavesSnapshot = await getDocs(collection(db, 'leaves'));
+      const leaves: any[] = [];
+      leavesSnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.type === 'weekoff') {
+          leaves.push({
+            employeeCode: data.employeeCode,
+            days: data.days ?? []
+          });
+        }
+      });
+
+      // Generate date range
+      const startDate = new Date(exportFromDate);
+      const endDate = new Date(exportToDate);
+      const dateRange: string[] = [];
+      const dateLabels: string[] = [];
+      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      
+      for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        const dayOfMonth = d.getDate();
+        const dayName = dayNames[d.getDay()];
+        dateRange.push(dateStr);
+        dateLabels.push(`${dayOfMonth}-${dayName}`);
+      }
+
+      // Helper function to calculate duration between two timestamps
+      const calculateDuration = (inTime: Date, outTime: Date): string => {
+        const diffMs = outTime.getTime() - inTime.getTime();
+        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+        return `${String(diffHours).padStart(2, '0')}:${String(diffMinutes).padStart(2, '0')}`;
+      };
+
+      // Helper function to format time as HH:MM
+      const formatTimeHHMM = (date: Date): string => {
+        const hours = String(date.getUTCHours()).padStart(2, '0');
+        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+        return `${hours}:${minutes}`;
+      };
+
+      // Create Excel workbook
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Attendance Report');
+
+      // Set column widths
+      worksheet.getColumn(1).width = 2; // Column A blank
+      worksheet.getColumn(2).width = 8; // Column B for labels
+      for (let i = 3; i <= 34; i++) {
+        worksheet.getColumn(i).width = 10; // Date columns
+      }
+
+      let currentRow = 1;
+
+      // Global Header Section
+      const locationLabel = exportLocation || 'All Locations';
+      const formattedFromDate = new Date(exportFromDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const formattedToDate = new Date(exportToDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+      // Calculate the end column based on date range
+      const endColumn = 2 + dateLabels.length; // Start from column B (2) + number of dates
+
+      // Row 1: Location (merged, bold, centered, with mild background color)
+      worksheet.mergeCells(`B${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
+      const locationCell = worksheet.getCell(`B${currentRow}`);
+      locationCell.value = locationLabel;
+      locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
+      locationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7F3FF' } };
+      locationCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      currentRow++;
+
+      // Row 2: Report Title (merged, bold, centered, with mild background color)
+      worksheet.mergeCells(`B${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
+      const titleCell = worksheet.getCell(`B${currentRow}`);
+      titleCell.value = 'Monthly WorkDuration Report';
+      titleCell.font = { bold: true, size: 16, color: { argb: 'FF333333' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F4F8' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      currentRow++;
+
+      // Row 3: Date Range (merged, bold, centered, with mild background color)
+      worksheet.mergeCells(`B${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
+      const dateRangeCell = worksheet.getCell(`B${currentRow}`);
+      dateRangeCell.value = `${formattedFromDate} to ${formattedToDate}`;
+      dateRangeCell.font = { bold: true, size: 12, color: { argb: 'FF333333' } };
+      dateRangeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+      dateRangeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      currentRow++;
+
+      // Empty row separator
+      currentRow++;
+
+      // Process each employee
+      for (const employee of employees) {
+        const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
+        if (!empCode) continue;
+
+        // Get punches for this employee
+        const empPunches = punches.filter(p => (p.userId ?? '').trim().toLowerCase() === empCode);
+        
+        // Get week off days for this employee
+        const empLeave = leaves.find(l => (l.employeeCode ?? '').toString().trim().toLowerCase() === empCode);
+        const weekOffDays = empLeave?.days ?? [];
+
+        // Row 1: Metadata (Employee Code and Name - merged cells with reduced width)
+        worksheet.mergeCells(`B${currentRow}:E${currentRow}`);
+        const codeCell = worksheet.getCell(`B${currentRow}`);
+        codeCell.value = `Code: ${employee.employeeCode ?? employee.employeeCodeInDevice ?? ''}`;
+        codeCell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        codeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        codeCell.alignment = { horizontal: 'left', vertical: 'middle' };
+
+        worksheet.mergeCells(`F${currentRow}:I${currentRow}`);
+        const nameCell = worksheet.getCell(`F${currentRow}`);
+        nameCell.value = `Name: ${employee.employeeName ?? ''}`;
+        nameCell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        currentRow++;
+
+        // Row 2: Date labels
+        const dateRow = worksheet.getRow(currentRow);
+        dateLabels.forEach((label, i) => {
+          if (i + 2 <= 34) {
+            dateRow.getCell(i + 2).value = label;
+            dateRow.getCell(i + 2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+            dateRow.getCell(i + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
+            dateRow.getCell(i + 2).alignment = { horizontal: 'center', vertical: 'middle' };
+          }
+        });
+        dateRow.getCell(34).value = 'Total';
+        dateRow.getCell(34).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        dateRow.getCell(34).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+        dateRow.getCell(34).alignment = { horizontal: 'center', vertical: 'middle' };
+        currentRow++;
+
+        // Initialize rows 3-6 with labels in Column B
+        const statusRow = worksheet.getRow(currentRow);
+        statusRow.getCell(2).value = 'Status';
+        statusRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        statusRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        statusRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+        
+        const inTimeRow = worksheet.getRow(currentRow + 1);
+        inTimeRow.getCell(2).value = 'In Time';
+        inTimeRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        inTimeRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        inTimeRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+        
+        const outTimeRow = worksheet.getRow(currentRow + 2);
+        outTimeRow.getCell(2).value = 'Out Time';
+        outTimeRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        outTimeRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        outTimeRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+        
+        const durationRow = worksheet.getRow(currentRow + 3);
+        durationRow.getCell(2).value = 'T Duration';
+        durationRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        durationRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+        durationRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+
+        let totalDurationMinutes = 0;
+
+        // Process each day
+        dateRange.forEach((dateStr, dayIndex) => {
+          if (dayIndex + 2 > 34) return;
+
+          const dayPunches = empPunches.filter(p => {
+            const d = toDate(p.logDate);
+            if (!d) return false;
+            return d.toISOString().split('T')[0] === dateStr;
+          });
+
+          // Check if it's a week off
+          const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
+          const isWeekOff = weekOffDays.includes(dayOfWeek.toString());
+
+          const colIndex = dayIndex + 2;
+
+          if (isWeekOff) {
+            statusRow.getCell(colIndex).value = 'WO';
+            statusRow.getCell(colIndex).font = { bold: true, color: { argb: 'FF808080' } };
+            statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            inTimeRow.getCell(colIndex).value = '00:00';
+            inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            outTimeRow.getCell(colIndex).value = '00:00';
+            outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            durationRow.getCell(colIndex).value = '00:00';
+            durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (dayPunches.length === 0) {
+            statusRow.getCell(colIndex).value = 'A';
+            statusRow.getCell(colIndex).font = { bold: true, color: { argb: 'FFDC3545' } };
+            statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            inTimeRow.getCell(colIndex).value = '00:00';
+            inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            outTimeRow.getCell(colIndex).value = '00:00';
+            outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            durationRow.getCell(colIndex).value = '00:00';
+            durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+          } else {
+            statusRow.getCell(colIndex).value = 'P';
+            statusRow.getCell(colIndex).font = { bold: true, color: { argb: 'FF28A745' } };
+            statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            
+            // Get first in time and last out time
+            const sortedPunches = dayPunches.sort((a, b) => {
+              const dA = toDate(a.logDate);
+              const dB = toDate(b.logDate);
+              if (!dA || !dB) return 0;
+              return dA.getTime() - dB.getTime();
+            });
+
+            const firstIn = sortedPunches.find(p => p.direction === 'in')?.logDate;
+            const lastOut = sortedPunches.filter(p => p.direction === 'out').pop()?.logDate;
+
+            const inDate = toDate(firstIn);
+            const outDate = toDate(lastOut);
+
+            inTimeRow.getCell(colIndex).value = inDate ? formatTimeHHMM(inDate) : '00:00';
+            inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            outTimeRow.getCell(colIndex).value = outDate ? formatTimeHHMM(outDate) : '00:00';
+            outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+
+            if (inDate && outDate) {
+              const duration = calculateDuration(inDate, outDate);
+              durationRow.getCell(colIndex).value = duration;
+              durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+              const [hours, minutes] = duration.split(':').map(Number);
+              totalDurationMinutes += hours * 60 + minutes;
+            } else {
+              durationRow.getCell(colIndex).value = '00:00';
+              durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+            }
+          }
+        });
+
+        // Calculate total duration
+        const totalHours = Math.floor(totalDurationMinutes / 60);
+        const totalMins = totalDurationMinutes % 60;
+        durationRow.getCell(34).value = `${String(totalHours).padStart(2, '0')}:${String(totalMins).padStart(2, '0')}`;
+        durationRow.getCell(34).font = { bold: true, size: 11, color: { argb: 'FF333333' } };
+        durationRow.getCell(34).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+        durationRow.getCell(34).alignment = { horizontal: 'center', vertical: 'middle' };
+
+        currentRow += 4;
+
+        // Empty row separator between employees
+        currentRow++;
+      }
+
+      // Generate Excel file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `work_duration_report_${exportFromDate}_to_${exportToDate}.xlsx`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setExportModalOpen(false);
+    } catch (error) {
+      console.error('Error exporting data:', error);
+    }
+  };
+
   const handleNextPage = () => {
     if (currentPageIndex < totalPages - 1) {
       setCurrentPageIndex(currentPageIndex + 1);
@@ -361,13 +672,22 @@ export const RawPunchesPage: React.FC = () => {
             <p className="text-sm text-secondary-500">Device attendance logs</p>
           </div>
         </div>
-        <button
-          onClick={() => { setLastDoc(null); setHasMore(false); setCurrentPageIndex(0); fetchPage(fromDate, toDateFilter, locationFilter); }}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
-        >
-          <RefreshCw size={16} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setExportModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <Download size={16} />
+            Export
+          </button>
+          <button
+            onClick={() => { setLastDoc(null); setHasMore(false); setCurrentPageIndex(0); fetchPage(fromDate, toDateFilter, locationFilter); }}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+          >
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -441,6 +761,7 @@ export const RawPunchesPage: React.FC = () => {
                   <tr className="bg-secondary-50 border-b border-secondary-200">
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">User ID</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee Name</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Designation</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Date</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Time</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700">Direction</th>
@@ -456,6 +777,7 @@ export const RawPunchesPage: React.FC = () => {
                     >
                       <td className="px-4 py-2.5 font-medium text-secondary-900">{punch.userId ?? '—'}</td>
                       <td className="px-4 py-2.5 text-secondary-800">{resolveEmployeeName(punch.userId) || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
+                      <td className="px-4 py-2.5 text-secondary-700">{resolveDesignation(punch.userId)}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatDate(punch.logDate)}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTime(punch.logDate)}</td>
                       <td className="px-4 py-2.5">
@@ -517,6 +839,74 @@ export const RawPunchesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Export Modal */}
+      {exportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+              <h2 className="text-lg font-semibold text-secondary-900">Export Attendance Data</h2>
+              <button
+                onClick={() => setExportModalOpen(false)}
+                className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label htmlFor="exportFromDate" className="block text-sm font-medium text-secondary-700 mb-1">From Date</label>
+                <input
+                  id="exportFromDate"
+                  type="date"
+                  value={exportFromDate}
+                  onChange={(e) => setExportFromDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label htmlFor="exportToDate" className="block text-sm font-medium text-secondary-700 mb-1">To Date</label>
+                <input
+                  id="exportToDate"
+                  type="date"
+                  value={exportToDate}
+                  onChange={(e) => setExportToDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label htmlFor="exportLocation" className="block text-sm font-medium text-secondary-700 mb-1">Location</label>
+                <select
+                  id="exportLocation"
+                  value={exportLocation}
+                  onChange={(e) => setExportLocation(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                >
+                  <option value="">All Locations</option>
+                  {Array.from(new Set(Object.values(devicesMap))).sort().map((loc) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t border-secondary-200">
+              <button
+                onClick={() => setExportModalOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={!exportFromDate || !exportToDate}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
