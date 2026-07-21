@@ -11,6 +11,8 @@ const getPageTitle = (pathname: string): string => {
   if (pathname === '/attendance/shifts') return 'Shifts';
   if (pathname === '/attendance/leaves') return 'Leaves';
   if (pathname === '/attendance/devices') return 'Devices';
+  if (pathname === '/attendance/designations') return 'Designations';
+  if (pathname === '/attendance/departments') return 'Departments';
   if (pathname === '/users') return 'Users';
   if (pathname === '/dms') return 'DMS';
   if (pathname === '/dms/workspace') return 'Customer Workspace';
@@ -65,7 +67,7 @@ export const DashboardLayout: React.FC = () => {
           )}
         </header>
         <main
-          className="flex-1 px-4 sm:px-6 lg:px-8 pt-4"
+          className="flex-1 px-4 sm:px-6 lg:px-8 pt-4 overflow-y-auto"
           style={{ backgroundColor: isDmsWorkspace ? '#fbfbfb' : undefined }}
         >
           <Outlet />

@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, RefreshCw, Calendar, ChevronLeft, ChevronRight, Download, X } from 'lucide-react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { ArrowLeft, Search, RefreshCw, Calendar, ChevronLeft, ChevronRight, Download, Clock, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import * as XLSX from 'xlsx';
+import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
-import ExcelJS from 'exceljs';
 
 interface RawPunch {
   id: string;
@@ -28,27 +28,51 @@ const toDate = (logDate: any): Date | null => {
   return null;
 };
 
-const formatDate = (logDate: any): string => {
-  const d = toDate(logDate);
-  if (!d) return '—';
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const month = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
-  const year = d.getUTCFullYear();
-  return `${day}-${month}-${year}`;
+const formatTimeHHMM = (date: Date | null): string => {
+  if (!date) return '—';
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 };
 
-const formatTime = (logDate: any): string => {
-  const d = toDate(logDate);
-  if (!d) return '—';
-  const hours = d.getUTCHours();
-  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
-  const seconds = String(d.getUTCSeconds()).padStart(2, '0');
-  const ampm = hours >= 12 ? 'pm' : 'am';
-  const displayHours = hours % 12 || 12;
-  return `${String(displayHours).padStart(2, '0')}:${minutes}:${seconds} ${ampm}`;
+const formatMinutes = (minutes: number): string => {
+  if (!isFinite(minutes) || minutes <= 0) return '—';
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
 };
+
+interface DailyRecord {
+  id: string;
+  userId: string;
+  employeeName: string;
+  department: string;
+  location: string;
+  shift: any | null;
+  date: Date | null;
+  inTime: Date | null;
+  outTime: Date | null;
+  workingDurationMinutes: number;
+  lateMinutes: number;
+  earlyMinutes: number;
+  overtimeMinutes: number;
+}
+
+interface AnalyzeResult {
+  type: 'in' | 'out';
+  userId: string;
+  employeeName: string;
+  date: Date | null;
+  shiftTime: string;
+  actualTime: Date;
+  deviationMinutes: number;
+  deviationLabel: string;
+}
 
 const SEARCH_LIMIT = 1000;
+const ANALYSIS_THRESHOLD_MINUTES = 120;
 
 export const RawPunchesPage: React.FC = () => {
   const navigate = useNavigate();
@@ -60,7 +84,7 @@ export const RawPunchesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
-  const [designationMap, setDesignationMap] = useState<Record<string, string>>({});
+  const [departmentMap, setDepartmentMap] = useState<Record<string, string>>({});
   const [devicesMap, setDevicesMap] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -72,11 +96,16 @@ export const RawPunchesPage: React.FC = () => {
   const [toDateFilter, setToDateFilter] = useState('');
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const activeFilters = useRef({ fromDate: '', toDateFilter: '', locationFilter: '' });
-  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportFromDate, setExportFromDate] = useState('');
   const [exportToDate, setExportToDate] = useState('');
-  const [exportLocation, setExportLocation] = useState('');
+  const activeFilters = useRef({ fromDate: '', toDateFilter: '', locationFilter: '' });
+  const [isAnalyzeModalOpen, setIsAnalyzeModalOpen] = useState(false);
+  const [analyzeResults, setAnalyzeResults] = useState<AnalyzeResult[]>([]);
+  const [analyzeFromDate, setAnalyzeFromDate] = useState('');
+  const [analyzeToDate, setAnalyzeToDate] = useState('');
+  const [isFixing, setIsFixing] = useState(false);
+  const [fixMessage, setFixMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const today = new Date();
@@ -87,10 +116,12 @@ export const RawPunchesPage: React.FC = () => {
       const day = String(date.getDate()).padStart(2, '0');
       return `${year}-${month}-${day}`;
     };
-    setFromDate(formatDateLocal(firstDayOfMonth));
-    setToDateFilter(formatDateLocal(today));
-    setExportFromDate(formatDateLocal(firstDayOfMonth));
-    setExportToDate(formatDateLocal(today));
+    const from = formatDateLocal(firstDayOfMonth);
+    const to = formatDateLocal(today);
+    setFromDate(from);
+    setToDateFilter(to);
+    setExportFromDate(from);
+    setExportToDate(to);
   }, []);
 
   const getDeviceIdsForLocation = (loc: string): number[] => {
@@ -203,21 +234,21 @@ export const RawPunchesPage: React.FC = () => {
     try {
       const snapshot = await getDocs(collection(db, 'employees'));
       const map: Record<string, string> = {};
-      const desigMap: Record<string, string> = {};
+      const deptMap: Record<string, string> = {};
       const allowedIds = new Set<string>();
       snapshot.forEach((doc) => {
         const data = doc.data();
         const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
         if (key) {
           map[key] = data.employeeName ?? '';
-          desigMap[key] = data.designation ?? '';
+          deptMap[key] = data.department ?? '';
           if (userData?.designation === 'Branch Manager' && data.branchManagerId === userData.id) {
             allowedIds.add(key);
           }
         }
       });
       setEmployeeMap(map);
-      setDesignationMap(desigMap);
+      setDepartmentMap(deptMap);
       setAllowedUserIds(allowedIds);
       setIsBranchManager(userData?.designation === 'Branch Manager');
       setEmployeesLoaded(true);
@@ -238,12 +269,13 @@ export const RawPunchesPage: React.FC = () => {
           const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
           if (code) {
             if (!map[code]) map[code] = [];
-            map[code].push({ 
-              startTime: data.startTime, 
+            map[code].push({
+              name: data.name ?? '',
+              startTime: data.startTime,
               endTime: data.endTime,
               fromDate: emp.fromDate,
               toDate: emp.toDate,
-              id: doc.id 
+              id: doc.id
             });
           }
         });
@@ -281,345 +313,9 @@ export const RawPunchesPage: React.FC = () => {
     return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
   };
 
-  const formatDiff = (diffMin: number): string => {
-    const abs = Math.abs(diffMin);
-    if (abs === 0) return '';
-    const h = Math.floor(abs / 60);
-    const m = abs % 60;
-    if (h === 0) return ` · ${m}m`;
-    if (m === 0) return ` · ${h}h`;
-    return ` · ${h}h ${m}m`;
-  };
-
-  const getPunchStatus = (punch: RawPunch): { label: string; color: string } | null => {
-    const shift = getShiftForPunch(punch.userId, punch.logDate);
-    if (!shift) return null;
-    const d = toDate(punch.logDate);
-    if (!d) return null;
-    const punchMin = d.getHours() * 60 + d.getMinutes();
-    const [sh, sm] = (punch.direction === 'in' ? shift.startTime : shift.endTime).split(':').map(Number);
-    const shiftMin = sh * 60 + sm;
-    const diff = punchMin - shiftMin;
-    if (punch.direction === 'in') {
-      return diff <= 0
-        ? { label: `Early${formatDiff(diff)}`, color: 'bg-blue-100 text-blue-700' }
-        : { label: `Late${formatDiff(diff)}`, color: 'bg-orange-100 text-orange-700' };
-    } else if (punch.direction === 'out') {
-      if (diff < 0) return { label: `Early Out${formatDiff(diff)}`, color: 'bg-yellow-100 text-yellow-700' };
-      if (diff === 0) return { label: 'On Time', color: 'bg-green-100 text-green-700' };
-      return { label: `Late Out${formatDiff(diff)}`, color: 'bg-orange-100 text-orange-700' };
-    }
-    return null;
-  };
-
-  const resolveEmployeeName = (userId?: string): string => {
-    if (!userId) return '';
-    return employeeMap[userId.trim().toLowerCase()] ?? '';
-  };
-
   const resolveDeviceLocation = (deviceId?: number): string => {
     if (!deviceId) return '—';
     return devicesMap[String(deviceId)] ?? String(deviceId);
-  };
-
-  const resolveDesignation = (userId?: string): string => {
-    if (!userId) return '—';
-    return designationMap[userId.trim().toLowerCase()] ?? '—';
-  };
-
-  const handleExport = async () => {
-    if (!exportFromDate || !exportToDate) return;
-
-    try {
-      // Fetch all employees
-      const employeesSnapshot = await getDocs(collection(db, 'employees'));
-      const employees: any[] = [];
-      employeesSnapshot.forEach((doc) => {
-        const data = doc.data();
-        employees.push({
-          id: doc.id,
-          employeeCode: data.employeeCode,
-          employeeCodeInDevice: data.employeeCodeInDevice,
-          employeeName: data.employeeName,
-          designation: data.designation
-        });
-      });
-
-      // Fetch all punches in date range
-      const deviceIds = getDeviceIdsForLocation(exportLocation);
-      const constraints = buildQueryConstraints(exportFromDate, exportToDate, deviceIds);
-      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-      let punches: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      punches = applyBranchFilter(punches);
-
-      // Fetch leaves for week off detection
-      const leavesSnapshot = await getDocs(collection(db, 'leaves'));
-      const leaves: any[] = [];
-      leavesSnapshot.forEach((doc) => {
-        const data = doc.data();
-        if (data.type === 'weekoff') {
-          leaves.push({
-            employeeCode: data.employeeCode,
-            days: data.days ?? []
-          });
-        }
-      });
-
-      // Generate date range
-      const startDate = new Date(exportFromDate);
-      const endDate = new Date(exportToDate);
-      const dateRange: string[] = [];
-      const dateLabels: string[] = [];
-      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      
-      for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-        const dateStr = d.toISOString().split('T')[0];
-        const dayOfMonth = d.getDate();
-        const dayName = dayNames[d.getDay()];
-        dateRange.push(dateStr);
-        dateLabels.push(`${dayOfMonth}-${dayName}`);
-      }
-
-      // Helper function to calculate duration between two timestamps
-      const calculateDuration = (inTime: Date, outTime: Date): string => {
-        const diffMs = outTime.getTime() - inTime.getTime();
-        const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-        return `${String(diffHours).padStart(2, '0')}:${String(diffMinutes).padStart(2, '0')}`;
-      };
-
-      // Helper function to format time as HH:MM
-      const formatTimeHHMM = (date: Date): string => {
-        const hours = String(date.getUTCHours()).padStart(2, '0');
-        const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-        return `${hours}:${minutes}`;
-      };
-
-      // Create Excel workbook
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Attendance Report');
-
-      // Set column widths
-      worksheet.getColumn(1).width = 2; // Column A blank
-      worksheet.getColumn(2).width = 8; // Column B for labels
-      for (let i = 3; i <= 34; i++) {
-        worksheet.getColumn(i).width = 10; // Date columns
-      }
-
-      let currentRow = 1;
-
-      // Global Header Section
-      const locationLabel = exportLocation || 'All Locations';
-      const formattedFromDate = new Date(exportFromDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-      const formattedToDate = new Date(exportToDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-
-      // Calculate the end column based on date range
-      const endColumn = 2 + dateLabels.length; // Start from column B (2) + number of dates
-
-      // Row 1: Location (merged, bold, centered, with mild background color)
-      worksheet.mergeCells(`B${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
-      const locationCell = worksheet.getCell(`B${currentRow}`);
-      locationCell.value = locationLabel;
-      locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
-      locationCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE7F3FF' } };
-      locationCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      currentRow++;
-
-      // Row 2: Report Title (merged, bold, centered, with mild background color)
-      worksheet.mergeCells(`B${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
-      const titleCell = worksheet.getCell(`B${currentRow}`);
-      titleCell.value = 'Monthly WorkDuration Report';
-      titleCell.font = { bold: true, size: 16, color: { argb: 'FF333333' } };
-      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F4F8' } };
-      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      currentRow++;
-
-      // Row 3: Date Range (merged, bold, centered, with mild background color)
-      worksheet.mergeCells(`B${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
-      const dateRangeCell = worksheet.getCell(`B${currentRow}`);
-      dateRangeCell.value = `${formattedFromDate} to ${formattedToDate}`;
-      dateRangeCell.font = { bold: true, size: 12, color: { argb: 'FF333333' } };
-      dateRangeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-      dateRangeCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      currentRow++;
-
-      // Empty row separator
-      currentRow++;
-
-      // Process each employee
-      for (const employee of employees) {
-        const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
-        if (!empCode) continue;
-
-        // Get punches for this employee
-        const empPunches = punches.filter(p => (p.userId ?? '').trim().toLowerCase() === empCode);
-        
-        // Get week off days for this employee
-        const empLeave = leaves.find(l => (l.employeeCode ?? '').toString().trim().toLowerCase() === empCode);
-        const weekOffDays = empLeave?.days ?? [];
-
-        // Row 1: Metadata (Employee Code and Name - merged cells with reduced width)
-        worksheet.mergeCells(`B${currentRow}:E${currentRow}`);
-        const codeCell = worksheet.getCell(`B${currentRow}`);
-        codeCell.value = `Code: ${employee.employeeCode ?? employee.employeeCodeInDevice ?? ''}`;
-        codeCell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        codeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
-        codeCell.alignment = { horizontal: 'left', vertical: 'middle' };
-
-        worksheet.mergeCells(`F${currentRow}:I${currentRow}`);
-        const nameCell = worksheet.getCell(`F${currentRow}`);
-        nameCell.value = `Name: ${employee.employeeName ?? ''}`;
-        nameCell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
-        nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
-        currentRow++;
-
-        // Row 2: Date labels
-        const dateRow = worksheet.getRow(currentRow);
-        dateLabels.forEach((label, i) => {
-          if (i + 2 <= 34) {
-            dateRow.getCell(i + 2).value = label;
-            dateRow.getCell(i + 2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-            dateRow.getCell(i + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
-            dateRow.getCell(i + 2).alignment = { horizontal: 'center', vertical: 'middle' };
-          }
-        });
-        dateRow.getCell(34).value = 'Total';
-        dateRow.getCell(34).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        dateRow.getCell(34).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-        dateRow.getCell(34).alignment = { horizontal: 'center', vertical: 'middle' };
-        currentRow++;
-
-        // Initialize rows 3-6 with labels in Column B
-        const statusRow = worksheet.getRow(currentRow);
-        statusRow.getCell(2).value = 'Status';
-        statusRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        statusRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
-        statusRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
-        
-        const inTimeRow = worksheet.getRow(currentRow + 1);
-        inTimeRow.getCell(2).value = 'In Time';
-        inTimeRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        inTimeRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
-        inTimeRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
-        
-        const outTimeRow = worksheet.getRow(currentRow + 2);
-        outTimeRow.getCell(2).value = 'Out Time';
-        outTimeRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        outTimeRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
-        outTimeRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
-        
-        const durationRow = worksheet.getRow(currentRow + 3);
-        durationRow.getCell(2).value = 'T Duration';
-        durationRow.getCell(2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-        durationRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
-        durationRow.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
-
-        let totalDurationMinutes = 0;
-
-        // Process each day
-        dateRange.forEach((dateStr, dayIndex) => {
-          if (dayIndex + 2 > 34) return;
-
-          const dayPunches = empPunches.filter(p => {
-            const d = toDate(p.logDate);
-            if (!d) return false;
-            return d.toISOString().split('T')[0] === dateStr;
-          });
-
-          // Check if it's a week off
-          const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
-          const isWeekOff = weekOffDays.includes(dayOfWeek.toString());
-
-          const colIndex = dayIndex + 2;
-
-          if (isWeekOff) {
-            statusRow.getCell(colIndex).value = 'WO';
-            statusRow.getCell(colIndex).font = { bold: true, color: { argb: 'FF808080' } };
-            statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            inTimeRow.getCell(colIndex).value = '00:00';
-            inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            outTimeRow.getCell(colIndex).value = '00:00';
-            outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            durationRow.getCell(colIndex).value = '00:00';
-            durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-          } else if (dayPunches.length === 0) {
-            statusRow.getCell(colIndex).value = 'A';
-            statusRow.getCell(colIndex).font = { bold: true, color: { argb: 'FFDC3545' } };
-            statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            inTimeRow.getCell(colIndex).value = '00:00';
-            inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            outTimeRow.getCell(colIndex).value = '00:00';
-            outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            durationRow.getCell(colIndex).value = '00:00';
-            durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-          } else {
-            statusRow.getCell(colIndex).value = 'P';
-            statusRow.getCell(colIndex).font = { bold: true, color: { argb: 'FF28A745' } };
-            statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            
-            // Get first in time and last out time
-            const sortedPunches = dayPunches.sort((a, b) => {
-              const dA = toDate(a.logDate);
-              const dB = toDate(b.logDate);
-              if (!dA || !dB) return 0;
-              return dA.getTime() - dB.getTime();
-            });
-
-            const firstIn = sortedPunches.find(p => p.direction === 'in')?.logDate;
-            const lastOut = sortedPunches.filter(p => p.direction === 'out').pop()?.logDate;
-
-            const inDate = toDate(firstIn);
-            const outDate = toDate(lastOut);
-
-            inTimeRow.getCell(colIndex).value = inDate ? formatTimeHHMM(inDate) : '00:00';
-            inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            outTimeRow.getCell(colIndex).value = outDate ? formatTimeHHMM(outDate) : '00:00';
-            outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-
-            if (inDate && outDate) {
-              const duration = calculateDuration(inDate, outDate);
-              durationRow.getCell(colIndex).value = duration;
-              durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-              const [hours, minutes] = duration.split(':').map(Number);
-              totalDurationMinutes += hours * 60 + minutes;
-            } else {
-              durationRow.getCell(colIndex).value = '00:00';
-              durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            }
-          }
-        });
-
-        // Calculate total duration
-        const totalHours = Math.floor(totalDurationMinutes / 60);
-        const totalMins = totalDurationMinutes % 60;
-        durationRow.getCell(34).value = `${String(totalHours).padStart(2, '0')}:${String(totalMins).padStart(2, '0')}`;
-        durationRow.getCell(34).font = { bold: true, size: 11, color: { argb: 'FF333333' } };
-        durationRow.getCell(34).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-        durationRow.getCell(34).alignment = { horizontal: 'center', vertical: 'middle' };
-
-        currentRow += 4;
-
-        // Empty row separator between employees
-        currentRow++;
-      }
-
-      // Generate Excel file
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `work_duration_report_${exportFromDate}_to_${exportToDate}.xlsx`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      setExportModalOpen(false);
-    } catch (error) {
-      console.error('Error exporting data:', error);
-    }
   };
 
   const handleNextPage = () => {
@@ -636,24 +332,356 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
-  const filteredPunches = allPunches.filter((p: RawPunch) => {
+  const handleExport = () => {
+    setExportFromDate(fromDate);
+    setExportToDate(toDateFilter);
+    setIsExportModalOpen(true);
+  };
+
+  const openAnalyzeModal = () => {
+    setAnalyzeFromDate(fromDate);
+    setAnalyzeToDate(toDateFilter);
+    runAnalysis(fromDate, toDateFilter);
+    setIsAnalyzeModalOpen(true);
+  };
+
+  const runAnalysis = (from: string, to: string) => {
+    const filteredByDate = dailyRecords.filter((record) => {
+      if (!record.date) return false;
+      const dateStr = record.date.toISOString().split('T')[0];
+      if (from && dateStr < from) return false;
+      if (to && dateStr > to) return false;
+      return true;
+    });
+
+    const anomalies = filteredByDate.flatMap((record) => {
+      const items: AnalyzeResult[] = [];
+      const shift = record.shift;
+      if (!shift) return items;
+
+      if (record.inTime && shift.startTime) {
+        const [sh, sm] = shift.startTime.split(':').map(Number);
+        const shiftStartMin = sh * 60 + sm;
+        const inMin = record.inTime.getUTCHours() * 60 + record.inTime.getUTCMinutes();
+        const diffMin = inMin - shiftStartMin;
+        if (Math.abs(diffMin) > ANALYSIS_THRESHOLD_MINUTES) {
+          items.push({
+            type: 'in',
+            userId: record.userId,
+            employeeName: record.employeeName,
+            date: record.date,
+            shiftTime: shift.startTime,
+            actualTime: record.inTime,
+            deviationMinutes: diffMin,
+            deviationLabel: diffMin < 0 ? `${Math.round(Math.abs(diffMin) / 60)}h early` : `${Math.round(Math.abs(diffMin) / 60)}h late`,
+          });
+        }
+      }
+
+      if (record.outTime && shift.endTime) {
+        const [eh, em] = shift.endTime.split(':').map(Number);
+        const shiftEndMin = eh * 60 + em;
+        const outMin = record.outTime.getUTCHours() * 60 + record.outTime.getUTCMinutes();
+        const diffMin = outMin - shiftEndMin;
+        if (Math.abs(diffMin) > ANALYSIS_THRESHOLD_MINUTES) {
+          items.push({
+            type: 'out',
+            userId: record.userId,
+            employeeName: record.employeeName,
+            date: record.date,
+            shiftTime: shift.endTime,
+            actualTime: record.outTime,
+            deviationMinutes: diffMin,
+            deviationLabel: diffMin < 0 ? `${Math.round(Math.abs(diffMin) / 60)}h early` : `${Math.round(Math.abs(diffMin) / 60)}h overtime`,
+          });
+        }
+      }
+
+      return items;
+    });
+
+    setAnalyzeResults(anomalies);
+  };
+
+  const findPunchToFixInArray = (result: AnalyzeResult, punches: RawPunch[]): RawPunch | null => {
+    if (!result.date) return null;
+    const targetDateStr = result.date.toISOString().split('T')[0];
+    const targetUserId = result.userId.trim().toLowerCase();
+
+    const datePunches = punches.filter((p) => {
+      if (!p.userId || !p.logDate) return false;
+      const d = toDate(p.logDate);
+      if (!d) return false;
+      const dateStr = d.toISOString().split('T')[0];
+      return p.userId.trim().toLowerCase() === targetUserId && dateStr === targetDateStr;
+    });
+
+    if (datePunches.length === 0) return null;
+
+    if (result.type === 'in') {
+      const inPunches = datePunches.filter((p) => p.direction === 'in');
+      if (inPunches.length === 0) return null;
+      return inPunches.sort((a, b) => toDate(a.logDate)!.getTime() - toDate(b.logDate)!.getTime())[0];
+    } else {
+      const outPunches = datePunches.filter((p) => p.direction === 'out');
+      if (outPunches.length === 0) return null;
+      return outPunches.sort((a, b) => toDate(b.logDate)!.getTime() - toDate(a.logDate)!.getTime())[0];
+    }
+  };
+
+  const testDirectionSwapInArray = (punches: RawPunch[], result: AnalyzeResult): boolean => {
+    const testDailyRecords = computeDailyRecords(punches);
+    const testRecord = testDailyRecords.find((r) => {
+      if (!r.date || !result.date) return false;
+      const sameUser = r.userId.trim().toLowerCase() === result.userId.trim().toLowerCase();
+      const sameDate = r.date.toISOString().split('T')[0] === result.date.toISOString().split('T')[0];
+      return sameUser && sameDate;
+    });
+
+    if (!testRecord || !testRecord.shift) return false;
+
+    if (result.type === 'in') {
+      if (!testRecord.inTime || !testRecord.shift.startTime) return true;
+      const [sh, sm] = testRecord.shift.startTime.split(':').map(Number);
+      const shiftStartMin = sh * 60 + sm;
+      const inMin = testRecord.inTime.getUTCHours() * 60 + testRecord.inTime.getUTCMinutes();
+      const diffMin = inMin - shiftStartMin;
+      return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
+    } else {
+      if (!testRecord.outTime || !testRecord.shift.endTime) return true;
+      const [eh, em] = testRecord.shift.endTime.split(':').map(Number);
+      const shiftEndMin = eh * 60 + em;
+      const outMin = testRecord.outTime.getUTCHours() * 60 + testRecord.outTime.getUTCMinutes();
+      const diffMin = outMin - shiftEndMin;
+      return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
+    }
+  };
+
+  const handleFixAnomalies = async () => {
+    if (analyzeResults.length === 0 || isFixing) return;
+    setIsFixing(true);
+    setFixMessage(null);
+    let fixedCount = 0;
+    let workingPunches = [...allPunches];
+
+    try {
+      const plannedFixes: { id: string; newDirection: string }[] = [];
+
+      for (const result of analyzeResults) {
+        const punchToFix = findPunchToFixInArray(result, workingPunches);
+        if (!punchToFix) continue;
+
+        const newDirection = punchToFix.direction === 'in' ? 'out' : 'in';
+        const testPunches = workingPunches.map((p) =>
+          p.id === punchToFix.id ? { ...p, direction: newDirection } : p
+        );
+        const isResolved = testDirectionSwapInArray(testPunches, result);
+        if (!isResolved) continue;
+
+        plannedFixes.push({ id: punchToFix.id, newDirection });
+        workingPunches = testPunches;
+        fixedCount++;
+      }
+
+      for (const fix of plannedFixes) {
+        await updateDoc(doc(db, 'rawPunches', fix.id), { direction: fix.newDirection });
+      }
+
+      if (plannedFixes.length > 0) {
+        setAllPunches(workingPunches);
+      }
+
+      setFixMessage(`Fixed ${fixedCount} of ${analyzeResults.length} anomalies.`);
+    } catch (error) {
+      console.error('Error fixing anomalies:', error);
+      setFixMessage('Error fixing anomalies. Please try again.');
+    } finally {
+      setIsFixing(false);
+    }
+
+    runAnalysis(analyzeFromDate, analyzeToDate);
+  };
+
+  const fetchAllPunchesForExport = async (from: string, to: string, loc: string): Promise<RawPunch[]> => {
+    if (!currentUser) return [];
+    const all: RawPunch[] = [];
+    let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
+    const deviceIds = getDeviceIdsForLocation(loc);
+    while (true) {
+      const constraints = buildQueryConstraints(from, to, deviceIds, cursor || undefined);
+      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+      let data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      data = applyBranchFilter(data);
+      all.push(...data);
+      if (snapshot.docs.length < SEARCH_LIMIT) break;
+      cursor = snapshot.docs[snapshot.docs.length - 1];
+    }
+    return all;
+  };
+
+  const exportRecordsToExcel = (records: DailyRecord[], from: string, to: string) => {
+    const headers = [
+      'Employee ID',
+      'Employee Name',
+      'Department',
+      'Location',
+      'Shift',
+      'Date',
+      'In Time',
+      'Out Time',
+      'Working Duration',
+      'Late Minutes',
+      'Early Minutes',
+      'Overtime Minutes',
+    ];
+    const rows = records.map((record) => [
+      record.userId,
+      record.employeeName,
+      record.department,
+      record.location,
+      record.shift ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}` : '',
+      record.date ? record.date.toISOString().split('T')[0] : '',
+      record.inTime ? formatTimeHHMM(record.inTime) : '',
+      record.outTime ? formatTimeHHMM(record.outTime) : '',
+      record.workingDurationMinutes > 0 ? formatMinutes(record.workingDurationMinutes) : '',
+      record.lateMinutes > 0 ? formatMinutes(record.lateMinutes) : '',
+      record.earlyMinutes > 0 ? formatMinutes(record.earlyMinutes) : '',
+      record.overtimeMinutes > 0 ? formatMinutes(record.overtimeMinutes) : '',
+    ]);
+    const data = [headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = headers.map((header, idx) => {
+      const maxLen = Math.max(header.length, ...rows.map((row) => String(row[idx] ?? '').length));
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 40) };
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendance');
+    const fromLabel = from || 'all';
+    const toLabel = to || 'all';
+    XLSX.writeFile(wb, `attendance-${fromLabel}-to-${toLabel}.xlsx`);
+  };
+
+  const computeDailyRecords = (punches: RawPunch[]): DailyRecord[] => {
+    const groups: Record<string, RawPunch[]> = {};
+    punches.forEach((punch) => {
+      const d = toDate(punch.logDate);
+      if (!d || !punch.userId) return;
+      const dateKey = `${punch.userId.trim().toLowerCase()}_${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(punch);
+    });
+
+    return Object.values(groups).map((punches) => {
+      const sorted = [...punches].sort((a, b) => {
+        const dA = toDate(a.logDate);
+        const dB = toDate(b.logDate);
+        if (!dA || !dB) return 0;
+        return dA.getTime() - dB.getTime();
+      });
+
+      const firstPunch = sorted[0];
+      const userId = firstPunch.userId ?? '';
+      const key = userId.trim().toLowerCase();
+      const firstIn = sorted.find((p) => p.direction === 'in');
+      const lastOut = [...sorted].reverse().find((p) => p.direction === 'out');
+      const inDate = toDate(firstIn?.logDate ?? null);
+      const outDate = toDate(lastOut?.logDate ?? null);
+      const date = toDate(firstPunch.logDate);
+
+      const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
+      let lateMinutes = 0;
+      let earlyMinutes = 0;
+      let overtimeMinutes = 0;
+
+      if (inDate && shift?.startTime) {
+        const [sh, sm] = shift.startTime.split(':').map(Number);
+        const shiftStartMin = sh * 60 + sm;
+        const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
+        if (!isNaN(shiftStartMin) && inMin > shiftStartMin) {
+          lateMinutes = inMin - shiftStartMin;
+        }
+      }
+
+      if (outDate && shift?.endTime) {
+        const [eh, em] = shift.endTime.split(':').map(Number);
+        const shiftEndMin = eh * 60 + em;
+        const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
+        if (!isNaN(shiftEndMin)) {
+          if (outMin < shiftEndMin) {
+            earlyMinutes = shiftEndMin - outMin;
+          } else if (outMin > shiftEndMin) {
+            overtimeMinutes = outMin - shiftEndMin;
+          }
+        }
+      }
+
+      let workingDurationMinutes = 0;
+      if (inDate && outDate && outDate.getTime() > inDate.getTime()) {
+        workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
+      }
+
+      const locationPunch = firstIn ?? firstPunch;
+
+      return {
+        id: `${key}_${date ? date.toISOString().split('T')[0] : firstPunch.id}`,
+        userId,
+        employeeName: employeeMap[key] ?? '',
+        department: departmentMap[key] ?? '—',
+        location: resolveDeviceLocation(locationPunch.deviceId),
+        shift,
+        date,
+        inTime: inDate,
+        outTime: outDate,
+        workingDurationMinutes,
+        lateMinutes,
+        earlyMinutes,
+        overtimeMinutes,
+      };
+    });
+  };
+
+  const handleExportConfirm = async () => {
+    setIsExportModalOpen(false);
+    setLoading(true);
+    try {
+      const punches = await fetchAllPunchesForExport(exportFromDate, exportToDate, locationFilter);
+      const records = computeDailyRecords(punches).filter((record) => {
+        if (debouncedSearch.trim()) {
+          const q = debouncedSearch.toLowerCase();
+          return (
+            record.userId.toLowerCase().includes(q) ||
+            record.employeeName.toLowerCase().includes(q) ||
+            record.department.toLowerCase().includes(q) ||
+            record.location.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
+      exportRecordsToExcel(records, exportFromDate, exportToDate);
+    } catch (error) {
+      console.error('Error exporting records:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, devicesMap, shiftsMap]);
+
+  const filteredRecords = dailyRecords.filter((record) => {
     if (debouncedSearch.trim()) {
       const q = debouncedSearch.toLowerCase();
-      const empName = resolveEmployeeName(p.userId).toLowerCase();
       return (
-        p.userId?.toLowerCase().includes(q) ||
-        empName.includes(q) ||
-        p.deviceLogId?.toLowerCase().includes(q) ||
-        p.direction?.toLowerCase().includes(q) ||
-        p.sourceTable?.toLowerCase().includes(q) ||
-        String(p.deviceId ?? '').includes(q)
+        record.userId.toLowerCase().includes(q) ||
+        record.employeeName.toLowerCase().includes(q) ||
+        record.department.toLowerCase().includes(q) ||
+        record.location.toLowerCase().includes(q)
       );
     }
     return true;
   });
 
-  const totalPages = Math.max(1, Math.ceil(filteredPunches.length / PAGE_SIZE));
-  const paginatedPunches = filteredPunches.slice(currentPageIndex * PAGE_SIZE, (currentPageIndex + 1) * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
+  const paginatedRecords = filteredRecords.slice(currentPageIndex * PAGE_SIZE, (currentPageIndex + 1) * PAGE_SIZE);
 
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
@@ -674,11 +702,18 @@ export const RawPunchesPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setExportModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+            onClick={handleExport}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors"
           >
             <Download size={16} />
             Export
+          </button>
+          <button
+            onClick={openAnalyzeModal}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <Clock size={16} />
+            Analyze
           </button>
           <button
             onClick={() => { setLastDoc(null); setHasMore(false); setCurrentPageIndex(0); fetchPage(fromDate, toDateFilter, locationFilter); }}
@@ -745,7 +780,7 @@ export const RawPunchesPage: React.FC = () => {
           <div className="flex items-center justify-center py-16">
             <div className="w-8 h-8 border-2 border-secondary-300 border-t-green-600 rounded-full animate-spin" />
           </div>
-        ) : filteredPunches.length === 0 ? (
+        ) : filteredRecords.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mb-4">
               <Calendar className="w-10 h-10 text-green-600" />
@@ -759,50 +794,42 @@ export const RawPunchesPage: React.FC = () => {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-secondary-50 border-b border-secondary-200">
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">User ID</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee Name</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Designation</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Date</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Time</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Direction</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Status</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700">Location</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Employee ID</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Employee Name</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Department</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Location</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Date</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Shift</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">In Time</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Out Time</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Working Duration</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Late Minutes</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Early Minutes</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Overtime Minutes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedPunches.map((punch: RawPunch, idx: number) => (
+                  {paginatedRecords.map((record: DailyRecord, idx: number) => (
                     <tr
-                      key={punch.id}
+                      key={record.id}
                       className={`border-b border-secondary-100 hover:bg-secondary-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-secondary-50/50'}`}
                     >
-                      <td className="px-4 py-2.5 font-medium text-secondary-900">{punch.userId ?? '—'}</td>
-                      <td className="px-4 py-2.5 text-secondary-800">{resolveEmployeeName(punch.userId) || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
-                      <td className="px-4 py-2.5 text-secondary-700">{resolveDesignation(punch.userId)}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatDate(punch.logDate)}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTime(punch.logDate)}</td>
-                      <td className="px-4 py-2.5">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          punch.direction === 'in'
-                            ? 'bg-green-100 text-green-700'
-                            : punch.direction === 'out'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-secondary-100 text-secondary-600'
-                        }`}>
-                          {punch.direction ?? '—'}
-                        </span>
+                      <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{record.userId || '—'}</td>
+                      <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{record.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.department}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.location}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.date ? record.date.toISOString().split('T')[0] : '—'}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
+                        {record.shift
+                          ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}`
+                          : '—'}
                       </td>
-                      <td className="px-4 py-2.5">
-                        {(() => {
-                          const status = getPunchStatus(punch);
-                          if (!status) return <span className="text-secondary-300 text-xs">—</span>;
-                          return (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${status.color}`}>
-                              {status.label}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-4 py-2.5 text-secondary-700">{resolveDeviceLocation(punch.deviceId)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(record.inTime)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(record.outTime)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.workingDurationMinutes)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.lateMinutes)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.earlyMinutes)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.overtimeMinutes)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -816,7 +843,7 @@ export const RawPunchesPage: React.FC = () => {
           <div className="mt-4 flex items-center justify-between text-sm text-secondary-500">
             <span>
               <>
-                Page {currentPageIndex + 1} of {totalPages}{hasMore ? '+' : ''} &nbsp;·&nbsp; {filteredPunches.length} total match{filteredPunches.length !== 1 ? 'es' : ''}{hasMore ? '+' : ''}
+                Page {currentPageIndex + 1} of {totalPages}{hasMore ? '+' : ''} &nbsp;·&nbsp; {filteredRecords.length} total match{filteredRecords.length !== 1 ? 'es' : ''}{hasMore ? '+' : ''}
               </>
             </span>
             <div className="flex items-center gap-2">
@@ -841,69 +868,157 @@ export const RawPunchesPage: React.FC = () => {
       </div>
 
       {/* Export Modal */}
-      {exportModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between p-4 border-b border-secondary-200">
-              <h2 className="text-lg font-semibold text-secondary-900">Export Attendance Data</h2>
-              <button
-                onClick={() => setExportModalOpen(false)}
-                className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-4 space-y-4">
+      {isExportModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setIsExportModalOpen(false)}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-secondary-900 mb-4">Export Attendance</h2>
+            <p className="text-sm text-secondary-500 mb-4">Select the period to export.</p>
+            <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
-                <label htmlFor="exportFromDate" className="block text-sm font-medium text-secondary-700 mb-1">From Date</label>
+                <label className="block text-xs font-medium text-secondary-600 mb-1">From</label>
                 <input
-                  id="exportFromDate"
                   type="date"
                   value={exportFromDate}
                   onChange={(e) => setExportFromDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
               <div>
-                <label htmlFor="exportToDate" className="block text-sm font-medium text-secondary-700 mb-1">To Date</label>
+                <label className="block text-xs font-medium text-secondary-600 mb-1">To</label>
                 <input
-                  id="exportToDate"
                   type="date"
                   value={exportToDate}
                   onChange={(e) => setExportToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
-              <div>
-                <label htmlFor="exportLocation" className="block text-sm font-medium text-secondary-700 mb-1">Location</label>
-                <select
-                  id="exportLocation"
-                  value={exportLocation}
-                  onChange={(e) => setExportLocation(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                >
-                  <option value="">All Locations</option>
-                  {Array.from(new Set(Object.values(devicesMap))).sort().map((loc) => (
-                    <option key={loc} value={loc}>{loc}</option>
-                  ))}
-                </select>
-              </div>
             </div>
-            <div className="flex justify-end gap-2 p-4 border-t border-secondary-200">
+            <div className="flex items-center justify-end gap-2">
               <button
-                onClick={() => setExportModalOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
+                onClick={() => setIsExportModalOpen(false)}
+                className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleExport}
+                onClick={handleExportConfirm}
                 disabled={!exportFromDate || !exportToDate}
-                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Export
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Analyze Modal */}
+      {isAnalyzeModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setIsAnalyzeModalOpen(false)}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl mx-4 p-6 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-secondary-900">Shift Time Analysis</h2>
+                <p className="text-sm text-secondary-500">Ins/Outs more than 2 hours before or after assigned shift time</p>
+              </div>
+              <button
+                onClick={() => setIsAnalyzeModalOpen(false)}
+                className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
+                aria-label="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4 items-end">
+              <div>
+                <label className="block text-xs font-medium text-secondary-600 mb-1">From</label>
+                <input
+                  type="date"
+                  value={analyzeFromDate}
+                  onChange={(e) => setAnalyzeFromDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-secondary-600 mb-1">To</label>
+                <input
+                  type="date"
+                  value={analyzeToDate}
+                  onChange={(e) => setAnalyzeToDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <button
+                onClick={() => runAnalysis(analyzeFromDate, analyzeToDate)}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Run Analysis
+              </button>
+              <button
+                onClick={handleFixAnomalies}
+                disabled={isFixing || analyzeResults.length === 0}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isFixing ? 'Fixing...' : 'Fix'}
+              </button>
+            </div>
+            {fixMessage && (
+              <div className={`mb-4 text-sm ${fixMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
+                {fixMessage}
+              </div>
+            )}
+            {analyzeResults.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-3">
+                  <Clock className="w-8 h-8 text-green-600" />
+                </div>
+                <h3 className="text-lg font-medium text-secondary-900 mb-1">No anomalies found</h3>
+                <p className="text-sm text-secondary-500">All ins and outs are within 2 hours of shift times for the selected period.</p>
+              </div>
+            ) : (
+              <div className="overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-secondary-50 sticky top-0">
+                    <tr className="border-b border-secondary-200">
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee ID</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee Name</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Date</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Type</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Shift Time</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Actual Time</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Deviation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analyzeResults.map((result, idx) => (
+                      <tr key={`${result.userId}-${result.date?.toISOString()}-${result.type}-${idx}`} className="border-b border-secondary-100 hover:bg-secondary-50 transition-colors">
+                        <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{result.userId}</td>
+                        <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{result.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
+                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.date ? result.date.toISOString().split('T')[0] : '—'}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${result.type === 'in' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                            {result.type === 'in' ? 'In' : 'Out'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.shiftTime}</td>
+                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(result.actualTime)}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className={`text-xs font-medium ${result.deviationMinutes < 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                            {result.deviationLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

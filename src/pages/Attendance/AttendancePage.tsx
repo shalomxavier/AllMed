@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, ClipboardList, Clock, Umbrella, Fingerprint } from 'lucide-react';
+import { Users, ClipboardList, Clock, Umbrella, Fingerprint, Briefcase, Building2, FileText } from 'lucide-react';
 import { PageContainer } from '@/components/common';
 
 export const AttendancePage: React.FC = () => {
@@ -31,11 +31,29 @@ export const AttendancePage: React.FC = () => {
           </div>
           <p className="text-base font-semibold text-secondary-900 text-center">Week Off / Leave</p>
         </div>
+        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/reports')}>
+          <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center mb-3">
+            <FileText className="w-9 h-9 text-pink-600" />
+          </div>
+          <p className="text-base font-semibold text-secondary-900 text-center">Reports</p>
+        </div>
         <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/devices')}>
           <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-3">
             <Fingerprint className="w-9 h-9 text-red-600" />
           </div>
           <p className="text-base font-semibold text-secondary-900 text-center">Devices</p>
+        </div>
+        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/designations')}>
+          <div className="w-16 h-16 rounded-full bg-teal-100 flex items-center justify-center mb-3">
+            <Briefcase className="w-9 h-9 text-teal-600" />
+          </div>
+          <p className="text-base font-semibold text-secondary-900 text-center">Designations</p>
+        </div>
+        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/departments')}>
+          <div className="w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center mb-3">
+            <Building2 className="w-9 h-9 text-indigo-600" />
+          </div>
+          <p className="text-base font-semibold text-secondary-900 text-center">Departments</p>
         </div>
       </div>
     </PageContainer>

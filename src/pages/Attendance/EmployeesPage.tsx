@@ -165,10 +165,6 @@ export const EmployeesPage: React.FC = () => {
   const [bulkLeaveCalendarMonth, setBulkLeaveCalendarMonth] = useState(new Date().getMonth());
   const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
   const [isSavingBulkLeave, setIsSavingBulkLeave] = useState(false);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
-  const [designation, setDesignation] = useState('');
-  const [isUpdatingEmployee, setIsUpdatingEmployee] = useState(false);
 
   const fetchEmployees = async () => {
     if (!currentUser) return;
@@ -222,42 +218,6 @@ export const EmployeesPage: React.FC = () => {
   const handleShiftsClick = (employee: Employee) => {
     setSelectedEmployee(employee);
     setShiftModalOpen(true);
-  };
-
-  const handleEditClick = (employee: Employee) => {
-    setEditingEmployee(employee);
-    setDesignation(employee.designation || '');
-    setEditModalOpen(true);
-  };
-
-  const handleUpdateEmployee = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingEmployee) return;
-
-    setIsUpdatingEmployee(true);
-    try {
-      const db = getFirestore();
-      await updateDoc(doc(db, 'employees', editingEmployee.id), {
-        designation
-      });
-      
-      // Update local state
-      setEmployees(prevEmployees => 
-        prevEmployees.map(emp => 
-          emp.id === editingEmployee.id 
-            ? { ...emp, designation } 
-            : emp
-        )
-      );
-      
-      setSuccessMessage('Designation Updated Successfully');
-      setShowSuccessDialog(true);
-      setEditModalOpen(false);
-    } catch (error) {
-      console.error('Error updating employee:', error);
-    } finally {
-      setIsUpdatingEmployee(false);
-    }
   };
 
   const fetchAttendanceLeavesForMonth = async (employee: Employee, month: number, year: number) => {
@@ -999,7 +959,7 @@ export const EmployeesPage: React.FC = () => {
   };
 
   return (
-    <div className="h-[calc(100vh-80px)] flex flex-col">
+    <div className="flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
         <div className="flex items-center gap-3">
@@ -1029,7 +989,7 @@ export const EmployeesPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
+      <div className="bg-secondary-50 p-6">
         {/* Search Bar */}
         <div className="mb-6 flex items-center justify-between gap-4">
           <div className="relative flex-1 max-w-2xl">
@@ -1090,12 +1050,22 @@ export const EmployeesPage: React.FC = () => {
                   <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
                     <Users className="w-6 h-6 text-blue-600" />
                   </div>
-                  <button 
-                    onClick={() => handleEditClick(employee)}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
-                  >
-                    <Edit size={18} />
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => navigate(`/attendance/employees/${employee.id}`)}
+                      className="text-gray-400 hover:text-blue-600 transition-colors"
+                      aria-label="View"
+                    >
+                      <Eye size={18} />
+                    </button>
+                    <button
+                      onClick={() => navigate(`/attendance/employees/${employee.id}?edit=true`)}
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      aria-label="Edit"
+                    >
+                      <Edit size={18} />
+                    </button>
+                  </div>
                 </div>
                 <h3 className="font-semibold text-secondary-900 mb-1">
                   {employee.employeeName || 'Unknown'}
@@ -2468,75 +2438,6 @@ export const EmployeesPage: React.FC = () => {
             >
               OK
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Employee Modal */}
-      {editModalOpen && editingEmployee && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between p-4 border-b border-secondary-200">
-              <div>
-                <h2 className="text-lg font-semibold text-secondary-900">Edit Employee</h2>
-                <p className="text-sm text-secondary-500">{editingEmployee.employeeName}</p>
-              </div>
-              <button
-                onClick={() => setEditModalOpen(false)}
-                className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleUpdateEmployee}>
-              <div className="p-4 space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-secondary-700 mb-1">Employee Name</label>
-                  <p className="text-sm text-secondary-900 bg-secondary-50 px-3 py-2 rounded-lg">
-                    {editingEmployee.employeeName || '—'}
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-secondary-700 mb-1">Employee ID</label>
-                  <p className="text-sm text-secondary-900 bg-secondary-50 px-3 py-2 rounded-lg">
-                    {editingEmployee.employeeId || '—'}
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-secondary-700 mb-1">Employee Code</label>
-                  <p className="text-sm text-secondary-900 bg-secondary-50 px-3 py-2 rounded-lg">
-                    {editingEmployee.employeeCode || '—'}
-                  </p>
-                </div>
-                <div>
-                  <label htmlFor="designation" className="block text-sm font-medium text-secondary-700 mb-1">Designation</label>
-                  <input
-                    id="designation"
-                    type="text"
-                    value={designation}
-                    onChange={(e) => setDesignation(e.target.value)}
-                    className="w-full px-3 py-2 text-sm text-secondary-900 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter designation"
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end gap-2 p-4 border-t border-secondary-200">
-                <button
-                  type="button"
-                  onClick={() => setEditModalOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isUpdatingEmployee}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isUpdatingEmployee ? 'Updating...' : 'Save'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

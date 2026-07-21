@@ -3,10 +3,14 @@ import { AuthProvider, useAuthContext } from '@/contexts/AuthContext';
 import { LoginPage } from '@pages/Login/LoginPage';
 import { AttendancePage } from '@pages/Attendance/AttendancePage';
 import { EmployeesPage } from '@pages/Attendance/EmployeesPage';
+import { EmployeeDetailsPage } from '@pages/Attendance/EmployeeDetailsPage';
 import { RawPunchesPage } from '@pages/Attendance/RawPunchesPage';
 import { ShiftsPage } from '@pages/Attendance/ShiftsPage';
 import { LeavesPage } from '@pages/Attendance/LeavesPage';
 import { DevicesPage } from '@pages/Attendance/DevicesPage';
+import { DesignationsPage } from '@pages/Attendance/DesignationsPage';
+import { DepartmentsPage } from '@pages/Attendance/DepartmentsPage';
+import { ReportsPage } from '@pages/Attendance/ReportsPage';
 import { UsersPage } from '@pages/Users/UsersPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
@@ -48,10 +52,14 @@ const AppRoutesContent: React.FC = () => {
       >
         <Route path="/attendance" element={<AttendancePage />} />
         <Route path="/attendance/employees" element={<EmployeesPage />} />
+        <Route path="/attendance/employees/:id" element={<EmployeeDetailsPage />} />
         <Route path="/attendance/records" element={<RawPunchesPage />} />
         <Route path="/attendance/shifts" element={<ShiftsPage />} />
         <Route path="/attendance/leaves" element={<LeavesPage />} />
         <Route path="/attendance/devices" element={<DevicesPage />} />
+        <Route path="/attendance/designations" element={<DesignationsPage />} />
+        <Route path="/attendance/departments" element={<DepartmentsPage />} />
+        <Route path="/attendance/reports" element={<ReportsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/dms" element={<DMSPage />} />
         <Route path="/dms/workspace" element={<WorkspacePage />} />
