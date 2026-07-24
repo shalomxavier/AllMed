@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useToast } from '@/pages/DMS/components/Toast';
 
 interface RawPunch {
   id: string;
@@ -44,6 +45,15 @@ const formatMinutes = (minutes: number): string => {
   return `${h}h ${m}m`;
 };
 
+const formatLocalDate = (date: Date | null): string => {
+  if (!date) return '';
+  // Treat stored Firestore UTC timestamps as wall-clock dates.
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 interface DailyRecord {
   id: string;
   userId: string;
@@ -54,6 +64,8 @@ interface DailyRecord {
   date: Date | null;
   inTime: Date | null;
   outTime: Date | null;
+  inTimes: Date[];
+  outTimes: Date[];
   workingDurationMinutes: number;
   lateMinutes: number;
   earlyMinutes: number;
@@ -77,6 +89,7 @@ const ANALYSIS_THRESHOLD_MINUTES = 120;
 export const RawPunchesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
+  const { showToast, ToastContainer } = useToast();
 
   const [allPunches, setAllPunches] = useState<RawPunch[]>([]);
   const [allowedUserIds, setAllowedUserIds] = useState<Set<string>>(new Set());
@@ -105,15 +118,55 @@ export const RawPunchesPage: React.FC = () => {
   const [analyzeFromDate, setAnalyzeFromDate] = useState('');
   const [analyzeToDate, setAnalyzeToDate] = useState('');
   const [isFixing, setIsFixing] = useState(false);
-  const [fixMessage, setFixMessage] = useState<string | null>(null);
+  const [expandedTimeCells, setExpandedTimeCells] = useState<Set<string>>(new Set());
+
+  const toggleTimeCell = (recordId: string, type: 'in' | 'out') => {
+    const key = `${recordId}-${type}`;
+    setExpandedTimeCells((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const renderTimeCell = (record: DailyRecord, type: 'in' | 'out') => {
+    const times = type === 'in' ? record.inTimes : record.outTimes;
+    const key = `${record.id}-${type}`;
+    const expanded = expandedTimeCells.has(key);
+    if (times.length === 0) return <span>—</span>;
+    if (times.length === 1) return <span>{formatTimeHHMM(times[0])}</span>;
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <span>{formatTimeHHMM(times[0])}</span>
+          <button
+            onClick={() => toggleTimeCell(record.id, type)}
+            className="text-secondary-500 hover:text-secondary-700 focus:outline-none"
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
+            {expanded ? (
+              <ChevronRight size={14} className="rotate-90" />
+            ) : (
+              <ChevronRight size={14} />
+            )}
+          </button>
+        </div>
+        {expanded && times.slice(1).map((t, i) => (
+          <span key={i} className="text-secondary-500">{formatTimeHHMM(t)}</span>
+        ))}
+      </div>
+    );
+  };
 
   useEffect(() => {
     const today = new Date();
-    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const firstDayOfMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
     const formatDateLocal = (date: Date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
+      // Use UTC components to match the wall-clock interpretation of stored timestamps.
+      const year = date.getUTCFullYear();
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
       return `${year}-${month}-${day}`;
     };
     const from = formatDateLocal(firstDayOfMonth);
@@ -135,11 +188,12 @@ export const RawPunchesPage: React.FC = () => {
   const buildQueryConstraints = (from: string, to: string, deviceIds: number[], cursor?: QueryDocumentSnapshot<DocumentData>) => {
     const constraints: any[] = [orderBy('logDate', 'desc')];
     if (from) {
-      const fromTs = Timestamp.fromDate(new Date(from + 'T00:00:00'));
+      // Treat the date string as UTC to match the wall-clock interpretation of stored timestamps.
+      const fromTs = Timestamp.fromDate(new Date(from + 'T00:00:00Z'));
       constraints.push(where('logDate', '>=', fromTs));
     }
     if (to) {
-      const toTs = Timestamp.fromDate(new Date(to + 'T23:59:59'));
+      const toTs = Timestamp.fromDate(new Date(to + 'T23:59:59Z'));
       constraints.push(where('logDate', '<=', toTs));
     }
     if (deviceIds.length > 0) {
@@ -309,7 +363,7 @@ export const RawPunchesPage: React.FC = () => {
     if (!shifts || shifts.length === 0) return null;
     const d = toDate(logDate);
     if (!d) return null;
-    const punchDateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    const punchDateStr = formatLocalDate(d);
     return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
   };
 
@@ -348,54 +402,52 @@ export const RawPunchesPage: React.FC = () => {
   const runAnalysis = (from: string, to: string) => {
     const filteredByDate = dailyRecords.filter((record) => {
       if (!record.date) return false;
-      const dateStr = record.date.toISOString().split('T')[0];
+      const dateStr = formatLocalDate(record.date);
       if (from && dateStr < from) return false;
       if (to && dateStr > to) return false;
       return true;
     });
+
+    const buildAnomaly = (
+      type: 'in' | 'out',
+      record: DailyRecord,
+      actualTime: Date,
+      shiftTime: string
+    ): AnalyzeResult | null => {
+      const [h, m] = shiftTime.split(':').map(Number);
+      const shiftMin = h * 60 + m;
+      const actualMin = actualTime.getUTCHours() * 60 + actualTime.getUTCMinutes();
+      const diffMin = actualMin - shiftMin;
+      if (Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES) return null;
+      return {
+        type,
+        userId: record.userId,
+        employeeName: record.employeeName,
+        date: record.date,
+        shiftTime,
+        actualTime,
+        deviationMinutes: diffMin,
+        deviationLabel:
+          diffMin < 0
+            ? `${Math.round(Math.abs(diffMin) / 60)}h early`
+            : `${Math.round(Math.abs(diffMin) / 60)}h ${type === 'in' ? 'late' : 'overtime'}`,
+      };
+    };
 
     const anomalies = filteredByDate.flatMap((record) => {
       const items: AnalyzeResult[] = [];
       const shift = record.shift;
       if (!shift) return items;
 
-      if (record.inTime && shift.startTime) {
-        const [sh, sm] = shift.startTime.split(':').map(Number);
-        const shiftStartMin = sh * 60 + sm;
-        const inMin = record.inTime.getUTCHours() * 60 + record.inTime.getUTCMinutes();
-        const diffMin = inMin - shiftStartMin;
-        if (Math.abs(diffMin) > ANALYSIS_THRESHOLD_MINUTES) {
-          items.push({
-            type: 'in',
-            userId: record.userId,
-            employeeName: record.employeeName,
-            date: record.date,
-            shiftTime: shift.startTime,
-            actualTime: record.inTime,
-            deviationMinutes: diffMin,
-            deviationLabel: diffMin < 0 ? `${Math.round(Math.abs(diffMin) / 60)}h early` : `${Math.round(Math.abs(diffMin) / 60)}h late`,
-          });
-        }
-      }
+      record.inTimes.forEach((inTime) => {
+        const anomaly = shift.startTime ? buildAnomaly('in', record, inTime, shift.startTime) : null;
+        if (anomaly) items.push(anomaly);
+      });
 
-      if (record.outTime && shift.endTime) {
-        const [eh, em] = shift.endTime.split(':').map(Number);
-        const shiftEndMin = eh * 60 + em;
-        const outMin = record.outTime.getUTCHours() * 60 + record.outTime.getUTCMinutes();
-        const diffMin = outMin - shiftEndMin;
-        if (Math.abs(diffMin) > ANALYSIS_THRESHOLD_MINUTES) {
-          items.push({
-            type: 'out',
-            userId: record.userId,
-            employeeName: record.employeeName,
-            date: record.date,
-            shiftTime: shift.endTime,
-            actualTime: record.outTime,
-            deviationMinutes: diffMin,
-            deviationLabel: diffMin < 0 ? `${Math.round(Math.abs(diffMin) / 60)}h early` : `${Math.round(Math.abs(diffMin) / 60)}h overtime`,
-          });
-        }
-      }
+      record.outTimes.forEach((outTime) => {
+        const anomaly = shift.endTime ? buildAnomaly('out', record, outTime, shift.endTime) : null;
+        if (anomaly) items.push(anomaly);
+      });
 
       return items;
     });
@@ -405,28 +457,23 @@ export const RawPunchesPage: React.FC = () => {
 
   const findPunchToFixInArray = (result: AnalyzeResult, punches: RawPunch[]): RawPunch | null => {
     if (!result.date) return null;
-    const targetDateStr = result.date.toISOString().split('T')[0];
+    const targetDateStr = formatLocalDate(result.date);
     const targetUserId = result.userId.trim().toLowerCase();
+    const targetTime = result.actualTime.getTime();
 
-    const datePunches = punches.filter((p) => {
-      if (!p.userId || !p.logDate) return false;
-      const d = toDate(p.logDate);
-      if (!d) return false;
-      const dateStr = d.toISOString().split('T')[0];
-      return p.userId.trim().toLowerCase() === targetUserId && dateStr === targetDateStr;
-    });
-
-    if (datePunches.length === 0) return null;
-
-    if (result.type === 'in') {
-      const inPunches = datePunches.filter((p) => p.direction === 'in');
-      if (inPunches.length === 0) return null;
-      return inPunches.sort((a, b) => toDate(a.logDate)!.getTime() - toDate(b.logDate)!.getTime())[0];
-    } else {
-      const outPunches = datePunches.filter((p) => p.direction === 'out');
-      if (outPunches.length === 0) return null;
-      return outPunches.sort((a, b) => toDate(b.logDate)!.getTime() - toDate(a.logDate)!.getTime())[0];
-    }
+    return (
+      punches.find((p) => {
+        if (!p.userId || !p.logDate) return false;
+        const d = toDate(p.logDate);
+        if (!d) return false;
+        const dateStr = formatLocalDate(d);
+        return (
+          p.userId.trim().toLowerCase() === targetUserId &&
+          dateStr === targetDateStr &&
+          d.getTime() === targetTime
+        );
+      }) ?? null
+    );
   };
 
   const testDirectionSwapInArray = (punches: RawPunch[], result: AnalyzeResult): boolean => {
@@ -434,33 +481,37 @@ export const RawPunchesPage: React.FC = () => {
     const testRecord = testDailyRecords.find((r) => {
       if (!r.date || !result.date) return false;
       const sameUser = r.userId.trim().toLowerCase() === result.userId.trim().toLowerCase();
-      const sameDate = r.date.toISOString().split('T')[0] === result.date.toISOString().split('T')[0];
+      const sameDate = formatLocalDate(r.date) === formatLocalDate(result.date);
       return sameUser && sameDate;
     });
 
-    if (!testRecord || !testRecord.shift) return false;
+    if (!testRecord || !testRecord.shift || !testRecord.shift.startTime || !testRecord.shift.endTime) return false;
+
+    const targetTime = result.actualTime.getTime();
+    const [sh, sm] = testRecord.shift.startTime.split(':').map(Number);
+    const shiftStartMin = sh * 60 + sm;
+    const [eh, em] = testRecord.shift.endTime.split(':').map(Number);
+    const shiftEndMin = eh * 60 + em;
+
+    const isWithinThreshold = (time: Date, type: 'in' | 'out') => {
+      const actualMin = time.getUTCHours() * 60 + time.getUTCMinutes();
+      const shiftMin = type === 'in' ? shiftStartMin : shiftEndMin;
+      const diffMin = actualMin - shiftMin;
+      return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
+    };
 
     if (result.type === 'in') {
-      if (!testRecord.inTime || !testRecord.shift.startTime) return true;
-      const [sh, sm] = testRecord.shift.startTime.split(':').map(Number);
-      const shiftStartMin = sh * 60 + sm;
-      const inMin = testRecord.inTime.getUTCHours() * 60 + testRecord.inTime.getUTCMinutes();
-      const diffMin = inMin - shiftStartMin;
-      return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
+      const swappedOut = testRecord.outTimes.find((t) => t.getTime() === targetTime);
+      return swappedOut ? isWithinThreshold(swappedOut, 'out') : false;
     } else {
-      if (!testRecord.outTime || !testRecord.shift.endTime) return true;
-      const [eh, em] = testRecord.shift.endTime.split(':').map(Number);
-      const shiftEndMin = eh * 60 + em;
-      const outMin = testRecord.outTime.getUTCHours() * 60 + testRecord.outTime.getUTCMinutes();
-      const diffMin = outMin - shiftEndMin;
-      return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
+      const swappedIn = testRecord.inTimes.find((t) => t.getTime() === targetTime);
+      return swappedIn ? isWithinThreshold(swappedIn, 'in') : false;
     }
   };
 
   const handleFixAnomalies = async () => {
     if (analyzeResults.length === 0 || isFixing) return;
     setIsFixing(true);
-    setFixMessage(null);
     let fixedCount = 0;
     let workingPunches = [...allPunches];
 
@@ -491,10 +542,11 @@ export const RawPunchesPage: React.FC = () => {
         setAllPunches(workingPunches);
       }
 
-      setFixMessage(`Fixed ${fixedCount} of ${analyzeResults.length} anomalies.`);
+      setIsAnalyzeModalOpen(false);
+      showToast('success', `Fixed ${fixedCount} of ${analyzeResults.length} anomalies.`);
     } catch (error) {
       console.error('Error fixing anomalies:', error);
-      setFixMessage('Error fixing anomalies. Please try again.');
+      showToast('error', 'Error fixing anomalies. Please try again.');
     } finally {
       setIsFixing(false);
     }
@@ -540,9 +592,9 @@ export const RawPunchesPage: React.FC = () => {
       record.department,
       record.location,
       record.shift ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}` : '',
-      record.date ? record.date.toISOString().split('T')[0] : '',
-      record.inTime ? formatTimeHHMM(record.inTime) : '',
-      record.outTime ? formatTimeHHMM(record.outTime) : '',
+      record.date ? formatLocalDate(record.date) : '',
+      record.inTimes.length > 0 ? record.inTimes.map(formatTimeHHMM).join(', ') : '',
+      record.outTimes.length > 0 ? record.outTimes.map(formatTimeHHMM).join(', ') : '',
       record.workingDurationMinutes > 0 ? formatMinutes(record.workingDurationMinutes) : '',
       record.lateMinutes > 0 ? formatMinutes(record.lateMinutes) : '',
       record.earlyMinutes > 0 ? formatMinutes(record.earlyMinutes) : '',
@@ -566,7 +618,7 @@ export const RawPunchesPage: React.FC = () => {
     punches.forEach((punch) => {
       const d = toDate(punch.logDate);
       if (!d || !punch.userId) return;
-      const dateKey = `${punch.userId.trim().toLowerCase()}_${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      const dateKey = `${punch.userId.trim().toLowerCase()}_${formatLocalDate(d)}`;
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(punch);
     });
@@ -587,6 +639,14 @@ export const RawPunchesPage: React.FC = () => {
       const inDate = toDate(firstIn?.logDate ?? null);
       const outDate = toDate(lastOut?.logDate ?? null);
       const date = toDate(firstPunch.logDate);
+      const inTimes = sorted
+        .filter((p) => p.direction === 'in')
+        .map((p) => toDate(p.logDate))
+        .filter((d): d is Date => d !== null);
+      const outTimes = sorted
+        .filter((p) => p.direction === 'out')
+        .map((p) => toDate(p.logDate))
+        .filter((d): d is Date => d !== null);
 
       const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
       let lateMinutes = 0;
@@ -618,12 +678,26 @@ export const RawPunchesPage: React.FC = () => {
       let workingDurationMinutes = 0;
       if (inDate && outDate && outDate.getTime() > inDate.getTime()) {
         workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
+      } else if (inDate && outDate) {
+        const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
+        const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
+        if (outMin >= inMin) {
+          workingDurationMinutes = outMin - inMin;
+        } else {
+          workingDurationMinutes = outMin + 24 * 60 - inMin;
+        }
+        console.warn('[RawPunches] lastOut before firstIn UTC; used wall-clock time for duration', {
+          userId,
+          firstIn: inDate.toISOString(),
+          lastOut: outDate.toISOString(),
+          workingDurationMinutes,
+        });
       }
 
       const locationPunch = firstIn ?? firstPunch;
 
       return {
-        id: `${key}_${date ? date.toISOString().split('T')[0] : firstPunch.id}`,
+        id: `${key}_${date ? formatLocalDate(date) : firstPunch.id}`,
         userId,
         employeeName: employeeMap[key] ?? '',
         department: departmentMap[key] ?? '—',
@@ -632,6 +706,8 @@ export const RawPunchesPage: React.FC = () => {
         date,
         inTime: inDate,
         outTime: outDate,
+        inTimes,
+        outTimes,
         workingDurationMinutes,
         lateMinutes,
         earlyMinutes,
@@ -685,6 +761,7 @@ export const RawPunchesPage: React.FC = () => {
 
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
+      <ToastContainer />
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
         <div className="flex items-center gap-3">
@@ -818,14 +895,18 @@ export const RawPunchesPage: React.FC = () => {
                       <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{record.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.department}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.location}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.date ? record.date.toISOString().split('T')[0] : '—'}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.date ? formatLocalDate(record.date) : '—'}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
                         {record.shift
                           ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}`
                           : '—'}
                       </td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(record.inTime)}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(record.outTime)}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
+                        {renderTimeCell(record, 'in')}
+                      </td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
+                        {renderTimeCell(record, 'out')}
+                      </td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.workingDurationMinutes)}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.lateMinutes)}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.earlyMinutes)}</td>
@@ -968,11 +1049,6 @@ export const RawPunchesPage: React.FC = () => {
                 {isFixing ? 'Fixing...' : 'Fix'}
               </button>
             </div>
-            {fixMessage && (
-              <div className={`mb-4 text-sm ${fixMessage.startsWith('Error') ? 'text-red-600' : 'text-green-600'}`}>
-                {fixMessage}
-              </div>
-            )}
             {analyzeResults.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-3">
@@ -997,10 +1073,10 @@ export const RawPunchesPage: React.FC = () => {
                   </thead>
                   <tbody>
                     {analyzeResults.map((result, idx) => (
-                      <tr key={`${result.userId}-${result.date?.toISOString()}-${result.type}-${idx}`} className="border-b border-secondary-100 hover:bg-secondary-50 transition-colors">
+                      <tr key={`${result.userId}-${formatLocalDate(result.date)}-${result.type}-${idx}`} className="border-b border-secondary-100 hover:bg-secondary-50 transition-colors">
                         <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{result.userId}</td>
                         <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{result.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
-                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.date ? result.date.toISOString().split('T')[0] : '—'}</td>
+                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.date ? formatLocalDate(result.date) : '—'}</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${result.type === 'in' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
                             {result.type === 'in' ? 'In' : 'Out'}
