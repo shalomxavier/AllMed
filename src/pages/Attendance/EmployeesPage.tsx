@@ -517,6 +517,8 @@ export const EmployeesPage: React.FC = () => {
       const empCode = (employee.employeeCode ?? '').trim().toLowerCase();
       snapshot.forEach((doc) => {
         const data = doc.data();
+        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
+        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const employees: any[] = data.employees ?? [];
         const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
         if (entry) {
@@ -689,6 +691,8 @@ export const EmployeesPage: React.FC = () => {
       const empCode = (selectedEmployee.employeeCode ?? '').trim().toLowerCase();
       snapshot.forEach((doc) => {
         const data = doc.data();
+        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
+        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const employees: any[] = data.employees ?? [];
         const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
         if (entry) {
@@ -881,6 +885,8 @@ export const EmployeesPage: React.FC = () => {
       const templates: { startTime: string; endTime: string }[] = [];
       snap.forEach((d) => {
         const data = d.data();
+        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
+        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const key = `${data.startTime}|${data.endTime}`;
         if (!seen.has(key)) { seen.add(key); templates.push({ startTime: data.startTime, endTime: data.endTime }); }
       });

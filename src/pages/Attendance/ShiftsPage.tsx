@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Check, ChevronDown, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, arrayUnion, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
@@ -12,6 +12,12 @@ interface Employee {
   employeeCodeInDevice?: string;
   employeeName?: string;
   branchManagerId?: string;
+}
+
+interface BranchManager {
+  id: string;
+  name: string;
+  branch: string;
 }
 
 interface ShiftEmployee {
@@ -27,6 +33,9 @@ interface ShiftSlot {
   toDate: string;
   startTime: string;
   endTime: string;
+  branch: string;
+  branchManagerIds: string[];
+  branchManagerNames: string[];
   count: number;
   employees: ShiftEmployee[];
 }
@@ -84,6 +93,10 @@ export const ShiftsPage: React.FC = () => {
   // Assign shift modal state
   const [assignOpen, setAssignOpen] = useState(false);
   const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
+  const [branchManagers, setBranchManagers] = useState<BranchManager[]>([]);
+  const [selectedBranchManagerId, setSelectedBranchManagerId] = useState('');
+  const [selectedShiftManagerIds, setSelectedShiftManagerIds] = useState<string[]>([]);
+  const [shiftManagerDropdownOpen, setShiftManagerDropdownOpen] = useState(false);
   const [assignSelectedIds, setAssignSelectedIds] = useState<Set<string>>(new Set());
   const [assignForm, setAssignForm] = useState({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
   const [isAssigning, setIsAssigning] = useState(false);
@@ -99,6 +112,7 @@ export const ShiftsPage: React.FC = () => {
   const [deleteSlot, setDeleteSlot] = useState<ShiftSlot | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [editEmployeesOpen, setEditEmployeesOpen] = useState(false);
+  const [removeEditEmpConfirm, setRemoveEditEmpConfirm] = useState<{ emp: ShiftEmployee; index: number } | null>(null);
   const [removeEmpConfirm, setRemoveEmpConfirm] = useState<{ emp: ShiftEmployee; index: number } | null>(null);
   const [isRemovingEmp, setIsRemovingEmp] = useState(false);
 
@@ -115,8 +129,25 @@ export const ShiftsPage: React.FC = () => {
   const [wizardShowConfirm, setWizardShowConfirm] = useState(false);
   const [wizardTooltipDate, setWizardTooltipDate] = useState<string | null>(null);
   const [wizardTooltipPos, setWizardTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [wizardMultiSelectedDates, setWizardMultiSelectedDates] = useState<string[]>([]);
+  const [isCtrlPressed, setIsCtrlPressed] = useState(false);
   const [isSavingLeaves, setIsSavingLeaves] = useState(false);
   const [justAssignedEmps, setJustAssignedEmps] = useState<{ employeeCode: string; employeeName: string; employeeId: string; fromDate: string; toDate: string; }[]>([]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') setIsCtrlPressed(true);
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') setIsCtrlPressed(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
   const fetchEmployees = async () => {
     try {
@@ -133,8 +164,28 @@ export const ShiftsPage: React.FC = () => {
     } catch (e) { console.error(e); }
   };
 
+  const fetchBranchManagers = async () => {
+    try {
+      const snap = await getDocs(query(collection(db, 'users'), where('designation', '==', 'Branch Manager')));
+      const managers: BranchManager[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        managers.push({ id: d.id, name: data.name ?? data.email ?? 'Unnamed', branch: data.branch ?? '' });
+      });
+      managers.sort((a, b) => a.name.localeCompare(b.name));
+      setBranchManagers(userData?.designation === 'Branch Manager'
+        ? managers.filter((manager) => manager.id === userData.id)
+        : managers);
+    } catch (e) {
+      console.error('Error fetching branch managers:', e);
+    }
+  };
+
   const closeAssignModal = () => {
     setAssignOpen(false);
+    setSelectedBranchManagerId('');
+    setSelectedShiftManagerIds([]);
+    setShiftManagerDropdownOpen(false);
     setAssignSelectedIds(new Set());
     setAssignForm({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
     setAssignOverlaps([]);
@@ -154,6 +205,10 @@ export const ShiftsPage: React.FC = () => {
       const startTime = to24Hour(assignForm.startHour, assignForm.startMinute, assignForm.startAmPm);
       const endTime = to24Hour(assignForm.endHour, assignForm.endMinute, assignForm.endAmPm);
       const selectedEmps = Array.from(assignSelectedIds).map((id) => allEmployees.find((e) => e.id === id)).filter(Boolean) as Employee[];
+      const selectedShiftManagers = branchManagers.filter((manager) => selectedShiftManagerIds.includes(manager.id));
+      const branchManagerIds = selectedShiftManagers.map((manager) => manager.id);
+      const branchManagerNames = selectedShiftManagers.map((manager) => manager.name);
+      const branchNames = Array.from(new Set(selectedShiftManagers.map((manager) => manager.branch).filter(Boolean)));
 
       // EDIT MODE: update existing slot's startTime/endTime
       if (editingSlot) {
@@ -170,7 +225,15 @@ export const ShiftsPage: React.FC = () => {
         }
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
 
-        await updateDoc(doc(db, 'shifts', editingSlot.key), { startTime, endTime });
+        await updateDoc(doc(db, 'shifts', editingSlot.key), {
+          startTime,
+          endTime,
+          branchManagerIds,
+          branchManagerNames,
+          branchManagerId: branchManagerIds[0] ?? null,
+          branchManagerName: branchManagerNames.join(', ') || null,
+          branch: branchNames.join(', ') || editingSlot.branch || null,
+        });
         setAssignSuccess(true);
         fetchShifts();
         closeAssignModal();
@@ -258,12 +321,24 @@ export const ShiftsPage: React.FC = () => {
           setIsAssigning(false);
           return;
         }
-        await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(...empEntries) });
+        await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), {
+          employees: arrayUnion(...empEntries),
+          branchManagerIds,
+          branchManagerNames,
+          branchManagerId: branchManagerIds[0] ?? null,
+          branchManagerName: branchManagerNames.join(', ') || null,
+          branch: branchNames.join(', ') || null,
+        });
       } else {
         await addDoc(collection(db, 'shifts'), {
           startTime,
           endTime,
           employees: empEntries,
+          branchManagerIds,
+          branchManagerNames,
+          branchManagerId: branchManagerIds[0] ?? null,
+          branchManagerName: branchManagerNames.join(', ') || null,
+          branch: branchNames.join(', ') || null,
           createdAt: serverTimestamp(),
           createdBy: currentUser?.uid,
         });
@@ -301,6 +376,8 @@ export const ShiftsPage: React.FC = () => {
       const results: ShiftSlot[] = [];
       snapshot.forEach((d) => {
         const data = d.data();
+        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
+        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any) => ({ 
           employeeName: e.employeeName ?? '', 
           employeeCode: e.employeeCode ?? '',
@@ -313,6 +390,9 @@ export const ShiftsPage: React.FC = () => {
           toDate: data.toDate ?? '',
           startTime: data.startTime ?? '',
           endTime: data.endTime ?? '',
+          branch: data.branch ?? '',
+          branchManagerIds: shiftManagerIds,
+          branchManagerNames: data.branchManagerNames ?? (data.branchManagerName ? [data.branchManagerName] : []),
           count: new Set(emps.map((e) => e.employeeCode).filter(Boolean)).size,
           employees: emps,
         });
@@ -330,6 +410,7 @@ export const ShiftsPage: React.FC = () => {
     if (!currentUser) return;
     fetchShifts();
     fetchEmployees();
+    fetchBranchManagers();
   }, [currentUser, userData]);
 
   return (
@@ -384,7 +465,16 @@ export const ShiftsPage: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {slots.map((slot) => (
-              <div key={slot.key} className="card p-5 hover:shadow-md transition-shadow flex flex-col">
+              <div key={slot.key} className="card relative p-5 hover:shadow-md transition-shadow flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSlot(slot)}
+                  className="absolute top-3 right-3 p-1.5 rounded-lg text-secondary-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                  aria-label="View shift employees"
+                  title="View employees"
+                >
+                  <Eye size={17} />
+                </button>
                 <div className="flex items-center gap-3 mb-3 cursor-pointer" onClick={() => setSelectedSlot(slot)}>
                   <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
                     <Clock className="w-6 h-6 text-orange-600" />
@@ -394,6 +484,7 @@ export const ShiftsPage: React.FC = () => {
                       {formatTime12(slot.startTime)} — {formatTime12(slot.endTime)}
                     </h3>
                     <div className="space-y-1 text-sm text-secondary-600">
+                      <p>{slot.branchManagerNames.join(', ') || '—'}</p>
                       <p>
                         <span className="font-medium">Employees:</span> {slot.count}
                       </p>
@@ -427,6 +518,7 @@ export const ShiftsPage: React.FC = () => {
                     const s = parse12(slot.startTime);
                     const e = parse12(slot.endTime);
                     setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
+                    setSelectedShiftManagerIds(slot.branchManagerIds);
                     setEditingSlot(slot);
                     setAssignOpen(true);
                   }}
@@ -486,13 +578,30 @@ export const ShiftsPage: React.FC = () => {
                     <label className="block text-sm font-medium text-secondary-700 mb-2">
                       Select Employees {assignSelectedIds.size > 0 && <span className="text-blue-600">({assignSelectedIds.size} selected)</span>}
                     </label>
+                    <select
+                      value={selectedBranchManagerId}
+                      onChange={(e) => {
+                        setSelectedBranchManagerId(e.target.value);
+                        setAssignSelectedIds(new Set());
+                      }}
+                      className="w-full mb-3 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">All Branch Managers</option>
+                      {branchManagers.map((manager) => (
+                        <option key={manager.id} value={manager.id}>{manager.name}</option>
+                      ))}
+                    </select>
                     <div className="relative mb-3">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
                       <input type="text" placeholder="Search by name or code..." value={addEmpSearch} onChange={(e) => setAddEmpSearch(e.target.value)}
                         className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
                     </div>
                     <div className="max-h-52 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
-                      {allEmployees.filter((e) => { const s = addEmpSearch.toLowerCase(); return e.employeeName?.toLowerCase().includes(s) || e.employeeCode?.toLowerCase().includes(s); }).map((emp) => (
+                      {allEmployees.filter((e) => {
+                        const search = addEmpSearch.toLowerCase();
+                        const matchesSearch = e.employeeName?.toLowerCase().includes(search) || e.employeeCode?.toLowerCase().includes(search);
+                        return matchesSearch && (!selectedBranchManagerId || e.branchManagerId === selectedBranchManagerId);
+                      }).map((emp) => (
                         <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
                           <input type="checkbox" checked={assignSelectedIds.has(emp.id)}
                             onChange={() => setAssignSelectedIds((prev) => { const n = new Set(prev); n.has(emp.id) ? n.delete(emp.id) : n.add(emp.id); return n; })}
@@ -533,6 +642,46 @@ export const ShiftsPage: React.FC = () => {
               ) : (
                 /* ADD / EDIT SHIFT MODE: show time selectors */
                 <>
+                  <div className="border border-secondary-300 rounded-lg p-3">
+                    <label className="block text-sm font-medium text-secondary-700 mb-2">Branch Managers</label>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShiftManagerDropdownOpen((open) => !open)}
+                        className="w-full flex items-center justify-between gap-3 px-3 py-2 border border-secondary-200 rounded-lg text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        aria-expanded={shiftManagerDropdownOpen}
+                      >
+                        <span className={selectedShiftManagerIds.length ? 'text-secondary-900 truncate' : 'text-secondary-400'}>
+                          {selectedShiftManagerIds.length
+                            ? branchManagers.filter((manager) => selectedShiftManagerIds.includes(manager.id)).map((manager) => manager.name).join(', ')
+                            : 'Select branch managers'}
+                        </span>
+                        <ChevronDown size={16} className={`shrink-0 text-secondary-500 transition-transform ${shiftManagerDropdownOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      {shiftManagerDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-secondary-200 bg-white shadow-lg">
+                          <div className="max-h-52 overflow-y-auto py-1">
+                            {branchManagers.map((manager) => {
+                              const isSelected = selectedShiftManagerIds.includes(manager.id);
+                              return (
+                                <button
+                                  key={manager.id}
+                                  type="button"
+                                  onClick={() => setSelectedShiftManagerIds((ids) => isSelected ? ids.filter((id) => id !== manager.id) : [...ids, manager.id])}
+                                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-left text-secondary-700 hover:bg-secondary-50"
+                                >
+                                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-secondary-300 bg-white'}`}>
+                                    {isSelected && <Check size={12} strokeWidth={3} />}
+                                  </span>
+                                  <span>{manager.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
@@ -571,7 +720,7 @@ export const ShiftsPage: React.FC = () => {
                   <div className="flex gap-3 pt-2">
                     <button type="button" onClick={closeAssignModal} className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                     <button type="submit"
-                      disabled={isAssigning || !assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute}
+                      disabled={isAssigning || selectedShiftManagerIds.length === 0 || !assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute}
                       className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                       {isAssigning ? 'Saving...' : editingSlot ? 'Update Shift' : 'Save Shift'}
                     </button>
@@ -619,19 +768,7 @@ export const ShiftsPage: React.FC = () => {
                       <div className="flex items-center gap-1 ml-2">
                         <button
                           type="button"
-                          onClick={async () => {
-                            if (!window.confirm(`Remove ${emp.employeeName} from this shift?`)) return;
-                            try {
-                              const db = getFirestore();
-                              const shiftRef = doc(db, 'shifts', editingSlot.key);
-                              const updatedEmployees = editingSlot.employees.filter((_, i) => i !== idx);
-                              await updateDoc(shiftRef, { employees: updatedEmployees });
-                              await fetchShifts();
-                              setEditEmployeesOpen(false);
-                            } catch (e) {
-                              console.error('Error removing employee:', e);
-                            }
-                          }}
+                          onClick={() => setRemoveEditEmpConfirm({ emp, index: idx })}
                           className="p-1.5 rounded-lg text-red-600 hover:bg-red-100 transition-colors"
                           title="Remove from shift"
                         >
@@ -642,6 +779,52 @@ export const ShiftsPage: React.FC = () => {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {removeEditEmpConfirm && editingSlot && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-6 h-6 text-red-600" />
+            </div>
+            <h3 className="text-base font-semibold text-secondary-900 text-center mb-1">Remove from Shift</h3>
+            <p className="text-sm text-secondary-600 text-center mb-1">Are you sure you want to remove</p>
+            <p className="text-sm font-semibold text-secondary-900 text-center mb-1">{removeEditEmpConfirm.emp.employeeName}</p>
+            <p className="text-xs text-secondary-500 text-center mb-5">{removeEditEmpConfirm.emp.employeeCode}</p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setRemoveEditEmpConfirm(null)}
+                disabled={isRemovingEmp}
+                className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isRemovingEmp}
+                onClick={async () => {
+                  setIsRemovingEmp(true);
+                  try {
+                    const shiftRef = doc(db, 'shifts', editingSlot.key);
+                    const updatedEmployees = editingSlot.employees.filter((_, index) => index !== removeEditEmpConfirm.index);
+                    await updateDoc(shiftRef, { employees: updatedEmployees });
+                    await fetchShifts();
+                    setEditingSlot((slot) => slot ? { ...slot, employees: updatedEmployees, count: new Set(updatedEmployees.map((employee) => employee.employeeCode).filter(Boolean)).size } : null);
+                    setRemoveEditEmpConfirm(null);
+                  } catch (e) {
+                    console.error('Error removing employee:', e);
+                  } finally {
+                    setIsRemovingEmp(false);
+                  }
+                }}
+                className="flex-1 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-60"
+              >
+                {isRemovingEmp ? 'Removing...' : 'Remove'}
+              </button>
             </div>
           </div>
         </div>
@@ -794,6 +977,7 @@ export const ShiftsPage: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-secondary-200">
               <div>
                 <h2 className="text-base font-semibold text-secondary-900">{formatTime12(selectedSlot.startTime)} — {formatTime12(selectedSlot.endTime)}</h2>
+                <p className="text-xs text-secondary-500 mt-0.5">Branch: {selectedSlot.branch || '—'}</p>
                 <p className="text-xs text-secondary-500 mt-0.5">{selectedSlot.count} {selectedSlot.count === 1 ? 'employee' : 'employees'}</p>
               </div>
               <button onClick={() => setSelectedSlot(null)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors">
@@ -917,6 +1101,7 @@ export const ShiftsPage: React.FC = () => {
                   setWizardEmployees(justAssignedEmps);
                   setWizardEmpIndex(0);
                   setWizardEmpLeaves({});
+                  setWizardMultiSelectedDates([]);
                   setWizardShowConfirm(false);
                   const from = justAssignedEmps[0].fromDate;
                   if (from) {
@@ -1150,6 +1335,12 @@ export const ShiftsPage: React.FC = () => {
                           type="button"
                           disabled={!inRange}
                           onClick={(e) => {
+                            if (e.ctrlKey || e.metaKey) {
+                              setWizardMultiSelectedDates((dates) => dates.includes(ds) ? dates.filter((date) => date !== ds) : [...dates, ds]);
+                              setWizardTooltipDate(null);
+                              setWizardTooltipPos(null);
+                              return;
+                            }
                             if (isTooltipOpen) { setWizardTooltipDate(null); setWizardTooltipPos(null); }
                             else {
                               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -1159,6 +1350,7 @@ export const ShiftsPage: React.FC = () => {
                           }}
                           className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors
                             ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
+                              wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
                               isSelected ? `${getLeaveColor(leaveType ?? '').dot} text-white font-semibold` :
                               'hover:bg-secondary-100 text-secondary-800'}`}
                           title={leaveType ?? undefined}
@@ -1208,6 +1400,37 @@ export const ShiftsPage: React.FC = () => {
                   })}
                 </div>
 
+                {wizardMultiSelectedDates.length > 0 && !isCtrlPressed && (
+                  <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {LEAVE_TYPES.map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => {
+                            setWizardEmpLeaves((prev) => {
+                              const current = prev[emp.employeeCode] ?? [];
+                              const remaining = current.filter((leave) => !wizardMultiSelectedDates.includes(leave.date));
+                              return { ...prev, [emp.employeeCode]: [...remaining, ...wizardMultiSelectedDates.map((date) => ({ date, type }))] };
+                            });
+                            setWizardMultiSelectedDates([]);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-full hover:bg-blue-100 transition-colors"
+                        >
+                          {type}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setWizardMultiSelectedDates([])}
+                        className="px-2.5 py-1.5 text-xs font-medium text-secondary-600 hover:bg-white rounded-full transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {selectedDates.length > 0 && (
                   <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
                 )}
@@ -1225,12 +1448,33 @@ export const ShiftsPage: React.FC = () => {
                         setWizardCalMonth(d.getMonth());
                       }
                       setWizardEmpIndex(i => i - 1);
+                      setWizardMultiSelectedDates([]);
                       setWizardTooltipDate(null); setWizardTooltipPos(null);
                     }}
-                    className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+                    className="flex-1 h-10 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
                   >
                     Back
                   </button>
+                )}
+                {wizardEmpIndex > 0 && (
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const source = wizardEmployees.find((employee) => employee.employeeCode === e.target.value);
+                      if (!source) return;
+                      const copiedLeaves = (wizardEmpLeaves[source.employeeCode] ?? []).map((leave) => ({ ...leave }));
+                      setWizardEmpLeaves((prev) => ({ ...prev, [emp.employeeCode]: copiedLeaves }));
+                      setWizardMultiSelectedDates([]);
+                      e.currentTarget.value = '';
+                    }}
+                    className="flex-1 min-w-0 h-10 px-3 text-center text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    aria-label="Copy leaves from a previous employee"
+                  >
+                    <option value="">Copy</option>
+                    {wizardEmployees.slice(0, wizardEmpIndex).map((employee) => (
+                      <option key={employee.employeeCode} value={employee.employeeCode}>{employee.employeeName}</option>
+                    ))}
+                  </select>
                 )}
                 <button
                   type="button"
@@ -1244,13 +1488,14 @@ export const ShiftsPage: React.FC = () => {
                         setWizardCalMonth(d.getMonth());
                       }
                       setWizardEmpIndex(i => i + 1);
+                      setWizardMultiSelectedDates([]);
                     } else {
                       setWizardShowConfirm(true);
                     }
                   }}
-                  className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                  className="flex-1 h-10 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  {wizardEmpIndex < wizardEmployees.length - 1 ? 'Next Employee' : 'Review & Confirm'}
+                  {wizardEmpIndex < wizardEmployees.length - 1 ? 'Next Employee' : 'Review'}
                 </button>
               </div>
             </div>

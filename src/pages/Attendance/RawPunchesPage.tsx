@@ -76,6 +76,7 @@ interface AnalyzeResult {
   type: 'in' | 'out';
   userId: string;
   employeeName: string;
+  location: string;
   date: Date | null;
   shiftTime: string;
   actualTime: Date;
@@ -117,6 +118,8 @@ export const RawPunchesPage: React.FC = () => {
   const [analyzeResults, setAnalyzeResults] = useState<AnalyzeResult[]>([]);
   const [analyzeFromDate, setAnalyzeFromDate] = useState('');
   const [analyzeToDate, setAnalyzeToDate] = useState('');
+  const [analyzeLocationFilter, setAnalyzeLocationFilter] = useState('');
+  const [analyzeSearchQuery, setAnalyzeSearchQuery] = useState('');
   const [isFixing, setIsFixing] = useState(false);
   const [expandedTimeCells, setExpandedTimeCells] = useState<Set<string>>(new Set());
 
@@ -395,6 +398,8 @@ export const RawPunchesPage: React.FC = () => {
   const openAnalyzeModal = () => {
     setAnalyzeFromDate(fromDate);
     setAnalyzeToDate(toDateFilter);
+    setAnalyzeLocationFilter(locationFilter);
+    setAnalyzeSearchQuery(searchQuery);
     runAnalysis(fromDate, toDateFilter);
     setIsAnalyzeModalOpen(true);
   };
@@ -423,6 +428,7 @@ export const RawPunchesPage: React.FC = () => {
         type,
         userId: record.userId,
         employeeName: record.employeeName,
+        location: record.location,
         date: record.date,
         shiftTime,
         actualTime,
@@ -454,6 +460,22 @@ export const RawPunchesPage: React.FC = () => {
 
     setAnalyzeResults(anomalies);
   };
+
+  const filteredAnalyzeResults = useMemo(() => {
+    const search = analyzeSearchQuery.trim().toLowerCase();
+    return analyzeResults.filter((result) => {
+      if (analyzeLocationFilter && result.location !== analyzeLocationFilter) return false;
+      if (!search) return true;
+      const date = result.date ? formatLocalDate(result.date) : '';
+      return (
+        result.userId.toLowerCase().includes(search) ||
+        result.employeeName.toLowerCase().includes(search) ||
+        result.location.toLowerCase().includes(search) ||
+        result.type.includes(search) ||
+        date.includes(search)
+      );
+    });
+  }, [analyzeResults, analyzeLocationFilter, analyzeSearchQuery]);
 
   const findPunchToFixInArray = (result: AnalyzeResult, punches: RawPunch[]): RawPunch | null => {
     if (!result.date) return null;
@@ -510,7 +532,8 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleFixAnomalies = async () => {
-    if (analyzeResults.length === 0 || isFixing) return;
+    if (filteredAnalyzeResults.length === 0 || isFixing) return;
+    const resultsToFix = [...filteredAnalyzeResults];
     setIsFixing(true);
     let fixedCount = 0;
     let workingPunches = [...allPunches];
@@ -518,7 +541,7 @@ export const RawPunchesPage: React.FC = () => {
     try {
       const plannedFixes: { id: string; newDirection: string }[] = [];
 
-      for (const result of analyzeResults) {
+      for (const result of resultsToFix) {
         const punchToFix = findPunchToFixInArray(result, workingPunches);
         if (!punchToFix) continue;
 
@@ -543,7 +566,7 @@ export const RawPunchesPage: React.FC = () => {
       }
 
       setIsAnalyzeModalOpen(false);
-      showToast('success', `Fixed ${fixedCount} of ${analyzeResults.length} anomalies.`);
+      showToast('success', `Fixed ${fixedCount} of ${resultsToFix.length} anomalies.`);
     } catch (error) {
       console.error('Error fixing anomalies:', error);
       showToast('error', 'Error fixing anomalies. Please try again.');
@@ -1016,13 +1039,17 @@ export const RawPunchesPage: React.FC = () => {
                 <X size={20} />
               </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4 items-end">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-4 mb-4 items-end">
               <div>
                 <label className="block text-xs font-medium text-secondary-600 mb-1">From</label>
                 <input
                   type="date"
                   value={analyzeFromDate}
-                  onChange={(e) => setAnalyzeFromDate(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setAnalyzeFromDate(value);
+                    runAnalysis(value, analyzeToDate);
+                  }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
@@ -1031,31 +1058,55 @@ export const RawPunchesPage: React.FC = () => {
                 <input
                   type="date"
                   value={analyzeToDate}
-                  onChange={(e) => setAnalyzeToDate(e.target.value)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setAnalyzeToDate(value);
+                    runAnalysis(analyzeFromDate, value);
+                  }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
-              <button
-                onClick={() => runAnalysis(analyzeFromDate, analyzeToDate)}
-                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
-              >
-                Run Analysis
-              </button>
+              <div>
+                <label className="block text-xs font-medium text-secondary-600 mb-1">Location</label>
+                <select
+                  value={analyzeLocationFilter}
+                  onChange={(e) => setAnalyzeLocationFilter(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                >
+                  <option value="">All Locations</option>
+                  {Array.from(new Set(Object.values(devicesMap))).filter(Boolean).sort().map((loc) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="xl:col-span-2">
+                <label className="block text-xs font-medium text-secondary-600 mb-1">Search</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
+                  <input
+                    type="text"
+                    value={analyzeSearchQuery}
+                    onChange={(e) => setAnalyzeSearchQuery(e.target.value)}
+                    placeholder="Employee ID, name, date or type"
+                    className="w-full pl-10 pr-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
               <button
                 onClick={handleFixAnomalies}
-                disabled={isFixing || analyzeResults.length === 0}
+                disabled={isFixing || filteredAnalyzeResults.length === 0}
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isFixing ? 'Fixing...' : 'Fix'}
               </button>
             </div>
-            {analyzeResults.length === 0 ? (
+            {filteredAnalyzeResults.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-3">
                   <Clock className="w-8 h-8 text-green-600" />
                 </div>
-                <h3 className="text-lg font-medium text-secondary-900 mb-1">No anomalies found</h3>
-                <p className="text-sm text-secondary-500">All ins and outs are within 2 hours of shift times for the selected period.</p>
+                <h3 className="text-lg font-medium text-secondary-900 mb-1">{analyzeResults.length === 0 ? 'No anomalies found' : 'No matching anomalies found'}</h3>
+                <p className="text-sm text-secondary-500">{analyzeResults.length === 0 ? 'All ins and outs are within 2 hours of shift times for the selected period.' : 'Try adjusting the location or search filter.'}</p>
               </div>
             ) : (
               <div className="overflow-auto">
@@ -1064,6 +1115,7 @@ export const RawPunchesPage: React.FC = () => {
                     <tr className="border-b border-secondary-200">
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee ID</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee Name</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Location</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Date</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Type</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Shift Time</th>
@@ -1072,10 +1124,11 @@ export const RawPunchesPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {analyzeResults.map((result, idx) => (
+                    {filteredAnalyzeResults.map((result, idx) => (
                       <tr key={`${result.userId}-${formatLocalDate(result.date)}-${result.type}-${idx}`} className="border-b border-secondary-100 hover:bg-secondary-50 transition-colors">
                         <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{result.userId}</td>
                         <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{result.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
+                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.location}</td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.date ? formatLocalDate(result.date) : '—'}</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${result.type === 'in' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
