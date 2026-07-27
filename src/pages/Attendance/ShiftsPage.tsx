@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Check, ChevronDown, Eye } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, arrayUnion, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
@@ -11,13 +11,6 @@ interface Employee {
   employeeCode?: string;
   employeeCodeInDevice?: string;
   employeeName?: string;
-  branchManagerId?: string;
-}
-
-interface BranchManager {
-  id: string;
-  name: string;
-  branch: string;
 }
 
 interface ShiftEmployee {
@@ -33,9 +26,6 @@ interface ShiftSlot {
   toDate: string;
   startTime: string;
   endTime: string;
-  branch: string;
-  branchManagerIds: string[];
-  branchManagerNames: string[];
   count: number;
   employees: ShiftEmployee[];
 }
@@ -93,10 +83,6 @@ export const ShiftsPage: React.FC = () => {
   // Assign shift modal state
   const [assignOpen, setAssignOpen] = useState(false);
   const [allEmployees, setAllEmployees] = useState<Employee[]>([]);
-  const [branchManagers, setBranchManagers] = useState<BranchManager[]>([]);
-  const [selectedBranchManagerId, setSelectedBranchManagerId] = useState('');
-  const [selectedShiftManagerIds, setSelectedShiftManagerIds] = useState<string[]>([]);
-  const [shiftManagerDropdownOpen, setShiftManagerDropdownOpen] = useState(false);
   const [assignSelectedIds, setAssignSelectedIds] = useState<Set<string>>(new Set());
   const [assignForm, setAssignForm] = useState({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
   const [isAssigning, setIsAssigning] = useState(false);
@@ -155,37 +141,12 @@ export const ShiftsPage: React.FC = () => {
       const data: Employee[] = [];
       snap.forEach((d) => data.push({ id: d.id, ...d.data() as Omit<Employee, 'id'> }));
       const filtered = data.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
-      // Filter by branch manager if current user is a Branch Manager
-      if (userData?.designation === 'Branch Manager') {
-        setAllEmployees(filtered.filter((e) => e.branchManagerId === userData.id));
-      } else {
-        setAllEmployees(filtered);
-      }
+      setAllEmployees(filtered);
     } catch (e) { console.error(e); }
-  };
-
-  const fetchBranchManagers = async () => {
-    try {
-      const snap = await getDocs(query(collection(db, 'users'), where('designation', '==', 'Branch Manager')));
-      const managers: BranchManager[] = [];
-      snap.forEach((d) => {
-        const data = d.data();
-        managers.push({ id: d.id, name: data.name ?? data.email ?? 'Unnamed', branch: data.branch ?? '' });
-      });
-      managers.sort((a, b) => a.name.localeCompare(b.name));
-      setBranchManagers(userData?.designation === 'Branch Manager'
-        ? managers.filter((manager) => manager.id === userData.id)
-        : managers);
-    } catch (e) {
-      console.error('Error fetching branch managers:', e);
-    }
   };
 
   const closeAssignModal = () => {
     setAssignOpen(false);
-    setSelectedBranchManagerId('');
-    setSelectedShiftManagerIds([]);
-    setShiftManagerDropdownOpen(false);
     setAssignSelectedIds(new Set());
     setAssignForm({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
     setAssignOverlaps([]);
@@ -205,10 +166,6 @@ export const ShiftsPage: React.FC = () => {
       const startTime = to24Hour(assignForm.startHour, assignForm.startMinute, assignForm.startAmPm);
       const endTime = to24Hour(assignForm.endHour, assignForm.endMinute, assignForm.endAmPm);
       const selectedEmps = Array.from(assignSelectedIds).map((id) => allEmployees.find((e) => e.id === id)).filter(Boolean) as Employee[];
-      const selectedShiftManagers = branchManagers.filter((manager) => selectedShiftManagerIds.includes(manager.id));
-      const branchManagerIds = selectedShiftManagers.map((manager) => manager.id);
-      const branchManagerNames = selectedShiftManagers.map((manager) => manager.name);
-      const branchNames = Array.from(new Set(selectedShiftManagers.map((manager) => manager.branch).filter(Boolean)));
 
       // EDIT MODE: update existing slot's startTime/endTime
       if (editingSlot) {
@@ -228,11 +185,6 @@ export const ShiftsPage: React.FC = () => {
         await updateDoc(doc(db, 'shifts', editingSlot.key), {
           startTime,
           endTime,
-          branchManagerIds,
-          branchManagerNames,
-          branchManagerId: branchManagerIds[0] ?? null,
-          branchManagerName: branchManagerNames.join(', ') || null,
-          branch: branchNames.join(', ') || editingSlot.branch || null,
         });
         setAssignSuccess(true);
         fetchShifts();
@@ -323,22 +275,12 @@ export const ShiftsPage: React.FC = () => {
         }
         await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), {
           employees: arrayUnion(...empEntries),
-          branchManagerIds,
-          branchManagerNames,
-          branchManagerId: branchManagerIds[0] ?? null,
-          branchManagerName: branchManagerNames.join(', ') || null,
-          branch: branchNames.join(', ') || null,
         });
       } else {
         await addDoc(collection(db, 'shifts'), {
           startTime,
           endTime,
           employees: empEntries,
-          branchManagerIds,
-          branchManagerNames,
-          branchManagerId: branchManagerIds[0] ?? null,
-          branchManagerName: branchManagerNames.join(', ') || null,
-          branch: branchNames.join(', ') || null,
           createdAt: serverTimestamp(),
           createdBy: currentUser?.uid,
         });
@@ -376,8 +318,6 @@ export const ShiftsPage: React.FC = () => {
       const results: ShiftSlot[] = [];
       snapshot.forEach((d) => {
         const data = d.data();
-        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
-        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any) => ({ 
           employeeName: e.employeeName ?? '', 
           employeeCode: e.employeeCode ?? '',
@@ -390,15 +330,15 @@ export const ShiftsPage: React.FC = () => {
           toDate: data.toDate ?? '',
           startTime: data.startTime ?? '',
           endTime: data.endTime ?? '',
-          branch: data.branch ?? '',
-          branchManagerIds: shiftManagerIds,
-          branchManagerNames: data.branchManagerNames ?? (data.branchManagerName ? [data.branchManagerName] : []),
           count: new Set(emps.map((e) => e.employeeCode).filter(Boolean)).size,
           employees: emps,
         });
       });
       results.sort((a, b) => a.startTime.localeCompare(b.startTime));
-      setSlots(results);
+      const isBranchManager = userData?.designation === 'Branch Manager';
+      const authorizedIds = isBranchManager ? new Set(userData?.assignedShiftIds ?? []) : null;
+      const visibleSlots = authorizedIds ? results.filter((s) => authorizedIds.has(s.key)) : results;
+      setSlots(visibleSlots);
     } catch (err) {
       console.error('Error fetching shifts:', err);
     } finally {
@@ -410,7 +350,6 @@ export const ShiftsPage: React.FC = () => {
     if (!currentUser) return;
     fetchShifts();
     fetchEmployees();
-    fetchBranchManagers();
   }, [currentUser, userData]);
 
   return (
@@ -441,15 +380,17 @@ export const ShiftsPage: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
-        <div className="flex justify-end mb-4">
-          <button
-            onClick={() => setAssignOpen(true)}
-            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
-          >
-            <Plus size={16} />
-            Add Shifts
-          </button>
-        </div>
+        {userData?.designation !== 'Branch Manager' && (
+          <div className="flex justify-end mb-4">
+            <button
+              onClick={() => setAssignOpen(true)}
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
+            >
+              <Plus size={16} />
+              Add Shifts
+            </button>
+          </div>
+        )}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="w-8 h-8 border-2 border-secondary-300 border-t-orange-500 rounded-full animate-spin" />
@@ -483,11 +424,8 @@ export const ShiftsPage: React.FC = () => {
                     <h3 className="font-semibold text-secondary-900 mb-1">
                       {formatTime12(slot.startTime)} — {formatTime12(slot.endTime)}
                     </h3>
-                    <div className="space-y-1 text-sm text-secondary-600">
-                      <p>{slot.branchManagerNames.join(', ') || '—'}</p>
-                      <p>
-                        <span className="font-medium">Employees:</span> {slot.count}
-                      </p>
+                    <div className="text-sm text-secondary-600">
+                      <span className="font-medium">Employees:</span> {slot.count}
                     </div>
                   </div>
                 </div>
@@ -505,36 +443,39 @@ export const ShiftsPage: React.FC = () => {
                   <Plus size={16} />
                   Add Employees
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const parse12 = (t: string) => {
-                      const [hStr, mStr] = t.split(':');
-                      const h = parseInt(hStr, 10);
-                      const ampm = h >= 12 ? 'PM' : 'AM';
-                      const h12 = h % 12 === 0 ? 12 : h % 12;
-                      return { hour: h12.toString(), minute: mStr ?? '00', ampm };
-                    };
-                    const s = parse12(slot.startTime);
-                    const e = parse12(slot.endTime);
-                    setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
-                    setSelectedShiftManagerIds(slot.branchManagerIds);
-                    setEditingSlot(slot);
-                    setAssignOpen(true);
-                  }}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
-                >
-                  <Pencil size={16} />
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeleteSlot(slot)}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
+                {userData?.designation !== 'Branch Manager' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const parse12 = (t: string) => {
+                          const [hStr, mStr] = t.split(':');
+                          const h = parseInt(hStr, 10);
+                          const ampm = h >= 12 ? 'PM' : 'AM';
+                          const h12 = h % 12 === 0 ? 12 : h % 12;
+                          return { hour: h12.toString(), minute: mStr ?? '00', ampm };
+                        };
+                        const s = parse12(slot.startTime);
+                        const e = parse12(slot.endTime);
+                        setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
+                        setEditingSlot(slot);
+                        setAssignOpen(true);
+                      }}
+                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
+                    >
+                      <Pencil size={16} />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteSlot(slot)}
+                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                    >
+                      <Trash2 size={16} />
+                      Delete
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -578,19 +519,6 @@ export const ShiftsPage: React.FC = () => {
                     <label className="block text-sm font-medium text-secondary-700 mb-2">
                       Select Employees {assignSelectedIds.size > 0 && <span className="text-blue-600">({assignSelectedIds.size} selected)</span>}
                     </label>
-                    <select
-                      value={selectedBranchManagerId}
-                      onChange={(e) => {
-                        setSelectedBranchManagerId(e.target.value);
-                        setAssignSelectedIds(new Set());
-                      }}
-                      className="w-full mb-3 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">All Branch Managers</option>
-                      {branchManagers.map((manager) => (
-                        <option key={manager.id} value={manager.id}>{manager.name}</option>
-                      ))}
-                    </select>
                     <div className="relative mb-3">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
                       <input type="text" placeholder="Search by name or code..." value={addEmpSearch} onChange={(e) => setAddEmpSearch(e.target.value)}
@@ -599,8 +527,7 @@ export const ShiftsPage: React.FC = () => {
                     <div className="max-h-52 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
                       {allEmployees.filter((e) => {
                         const search = addEmpSearch.toLowerCase();
-                        const matchesSearch = e.employeeName?.toLowerCase().includes(search) || e.employeeCode?.toLowerCase().includes(search);
-                        return matchesSearch && (!selectedBranchManagerId || e.branchManagerId === selectedBranchManagerId);
+                        return e.employeeName?.toLowerCase().includes(search) || e.employeeCode?.toLowerCase().includes(search);
                       }).map((emp) => (
                         <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
                           <input type="checkbox" checked={assignSelectedIds.has(emp.id)}
@@ -642,46 +569,6 @@ export const ShiftsPage: React.FC = () => {
               ) : (
                 /* ADD / EDIT SHIFT MODE: show time selectors */
                 <>
-                  <div className="border border-secondary-300 rounded-lg p-3">
-                    <label className="block text-sm font-medium text-secondary-700 mb-2">Branch Managers</label>
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setShiftManagerDropdownOpen((open) => !open)}
-                        className="w-full flex items-center justify-between gap-3 px-3 py-2 border border-secondary-200 rounded-lg text-sm text-left focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        aria-expanded={shiftManagerDropdownOpen}
-                      >
-                        <span className={selectedShiftManagerIds.length ? 'text-secondary-900 truncate' : 'text-secondary-400'}>
-                          {selectedShiftManagerIds.length
-                            ? branchManagers.filter((manager) => selectedShiftManagerIds.includes(manager.id)).map((manager) => manager.name).join(', ')
-                            : 'Select branch managers'}
-                        </span>
-                        <ChevronDown size={16} className={`shrink-0 text-secondary-500 transition-transform ${shiftManagerDropdownOpen ? 'rotate-180' : ''}`} />
-                      </button>
-                      {shiftManagerDropdownOpen && (
-                        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-secondary-200 bg-white shadow-lg">
-                          <div className="max-h-52 overflow-y-auto py-1">
-                            {branchManagers.map((manager) => {
-                              const isSelected = selectedShiftManagerIds.includes(manager.id);
-                              return (
-                                <button
-                                  key={manager.id}
-                                  type="button"
-                                  onClick={() => setSelectedShiftManagerIds((ids) => isSelected ? ids.filter((id) => id !== manager.id) : [...ids, manager.id])}
-                                  className="w-full flex items-center gap-3 px-3 py-2 text-sm text-left text-secondary-700 hover:bg-secondary-50"
-                                >
-                                  <span className={`flex h-4 w-4 items-center justify-center rounded border ${isSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-secondary-300 bg-white'}`}>
-                                    {isSelected && <Check size={12} strokeWidth={3} />}
-                                  </span>
-                                  <span>{manager.name}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
@@ -720,7 +607,7 @@ export const ShiftsPage: React.FC = () => {
                   <div className="flex gap-3 pt-2">
                     <button type="button" onClick={closeAssignModal} className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                     <button type="submit"
-                      disabled={isAssigning || selectedShiftManagerIds.length === 0 || !assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute}
+                      disabled={isAssigning || !assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute}
                       className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                       {isAssigning ? 'Saving...' : editingSlot ? 'Update Shift' : 'Save Shift'}
                     </button>
@@ -977,7 +864,6 @@ export const ShiftsPage: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-secondary-200">
               <div>
                 <h2 className="text-base font-semibold text-secondary-900">{formatTime12(selectedSlot.startTime)} — {formatTime12(selectedSlot.endTime)}</h2>
-                <p className="text-xs text-secondary-500 mt-0.5">Branch: {selectedSlot.branch || '—'}</p>
                 <p className="text-xs text-secondary-500 mt-0.5">{selectedSlot.count} {selectedSlot.count === 1 ? 'employee' : 'employees'}</p>
               </div>
               <button onClick={() => setSelectedSlot(null)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors">

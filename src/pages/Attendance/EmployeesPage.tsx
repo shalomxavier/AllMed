@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Search, RefreshCw, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion } from 'firebase/firestore';
@@ -68,12 +68,21 @@ interface Employee {
   designation?: string;
 }
 
+interface BranchManager {
+  id: string;
+  name: string;
+}
+
 export const EmployeesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [branchManagerFilter, setBranchManagerFilter] = useState('');
+  const [branchManagers, setBranchManagers] = useState<BranchManager[]>([]);
+  const [branchManagerDropdownOpen, setBranchManagerDropdownOpen] = useState(false);
+  const branchManagerDropdownRef = useRef<HTMLDivElement>(null);
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddShiftForm, setShowAddShiftForm] = useState(false);
@@ -196,14 +205,45 @@ export const EmployeesPage: React.FC = () => {
     }
   };
 
+  const fetchBranchManagers = async () => {
+    try {
+      const db = getFirestore();
+      const snapshot = await getDocs(query(collection(db, 'users'), where('designation', '==', 'Branch Manager'), orderBy('name')));
+      const managers: BranchManager[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        managers.push({ id: doc.id, name: data.name || 'Unnamed' });
+      });
+      setBranchManagers(managers);
+    } catch (error) {
+      console.error('Error fetching branch managers:', error);
+    }
+  };
+
   useEffect(() => {
     if (!currentUser) return;
     fetchEmployees();
+    fetchBranchManagers();
   }, [currentUser, userData]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (branchManagerDropdownRef.current && !branchManagerDropdownRef.current.contains(event.target as Node)) {
+        setBranchManagerDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const filteredEmployees = employees.filter((emp) => {
     // Exclude employees with device code starting with "Del"
     if (emp.employeeCodeInDevice?.startsWith('Del')) {
+      return false;
+    }
+
+    // Apply branch manager filter (only meaningful for non-managers who see all employees)
+    if (branchManagerFilter && emp.branchManagerId !== branchManagerFilter) {
       return false;
     }
 
@@ -672,6 +712,7 @@ export const EmployeesPage: React.FC = () => {
   const handleShiftAction = async (action: 'view' | 'add' | 'edit') => {
     if (action === 'add') {
       setShowAddShiftForm(true);
+      if (userData?.designation === 'Branch Manager') setShiftMode('existing');
       fetchShiftTemplates();
     } else if (action === 'view') {
       setShowViewShifts(true);
@@ -883,10 +924,11 @@ export const EmployeesPage: React.FC = () => {
       const snap = await getDocs(query(collection(db, 'shifts'), orderBy('startTime')));
       const seen = new Set<string>();
       const templates: { startTime: string; endTime: string }[] = [];
+      const isBranchManager = userData?.designation === 'Branch Manager';
+      const authorizedIds = isBranchManager ? new Set(userData?.assignedShiftIds ?? []) : null;
       snap.forEach((d) => {
         const data = d.data();
-        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
-        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
+        if (authorizedIds && !authorizedIds.has(d.id)) return;
         const key = `${data.startTime}|${data.endTime}`;
         if (!seen.has(key)) { seen.add(key); templates.push({ startTime: data.startTime, endTime: data.endTime }); }
       });
@@ -998,15 +1040,54 @@ export const EmployeesPage: React.FC = () => {
       <div className="bg-secondary-50 p-6">
         {/* Search Bar */}
         <div className="mb-6 flex items-center justify-between gap-4">
-          <div className="relative flex-1 max-w-2xl">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
-            <input
-              type="text"
-              placeholder="Search employees by name, code, or ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+          <div className="relative z-50 flex items-center gap-3 flex-1 max-w-3xl">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
+              <input
+                type="text"
+                placeholder="Search employees by name, code, or ID..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            {userData?.designation !== 'Branch Manager' && (
+              <div className="relative z-50" ref={branchManagerDropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setBranchManagerDropdownOpen((open) => !open)}
+                  className="w-48 px-3 py-2 text-left bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center justify-between"
+                >
+                  <span className="truncate">
+                    {branchManagerFilter
+                      ? branchManagers.find((m) => m.id === branchManagerFilter)?.name || 'All Branch Managers'
+                      : 'All Branch Managers'}
+                  </span>
+                  <span className="ml-2 text-secondary-400">▼</span>
+                </button>
+                {branchManagerDropdownOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-secondary-200 rounded-lg shadow-lg max-h-60 overflow-y-auto z-50">
+                    <button
+                      type="button"
+                      onClick={() => { setBranchManagerFilter(''); setBranchManagerDropdownOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 ${branchManagerFilter === '' ? 'bg-blue-50 text-blue-700' : ''}`}
+                    >
+                      All Branch Managers
+                    </button>
+                    {branchManagers.map((manager) => (
+                      <button
+                        key={manager.id}
+                        type="button"
+                        onClick={() => { setBranchManagerFilter(manager.id); setBranchManagerDropdownOpen(false); }}
+                        className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 ${branchManagerFilter === manager.id ? 'bg-blue-50 text-blue-700' : ''}`}
+                      >
+                        {manager.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1017,7 +1098,11 @@ export const EmployeesPage: React.FC = () => {
               Add Leaves
             </button>
             <button
-              onClick={() => { setBulkAssignModalOpen(true); fetchShiftTemplates(); }}
+              onClick={() => {
+                setBulkAssignModalOpen(true);
+                if (userData?.designation === 'Branch Manager') setBulkShiftMode('existing');
+                fetchShiftTemplates();
+              }}
               className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
             >
               <Clock size={16} />
@@ -1037,11 +1122,11 @@ export const EmployeesPage: React.FC = () => {
               <Users className="w-10 h-10 text-blue-600" />
             </div>
             <h3 className="text-lg font-medium text-secondary-900 mb-2">
-              {searchQuery ? 'No employees found' : 'No employees yet'}
+              {searchQuery || branchManagerFilter ? 'No employees found' : 'No employees yet'}
             </h3>
             <p className="text-sm text-secondary-500 max-w-sm">
-              {searchQuery
-                ? 'Try adjusting your search terms'
+              {searchQuery || branchManagerFilter
+                ? 'Try adjusting your search or branch manager filter'
                 : 'Employee records will appear here once they are added to the system.'}
             </p>
           </div>
@@ -1378,13 +1463,15 @@ export const EmployeesPage: React.FC = () => {
                       }`}>
                       Existing Shift
                     </button>
-                    <button type="button"
-                      onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
-                      className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                        shiftMode === 'new' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-secondary-500 hover:text-secondary-700'
-                      }`}>
-                      New Shift
-                    </button>
+                    {userData?.designation !== 'Branch Manager' && (
+                      <button type="button"
+                        onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
+                        className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                          shiftMode === 'new' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-secondary-500 hover:text-secondary-700'
+                        }`}>
+                        New Shift
+                      </button>
+                    )}
                   </div>
 
                   {/* Existing shift picker */}
@@ -1929,13 +2016,15 @@ export const EmployeesPage: React.FC = () => {
                   }`}>
                   Use Existing Shift
                 </button>
-                <button type="button"
-                  onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                    bulkShiftMode === 'new' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
-                  }`}>
-                  Add New Shift
-                </button>
+                {userData?.designation !== 'Branch Manager' && (
+                  <button type="button"
+                    onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                      bulkShiftMode === 'new' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
+                    }`}>
+                    Add New Shift
+                  </button>
+                )}
               </div>
 
               {bulkShiftMode === 'existing' && shiftTemplates.length > 0 && (
