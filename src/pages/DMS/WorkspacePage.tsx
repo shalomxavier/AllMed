@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Search } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, ArrowLeft } from 'lucide-react';
 import { PageContainer } from '@/components/common';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
 import type { LastEnquiryInfo } from '@/components/whatsapp/ChatHeader';
@@ -21,6 +22,7 @@ const FILTERS: { key: ConversationFilter; label: string }[] = [
 ];
 
 export const WorkspacePage: React.FC = () => {
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ConversationFilter>('all');
   const [showMobileChat, setShowMobileChat] = useState(false);
@@ -236,7 +238,16 @@ export const WorkspacePage: React.FC = () => {
         <div className={`w-80 flex-shrink-0 flex flex-col card overflow-hidden ${showMobileChat ? 'hidden lg:flex' : 'flex'}`}>
           {/* Header, Search and Filters */}
           <div className="p-4 border-b bg-white" style={{ borderColor: '#e9edef' }}>
-            <h2 className="text-xl font-semibold text-green-600 mb-3">WhatsApp</h2>
+            <div className="flex items-center gap-2 mb-3">
+              <button
+                onClick={() => navigate('/dms')}
+                className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
+                aria-label="Go back"
+              >
+                <ArrowLeft size={20} className="text-secondary-600" />
+              </button>
+              <h2 className="text-xl font-semibold text-green-600">WhatsApp</h2>
+            </div>
 
             <div className="relative mb-4">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" size={18} />

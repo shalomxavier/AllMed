@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { PageContainer } from '@/components/common';
 import { ChatHeader, MessageBubble } from '@/components/whatsapp';
 import { LostCustomerList } from './components/LostCustomerList';
@@ -11,6 +13,7 @@ import type { LostReasonCount } from '@/services/analyticsService';
 import type { WhatsAppMessage } from '@/types/index';
 
 export const LostCustomersPage: React.FC = () => {
+  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [showMobileChat, setShowMobileChat] = useState(false);
@@ -104,6 +107,19 @@ export const LostCustomersPage: React.FC = () => {
 
   return (
     <PageContainer>
+      <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-white border-b border-secondary-200">
+        <button
+          onClick={() => navigate('/dms')}
+          className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
+          aria-label="Go back"
+        >
+          <ArrowLeft size={20} className="text-secondary-600" />
+        </button>
+        <div>
+          <h1 className="text-xl font-semibold text-secondary-900">Lost Customers</h1>
+        </div>
+      </div>
+
       {/* Lost Reason Summary Cards */}
       <div className="mt-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
         {lostReasonDistribution.map((item) => (

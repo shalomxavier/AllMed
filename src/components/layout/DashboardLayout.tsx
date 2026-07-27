@@ -13,6 +13,7 @@ const getPageTitle = (pathname: string): string => {
   if (pathname === '/attendance/devices') return 'Devices';
   if (pathname === '/attendance/designations') return 'Designations';
   if (pathname === '/attendance/departments') return 'Departments';
+  if (pathname === '/attendance/insights') return 'Insights';
   if (pathname === '/users') return 'Users';
   if (pathname === '/dms') return 'DMS';
   if (pathname === '/dms/workspace') return 'Customer Workspace';

@@ -10,12 +10,14 @@ interface PieChartProps {
   title: string;
   data: PieChartData[];
   emptyText?: string;
+  onLabelClick?: (label: string) => void;
 }
 
 export const PieChart: React.FC<PieChartProps> = ({
   title,
   data,
   emptyText = 'No data available',
+  onLabelClick,
 }) => {
   const total = useMemo(() => data.reduce((sum, item) => sum + item.value, 0), [data]);
 
@@ -63,13 +65,25 @@ export const PieChart: React.FC<PieChartProps> = ({
         <div className="flex flex-col sm:flex-row items-center gap-6">
           <svg viewBox="0 0 200 200" className="w-48 h-48 flex-shrink-0">
             {slices.map((slice, index) => (
-              <path
-                key={index}
-                d={slice.path}
-                fill={slice.color}
-                stroke="white"
-                strokeWidth="2"
-              />
+              slice.percentage === 100 ? (
+                <circle
+                  key={index}
+                  cx="100"
+                  cy="100"
+                  r="80"
+                  fill={slice.color}
+                  stroke="white"
+                  strokeWidth="2"
+                />
+              ) : (
+                <path
+                  key={index}
+                  d={slice.path}
+                  fill={slice.color}
+                  stroke="white"
+                  strokeWidth="2"
+                />
+              )
             ))}
             <circle cx="100" cy="100" r="45" fill="white" />
             <text
@@ -99,7 +113,12 @@ export const PieChart: React.FC<PieChartProps> = ({
                       className="w-3 h-3 rounded-full flex-shrink-0"
                       style={{ backgroundColor: item.color }}
                     />
-                    <span className="text-secondary-700">{item.label}</span>
+                    <span
+                      onClick={() => onLabelClick?.(item.label)}
+                      className={`text-secondary-700 ${onLabelClick ? 'cursor-pointer hover:text-blue-600 hover:underline' : ''}`}
+                    >
+                      {item.label}
+                    </span>
                   </div>
                   <span className="font-medium text-secondary-900">
                     {item.value} ({total > 0 ? Math.round((item.value / total) * 100) : 0}%)

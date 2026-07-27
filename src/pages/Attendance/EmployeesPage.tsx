@@ -66,6 +66,7 @@ interface Employee {
   syncedAt?: any;
   branchManagerId?: string;
   designation?: string;
+  employmentStatus?: string;
 }
 
 interface BranchManager {
@@ -254,6 +255,77 @@ export const EmployeesPage: React.FC = () => {
       emp.employeeId?.toLowerCase().includes(searchLower)
     );
   });
+  const activeEmployees = filteredEmployees.filter((employee) => employee.employmentStatus?.toLowerCase() !== 'inactive');
+  const inactiveEmployees = filteredEmployees.filter((employee) => employee.employmentStatus?.toLowerCase() === 'inactive');
+
+  const renderEmployeeGrid = (employeeList: Employee[]) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {employeeList.map((employee) => (
+        <div
+          key={employee.id}
+          className="card p-5 hover:shadow-md transition-shadow flex flex-col"
+        >
+          <div className="flex items-start justify-between mb-3">
+            <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+              <Users className="w-6 h-6 text-blue-600" />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => navigate(`/attendance/employees/${employee.id}`)}
+                className="text-gray-400 hover:text-blue-600 transition-colors"
+                aria-label="View"
+              >
+                <Eye size={18} />
+              </button>
+              <button
+                onClick={() => navigate(`/attendance/employees/${employee.id}?edit=true`)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+                aria-label="Edit"
+              >
+                <Edit size={18} />
+              </button>
+            </div>
+          </div>
+          <h3 className="font-semibold text-secondary-900 mb-1">
+            {employee.employeeName || 'Unknown'}
+          </h3>
+          <div className="space-y-1 text-sm text-secondary-600">
+            {employee.employeeId && (
+              <p>
+                <span className="font-medium">ID:</span> {employee.employeeId}
+              </p>
+            )}
+            {employee.employeeCodeInDevice && (
+              <p>
+                <span className="font-medium">Device Code:</span> {employee.employeeCodeInDevice}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={() => handleShiftsClick(employee)}
+            className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+          >
+            <Clock size={16} />
+            Shifts
+          </button>
+          <button
+            onClick={() => handleViewAttendanceClick(employee)}
+            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+          >
+            <Eye size={16} />
+            View Attendance
+          </button>
+          <button
+            onClick={() => handleLeaveClick(employee)}
+            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+          >
+            <Umbrella size={16} />
+            Leave / Week Off
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 
   const handleShiftsClick = (employee: Employee) => {
     setSelectedEmployee(employee);
@@ -1131,71 +1203,18 @@ export const EmployeesPage: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredEmployees.map((employee) => (
-              <div
-                key={employee.id}
-                className="card p-5 hover:shadow-md transition-shadow flex flex-col"
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Users className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => navigate(`/attendance/employees/${employee.id}`)}
-                      className="text-gray-400 hover:text-blue-600 transition-colors"
-                      aria-label="View"
-                    >
-                      <Eye size={18} />
-                    </button>
-                    <button
-                      onClick={() => navigate(`/attendance/employees/${employee.id}?edit=true`)}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
-                      aria-label="Edit"
-                    >
-                      <Edit size={18} />
-                    </button>
-                  </div>
+          <div className="space-y-6">
+            {activeEmployees.length > 0 && renderEmployeeGrid(activeEmployees)}
+            {inactiveEmployees.length > 0 && (
+              <details className="rounded-lg border border-secondary-200 bg-white">
+                <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-secondary-700">
+                  Inactive Employees ({inactiveEmployees.length})
+                </summary>
+                <div className="border-t border-secondary-200 p-4">
+                  {renderEmployeeGrid(inactiveEmployees)}
                 </div>
-                <h3 className="font-semibold text-secondary-900 mb-1">
-                  {employee.employeeName || 'Unknown'}
-                </h3>
-                <div className="space-y-1 text-sm text-secondary-600">
-                  {employee.employeeId && (
-                    <p>
-                      <span className="font-medium">ID:</span> {employee.employeeId}
-                    </p>
-                  )}
-                  {employee.employeeCodeInDevice && (
-                    <p>
-                      <span className="font-medium">Device Code:</span> {employee.employeeCodeInDevice}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleShiftsClick(employee)}
-                  className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                >
-                  <Clock size={16} />
-                  Shifts
-                </button>
-                <button
-                  onClick={() => handleViewAttendanceClick(employee)}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
-                >
-                  <Eye size={16} />
-                  View Attendance
-                </button>
-                <button
-                  onClick={() => handleLeaveClick(employee)}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
-                >
-                  <Umbrella size={16} />
-                  Leave / Week Off
-                </button>
-              </div>
-            ))}
+              </details>
+            )}
           </div>
         )}
 

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Search, RefreshCw, Plus, Fingerprint, X, Edit, Trash2 } from 'lucide-react';
+import { Search, RefreshCw, Plus, Fingerprint, X, Edit, Trash2, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 
 export const DevicesPage: React.FC = () => {
+  const navigate = useNavigate();
   const { currentUser } = useAuthContext();
   const [devices, setDevices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,11 +106,20 @@ export const DevicesPage: React.FC = () => {
     <div className="flex flex-col h-full bg-secondary-50">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-secondary-200">
-        <div>
-          <h1 className="text-xl font-semibold text-secondary-900">Devices</h1>
-          <p className="text-sm text-secondary-500">
-            Manage biometric devices
-          </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/attendance')}
+            className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
+            aria-label="Go back"
+          >
+            <ArrowLeft size={20} className="text-secondary-600" />
+          </button>
+          <div>
+            <h1 className="text-xl font-semibold text-secondary-900">Devices</h1>
+            <p className="text-sm text-secondary-500">
+              Manage biometric devices
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button

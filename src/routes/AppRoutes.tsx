@@ -11,6 +11,7 @@ import { DevicesPage } from '@pages/Attendance/DevicesPage';
 import { DesignationsPage } from '@pages/Attendance/DesignationsPage';
 import { DepartmentsPage } from '@pages/Attendance/DepartmentsPage';
 import { ReportsPage } from '@pages/Attendance/ReportsPage';
+import { InsightsPage } from '@pages/Attendance/InsightsPage';
 import { UsersPage } from '@pages/Users/UsersPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
@@ -60,6 +61,7 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/attendance/designations" element={<DesignationsPage />} />
         <Route path="/attendance/departments" element={<DepartmentsPage />} />
         <Route path="/attendance/reports" element={<ReportsPage />} />
+        <Route path="/attendance/insights" element={<InsightsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/dms" element={<DMSPage />} />
         <Route path="/dms/workspace" element={<WorkspacePage />} />

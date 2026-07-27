@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Users, ClipboardList, Clock, Umbrella, Fingerprint, Briefcase, Building2, FileText } from 'lucide-react';
+import { Users, ClipboardList, Clock, Umbrella, Fingerprint, Briefcase, Building2, FileText, Lightbulb } from 'lucide-react';
 import { PageContainer } from '@/components/common';
 
 export const AttendancePage: React.FC = () => {
@@ -54,6 +54,12 @@ export const AttendancePage: React.FC = () => {
             <Building2 className="w-9 h-9 text-indigo-600" />
           </div>
           <p className="text-base font-semibold text-secondary-900 text-center">Departments</p>
+        </div>
+        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/insights')}>
+          <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mb-3">
+            <Lightbulb className="w-9 h-9 text-amber-600" />
+          </div>
+          <p className="text-base font-semibold text-secondary-900 text-center">Insights</p>
         </div>
       </div>
     </PageContainer>
