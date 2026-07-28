@@ -536,7 +536,7 @@ export const LeavesPage: React.FC = () => {
           employeeGroups.map((group) => {
             const weekOffRecord = group.records.find((r) => r.type === 'weekoff')?.data as LeaveRecord | undefined;
             const leaveRecords = group.records.filter((r) => r.type === 'leave').map((r) => r.data as LeaveRecord);
-            const allLeaveDates = leaveRecords.flatMap((l) => l.dates ?? (l.fromDate ? [l.fromDate] : [])).sort((a, b) => b.localeCompare(a));
+            const allLeaveDates = leaveRecords.flatMap((l) => l.dates ?? (l.fromDate ? [l.fromDate] : [])).sort((a, b) => a.localeCompare(b));
             const uniqueLeaveDates = Array.from(new Set(allLeaveDates));
             const empCode = group.employeeCode;
 

@@ -86,6 +86,15 @@ const formatTimeHHMM = (date: Date): string => {
   return `${hours}:${minutes}`;
 };
 
+const getLeaveCode = (type: string, reason: string): string => {
+  if (type === 'weekoff') return 'WO';
+  const r = (reason ?? '').toString().trim();
+  if (!r) return '';
+  const words = r.split(/\s+/).filter((w) => w.length > 0);
+  const initials = words.map((w) => w[0].toUpperCase()).join('');
+  return initials.slice(0, 4);
+};
+
 export const getMonthlyReportData = async (fromDate: string, exportToDate: string, location: string): Promise<MonthlyReportData | null> => {
   if (!fromDate || !exportToDate) return null;
 
@@ -126,17 +135,41 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
   let punches: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-  // Fetch leaves for week off detection
+  // Fetch leaves (including week offs) and build a per-employee, per-date abbreviation map
   const leavesSnapshot = await getDocs(collection(db, 'leaves'));
-  const leaves: any[] = [];
+  const leaveMap: Record<string, Record<string, string>> = {};
   leavesSnapshot.forEach((doc) => {
     const data = doc.data();
-    if (data.type === 'weekoff') {
-      leaves.push({
-        employeeCode: data.employeeCode,
-        days: data.days ?? [],
-      });
+    const empCode = (data.employeeCode ?? '').toString().trim().toLowerCase();
+    if (!empCode) return;
+
+    const type = data.type ?? '';
+    const reason = data.reason ?? '';
+    const code = getLeaveCode(type, reason);
+    if (!code) return;
+
+    const leaveDates = new Set<string>();
+    const dates: string[] = data.dates ?? [];
+    if (dates.length > 0) {
+      dates.forEach((d) => leaveDates.add(d));
+    } else {
+      const from = data.fromDate;
+      const to = data.toDate;
+      if (from && to) {
+        const leaveStart = new Date(from);
+        const leaveEnd = new Date(to);
+        for (let d = new Date(leaveStart); d <= leaveEnd; d.setDate(d.getDate() + 1)) {
+          leaveDates.add(d.toISOString().split('T')[0]);
+        }
+      }
     }
+
+    if (!leaveMap[empCode]) leaveMap[empCode] = {};
+    leaveDates.forEach((dateStr) => {
+      if (dateStr >= fromDate && dateStr <= exportToDate) {
+        leaveMap[empCode][dateStr] = code;
+      }
+    });
   });
 
   // Fetch shifts for employee filtering
@@ -174,14 +207,14 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   const endDate = new Date(exportToDate);
   const dateRange: string[] = [];
   const dateLabels: string[] = [];
-  const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
   for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
     const dateStr = d.toISOString().split('T')[0];
-    const dayOfMonth = d.getDate();
-    const dayName = dayNames[d.getDay()];
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = d.toLocaleDateString('en-GB', { month: 'short' });
+    const year = String(d.getFullYear()).slice(-2);
     dateRange.push(dateStr);
-    dateLabels.push(`${dayOfMonth}-${dayName}`);
+    dateLabels.push(`${day}-${month}-${year}`);
   }
 
   const locationLabel = (location || 'All Locations').toUpperCase();
@@ -195,8 +228,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     if (!empCode) continue;
 
     const empPunches = punches.filter((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
-    const empLeave = leaves.find((l) => (l.employeeCode ?? '').toString().trim().toLowerCase() === empCode);
-    const weekOffDays = empLeave?.days ?? [];
+    const empLeaveMap = leaveMap[empCode] ?? {};
 
     const code = (employee.employeeCode ?? employee.employeeCodeInDevice ?? '').toString().toUpperCase();
     const name = (employee.employeeName ?? '').toString().toUpperCase();
@@ -213,10 +245,13 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
         return d.toISOString().split('T')[0] === dateStr;
       });
 
-      const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
-      const isWeekOff = weekOffDays.includes(dayOfWeek.toString());
+      const leaveCode = empLeaveMap[dateStr];
 
-      if (isWeekOff || dayPunches.length === 0) {
+      if (leaveCode) {
+        inTimes.push(leaveCode);
+        outTimes.push(leaveCode);
+        durations.push(leaveCode);
+      } else if (dayPunches.length === 0) {
         inTimes.push('00:00');
         outTimes.push('00:00');
         durations.push('00:00');
@@ -813,15 +848,6 @@ const formatShiftTime = (startTime: string, endTime: string): string => {
   return `${formatTime12Compact(startTime)}-${formatTime12Compact(endTime)}`;
 };
 
-const getLeaveCode = (type: string, reason: string): string => {
-  if (type === 'weekoff') return 'WO';
-  const r = (reason ?? '').toString().trim();
-  if (!r) return '';
-  const words = r.split(/\s+/).filter((w) => w.length > 0);
-  const initials = words.map((w) => w[0].toUpperCase()).join('');
-  return initials.slice(0, 4);
-};
-
 const generateDateRange = (fromDate: string, toDate: string): string[] => {
   const start = new Date(fromDate);
   const end = new Date(toDate);
@@ -895,9 +921,9 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string)
     const to = data.toDate;
 
     const leaveDates = new Set<string>();
-    dates.forEach((d) => leaveDates.add(d));
-
-    if (from && to) {
+    if (dates.length > 0) {
+      dates.forEach((d) => leaveDates.add(d));
+    } else if (from && to) {
       const leaveStart = new Date(from);
       const leaveEnd = new Date(to);
       for (let d = new Date(leaveStart); d <= leaveEnd; d.setDate(d.getDate() + 1)) {
@@ -936,7 +962,10 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string)
 
   const dateLabels = dateRange.map((dateStr) => {
     const d = new Date(dateStr);
-    return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = d.toLocaleDateString('en-GB', { month: 'short' });
+    const year = String(d.getFullYear()).slice(-2);
+    return `${day}-${month}-${year}`;
   });
 
   return {

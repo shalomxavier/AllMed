@@ -149,6 +149,21 @@ export const MonthlyReportPreviewPage: React.FC = () => {
         .preview-scroll {
           overflow-x: auto;
           width: 100%;
+          scrollbar-width: thin;
+          scrollbar-color: #888 #f1f1f1;
+        }
+        .preview-scroll::-webkit-scrollbar {
+          height: 10px;
+        }
+        .preview-scroll::-webkit-scrollbar-track {
+          background: #f1f1f1;
+        }
+        .preview-scroll::-webkit-scrollbar-thumb {
+          background: #888;
+          border-radius: 5px;
+        }
+        .preview-scroll::-webkit-scrollbar-thumb:hover {
+          background: #555;
         }
         .preview-table {
           border-collapse: collapse;
