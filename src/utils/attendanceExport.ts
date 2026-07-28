@@ -1,7 +1,17 @@
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import ExcelJS from 'exceljs';
-import * as XLSX from 'xlsx';
+
+const worksheetColumnLetter = (col: number): string => {
+  let result = '';
+  let n = col;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    result = String.fromCharCode(65 + rem) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+};
 
 interface RawPunch {
   id: string;
@@ -43,143 +53,256 @@ const buildQueryConstraints = (from: string, to: string, deviceIds: number[], cu
   return constraints;
 };
 
-export const exportAttendanceReport = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
-  if (!fromDate || !exportToDate) return;
+export interface MonthlyEmployeeReport {
+  employee: any;
+  code: string;
+  name: string;
+  dateLabels: string[];
+  inTimes: string[];
+  outTimes: string[];
+  durations: string[];
+  totalDuration: string;
+}
 
-  try {
-    // Fetch devices
-    const devicesSnapshot = await getDocs(collection(db, 'devices'));
-    const devicesMap: Record<string, string> = {};
-    devicesSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const key = (data.deviceId ?? '').toString().trim();
-      if (key) devicesMap[key] = data.location ?? '';
+export interface MonthlyReportData {
+  locationLabel: string;
+  formattedFromDate: string;
+  formattedToDate: string;
+  dateRange: string[];
+  dateLabels: string[];
+  employeeReports: MonthlyEmployeeReport[];
+}
+
+const calculateDuration = (inTime: Date, outTime: Date): string => {
+  const diffMs = outTime.getTime() - inTime.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+  return `${String(diffHours).padStart(2, '0')}:${String(diffMinutes).padStart(2, '0')}`;
+};
+
+const formatTimeHHMM = (date: Date): string => {
+  const hours = String(date.getUTCHours()).padStart(2, '0');
+  const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+export const getMonthlyReportData = async (fromDate: string, exportToDate: string, location: string): Promise<MonthlyReportData | null> => {
+  if (!fromDate || !exportToDate) return null;
+
+  // Fetch devices
+  const devicesSnapshot = await getDocs(collection(db, 'devices'));
+  const devicesMap: Record<string, string> = {};
+  devicesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const key = (data.deviceId ?? '').toString().trim();
+    if (key) devicesMap[key] = data.location ?? '';
+  });
+
+  const getDeviceIdsForLocation = (loc: string): number[] => {
+    if (!loc) return [];
+    return Object.entries(devicesMap)
+      .filter(([, locationName]) => locationName === loc)
+      .map(([deviceId]) => Number(deviceId))
+      .filter((id) => !isNaN(id));
+  };
+
+  // Fetch all employees
+  const employeesSnapshot = await getDocs(collection(db, 'employees'));
+  const employees: any[] = [];
+  employeesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    employees.push({
+      id: doc.id,
+      employeeCode: data.employeeCode,
+      employeeCodeInDevice: data.employeeCodeInDevice,
+      employeeName: data.employeeName,
+      designation: data.designation,
     });
+  });
 
-    const getDeviceIdsForLocation = (loc: string): number[] => {
-      if (!loc) return [];
-      return Object.entries(devicesMap)
-        .filter(([, locationName]) => locationName === loc)
-        .map(([deviceId]) => Number(deviceId))
-        .filter((id) => !isNaN(id));
-    };
+  // Fetch all punches in date range
+  const deviceIds = getDeviceIdsForLocation(location);
+  const constraints = buildQueryConstraints(fromDate, exportToDate, deviceIds);
+  const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+  let punches: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-    // Fetch all employees
-    const employeesSnapshot = await getDocs(collection(db, 'employees'));
-    const employees: any[] = [];
-    employeesSnapshot.forEach((doc) => {
-      const data = doc.data();
-      employees.push({
-        id: doc.id,
+  // Fetch leaves for week off detection
+  const leavesSnapshot = await getDocs(collection(db, 'leaves'));
+  const leaves: any[] = [];
+  leavesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    if (data.type === 'weekoff') {
+      leaves.push({
         employeeCode: data.employeeCode,
-        employeeCodeInDevice: data.employeeCodeInDevice,
-        employeeName: data.employeeName,
-        designation: data.designation,
+        days: data.days ?? [],
       });
-    });
+    }
+  });
 
-    // Fetch all punches in date range
-    const deviceIds = getDeviceIdsForLocation(location);
-    const constraints = buildQueryConstraints(fromDate, exportToDate, deviceIds);
-    const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-    let punches: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-
-    // Fetch leaves for week off detection
-    const leavesSnapshot = await getDocs(collection(db, 'leaves'));
-    const leaves: any[] = [];
-    leavesSnapshot.forEach((doc) => {
-      const data = doc.data();
-      if (data.type === 'weekoff') {
-        leaves.push({
-          employeeCode: data.employeeCode,
-          days: data.days ?? [],
+  // Fetch shifts for employee filtering
+  const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
+  const shiftsByCode: Record<string, { fromDate: string; toDate: string }[]> = {};
+  shiftsSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const shiftEmployees: any[] = data.employees ?? [];
+    shiftEmployees.forEach((emp) => {
+      const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
+      if (code) {
+        if (!shiftsByCode[code]) shiftsByCode[code] = [];
+        shiftsByCode[code].push({
+          fromDate: emp.fromDate ?? '',
+          toDate: emp.toDate ?? '',
         });
       }
     });
+  });
 
-    // Fetch shifts for employee filtering
-    const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
-    const shiftsByCode: Record<string, { fromDate: string; toDate: string }[]> = {};
-    shiftsSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const shiftEmployees: any[] = data.employees ?? [];
-      shiftEmployees.forEach((emp) => {
-        const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
-        if (code) {
-          if (!shiftsByCode[code]) shiftsByCode[code] = [];
-          shiftsByCode[code].push({
-            fromDate: emp.fromDate ?? '',
-            toDate: emp.toDate ?? '',
-          });
-        }
+  // Filter employees to those with at least one punch or an assigned shift in the date range
+  const filteredEmployees = employees.filter((employee) => {
+    const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
+    if (!empCode) return false;
+
+    const hasPunch = punches.some((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
+    if (hasPunch) return true;
+
+    const shifts = shiftsByCode[empCode] ?? [];
+    return shifts.some((s) => s.fromDate && s.toDate && s.fromDate <= exportToDate && s.toDate >= fromDate);
+  });
+
+  // Generate date range
+  const startDate = new Date(fromDate);
+  const endDate = new Date(exportToDate);
+  const dateRange: string[] = [];
+  const dateLabels: string[] = [];
+  const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().split('T')[0];
+    const dayOfMonth = d.getDate();
+    const dayName = dayNames[d.getDay()];
+    dateRange.push(dateStr);
+    dateLabels.push(`${dayOfMonth}-${dayName}`);
+  }
+
+  const locationLabel = (location || 'All Locations').toUpperCase();
+  const formattedFromDate = new Date(fromDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const formattedToDate = new Date(exportToDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  const employeeReports: MonthlyEmployeeReport[] = [];
+
+  for (const employee of filteredEmployees) {
+    const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
+    if (!empCode) continue;
+
+    const empPunches = punches.filter((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
+    const empLeave = leaves.find((l) => (l.employeeCode ?? '').toString().trim().toLowerCase() === empCode);
+    const weekOffDays = empLeave?.days ?? [];
+
+    const code = (employee.employeeCode ?? employee.employeeCodeInDevice ?? '').toString().toUpperCase();
+    const name = (employee.employeeName ?? '').toString().toUpperCase();
+
+    const inTimes: string[] = [];
+    const outTimes: string[] = [];
+    const durations: string[] = [];
+    let totalDurationMinutes = 0;
+
+    dateRange.forEach((dateStr) => {
+      const dayPunches = empPunches.filter((p) => {
+        const d = toDate(p.logDate);
+        if (!d) return false;
+        return d.toISOString().split('T')[0] === dateStr;
       });
+
+      const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
+      const isWeekOff = weekOffDays.includes(dayOfWeek.toString());
+
+      if (isWeekOff || dayPunches.length === 0) {
+        inTimes.push('00:00');
+        outTimes.push('00:00');
+        durations.push('00:00');
+      } else {
+        const sortedPunches = dayPunches.sort((a, b) => {
+          const dA = toDate(a.logDate);
+          const dB = toDate(b.logDate);
+          if (!dA || !dB) return 0;
+          return dA.getTime() - dB.getTime();
+        });
+
+        const firstIn = sortedPunches.find((p) => p.direction === 'in')?.logDate;
+        const lastOut = sortedPunches.filter((p) => p.direction === 'out').pop()?.logDate;
+        const inDate = toDate(firstIn);
+        const outDate = toDate(lastOut);
+
+        inTimes.push(inDate ? formatTimeHHMM(inDate) : '00:00');
+        outTimes.push(outDate ? formatTimeHHMM(outDate) : '00:00');
+
+        if (inDate && outDate) {
+          const duration = calculateDuration(inDate, outDate);
+          durations.push(duration);
+          const [hours, minutes] = duration.split(':').map(Number);
+          totalDurationMinutes += hours * 60 + minutes;
+        } else {
+          durations.push('00:00');
+        }
+      }
     });
 
-    // Filter employees to those with at least one punch or an assigned shift in the date range
-    const filteredEmployees = employees.filter((employee) => {
-      const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
-      if (!empCode) return false;
+    const totalHours = Math.floor(totalDurationMinutes / 60);
+    const totalMins = totalDurationMinutes % 60;
+    const totalDuration = `${String(totalHours).padStart(2, '0')}:${String(totalMins).padStart(2, '0')}`;
 
-      const hasPunch = punches.some((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
-      if (hasPunch) return true;
-
-      const shifts = shiftsByCode[empCode] ?? [];
-      return shifts.some((s) => s.fromDate && s.toDate && s.fromDate <= exportToDate && s.toDate >= fromDate);
+    employeeReports.push({
+      employee,
+      code,
+      name,
+      dateLabels,
+      inTimes,
+      outTimes,
+      durations,
+      totalDuration,
     });
+  }
 
-    // Generate date range
-    const startDate = new Date(fromDate);
-    const endDate = new Date(exportToDate);
-    const dateRange: string[] = [];
-    const dateLabels: string[] = [];
-    const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  return {
+    locationLabel,
+    formattedFromDate,
+    formattedToDate,
+    dateRange,
+    dateLabels,
+    employeeReports,
+  };
+};
 
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().split('T')[0];
-      const dayOfMonth = d.getDate();
-      const dayName = dayNames[d.getDay()];
-      dateRange.push(dateStr);
-      dateLabels.push(`${dayOfMonth}-${dayName}`);
-    }
+export const exportAttendanceReport = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
+  const reportData = await getMonthlyReportData(fromDate, exportToDate, location);
+  if (!reportData) return;
 
-    // Helper function to calculate duration between two timestamps
-    const calculateDuration = (inTime: Date, outTime: Date): string => {
-      const diffMs = outTime.getTime() - inTime.getTime();
-      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-      return `${String(diffHours).padStart(2, '0')}:${String(diffMinutes).padStart(2, '0')}`;
-    };
+  const { locationLabel, formattedFromDate, formattedToDate, dateLabels, employeeReports } = reportData;
 
-    // Helper function to format time as HH:MM
-    const formatTimeHHMM = (date: Date): string => {
-      const hours = String(date.getUTCHours()).padStart(2, '0');
-      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-      return `${hours}:${minutes}`;
-    };
+  try {
 
     // Create Excel workbook
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Attendance Report');
 
     // Set column widths
-    worksheet.getColumn(1).width = 12; // Column A row labels
-    worksheet.getColumn(2).width = 8; // Column B first date / values
-    for (let i = 3; i <= 34; i++) {
+    worksheet.getColumn(1).width = 50; // Column A row labels (increased for header text)
+    for (let i = 2; i <= 1 + dateLabels.length; i++) {
       worksheet.getColumn(i).width = 10; // Date columns
+    }
+    worksheet.getColumn(2 + dateLabels.length).width = 15; // Total column
+    // Hide any unused columns between dates and TOTAL
+    for (let i = 2 + dateLabels.length + 1; i <= 34; i++) {
+      worksheet.getColumn(i).hidden = true;
     }
 
     let currentRow = 1;
 
     // Global Header Section
-    const locationLabel = (location || 'All Locations').toUpperCase();
-    const formattedFromDate = new Date(fromDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    const formattedToDate = new Date(exportToDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-
-    // Calculate the end column based on date range
-    const endColumn = 2 + dateLabels.length; // Start from column B (2) + number of dates
+    // These are already destructured from reportData
 
     // Row 1: Location (merged, bold, centered, with mild background color)
-    worksheet.mergeCells(`A${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
+    worksheet.mergeCells(`A${currentRow}:AA${currentRow}`);
     const locationCell = worksheet.getCell(`A${currentRow}`);
     locationCell.value = locationLabel;
     locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
@@ -188,7 +311,7 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
     currentRow++;
 
     // Row 2: Report Title (merged, bold, centered, with mild background color)
-    worksheet.mergeCells(`A${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
+    worksheet.mergeCells(`A${currentRow}:AA${currentRow}`);
     const titleCell = worksheet.getCell(`A${currentRow}`);
     titleCell.value = 'MONTHLY WORK DURATION REPORT';
     titleCell.font = { bold: true, size: 16, color: { argb: 'FF333333' } };
@@ -197,7 +320,7 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
     currentRow++;
 
     // Row 3: Date Range (merged, bold, centered, with mild background color)
-    worksheet.mergeCells(`A${currentRow}:${String.fromCharCode(64 + endColumn)}${currentRow}`);
+    worksheet.mergeCells(`A${currentRow}:AA${currentRow}`);
     const dateRangeCell = worksheet.getCell(`A${currentRow}`);
     dateRangeCell.value = `${formattedFromDate.toUpperCase()} TO ${formattedToDate.toUpperCase()}`;
     dateRangeCell.font = { bold: true, size: 12, color: { argb: 'FF333333' } };
@@ -209,28 +332,19 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
     currentRow++;
 
     // Process each employee
-    for (const employee of filteredEmployees) {
-      const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
-      if (!empCode) continue;
-
-      // Get punches for this employee
-      const empPunches = punches.filter((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
-
-      // Get week off days for this employee
-      const empLeave = leaves.find((l) => (l.employeeCode ?? '').toString().trim().toLowerCase() === empCode);
-      const weekOffDays = empLeave?.days ?? [];
-
+    const totalColumn = 2 + dateLabels.length;
+    for (const empReport of employeeReports) {
       // Row 1: Metadata (Employee Code and Name - merged cells with reduced width)
       worksheet.mergeCells(`A${currentRow}:E${currentRow}`);
       const codeCell = worksheet.getCell(`A${currentRow}`);
-      codeCell.value = `CODE: ${(employee.employeeCode ?? employee.employeeCodeInDevice ?? '').toString().toUpperCase()}`;
+      codeCell.value = `CODE: ${empReport.code}`;
       codeCell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
       codeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
       codeCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
       worksheet.mergeCells(`F${currentRow}:I${currentRow}`);
       const nameCell = worksheet.getCell(`F${currentRow}`);
-      nameCell.value = `NAME: ${(employee.employeeName ?? '').toString().toUpperCase()}`;
+      nameCell.value = `NAME: ${empReport.name}`;
       nameCell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
       nameCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
       nameCell.alignment = { horizontal: 'left', vertical: 'middle' };
@@ -239,17 +353,15 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
       // Row 2: Date labels
       const dateRow = worksheet.getRow(currentRow);
       dateLabels.forEach((label, i) => {
-        if (i + 2 <= 34) {
-          dateRow.getCell(i + 2).value = label;
-          dateRow.getCell(i + 2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-          dateRow.getCell(i + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
-          dateRow.getCell(i + 2).alignment = { horizontal: 'center', vertical: 'middle' };
-        }
+        dateRow.getCell(i + 2).value = label;
+        dateRow.getCell(i + 2).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        dateRow.getCell(i + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
+        dateRow.getCell(i + 2).alignment = { horizontal: 'center', vertical: 'middle' };
       });
-      dateRow.getCell(34).value = 'TOTAL';
-      dateRow.getCell(34).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-      dateRow.getCell(34).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-      dateRow.getCell(34).alignment = { horizontal: 'center', vertical: 'middle' };
+      dateRow.getCell(totalColumn).value = 'TOTAL';
+      dateRow.getCell(totalColumn).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      dateRow.getCell(totalColumn).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+      dateRow.getCell(totalColumn).alignment = { horizontal: 'center', vertical: 'middle' };
       dateRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
       currentRow++;
 
@@ -272,71 +384,28 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
       durationRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
       durationRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
 
-      let totalDurationMinutes = 0;
-
-      // Process each day
-      dateRange.forEach((dateStr, dayIndex) => {
-        if (dayIndex + 2 > 34) return;
-
-        const dayPunches = empPunches.filter((p) => {
-          const d = toDate(p.logDate);
-          if (!d) return false;
-          return d.toISOString().split('T')[0] === dateStr;
-        });
-
-        // Check if it's a week off
-        const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay();
-        const isWeekOff = weekOffDays.includes(dayOfWeek.toString());
-
-        const colIndex = dayIndex + 2;
-
-        if (isWeekOff || dayPunches.length === 0) {
-          inTimeRow.getCell(colIndex).value = '00:00';
-          inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-          outTimeRow.getCell(colIndex).value = '00:00';
-          outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-          durationRow.getCell(colIndex).value = '00:00';
-          durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-        } else {
-          // Get first in time and last out time
-          const sortedPunches = dayPunches.sort((a, b) => {
-            const dA = toDate(a.logDate);
-            const dB = toDate(b.logDate);
-            if (!dA || !dB) return 0;
-            return dA.getTime() - dB.getTime();
-          });
-
-          const firstIn = sortedPunches.find((p) => p.direction === 'in')?.logDate;
-          const lastOut = sortedPunches.filter((p) => p.direction === 'out').pop()?.logDate;
-
-          const inDate = toDate(firstIn);
-          const outDate = toDate(lastOut);
-
-          inTimeRow.getCell(colIndex).value = inDate ? formatTimeHHMM(inDate) : '00:00';
-          inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-          outTimeRow.getCell(colIndex).value = outDate ? formatTimeHHMM(outDate) : '00:00';
-          outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-
-          if (inDate && outDate) {
-            const duration = calculateDuration(inDate, outDate);
-            durationRow.getCell(colIndex).value = duration;
-            durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-            const [hours, minutes] = duration.split(':').map(Number);
-            totalDurationMinutes += hours * 60 + minutes;
-          } else {
-            durationRow.getCell(colIndex).value = '00:00';
-            durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
-          }
-        }
+      // Fill in data
+      empReport.inTimes.forEach((value, i) => {
+        const colIndex = i + 2;
+        inTimeRow.getCell(colIndex).value = value;
+        inTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      empReport.outTimes.forEach((value, i) => {
+        const colIndex = i + 2;
+        outTimeRow.getCell(colIndex).value = value;
+        outTimeRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      empReport.durations.forEach((value, i) => {
+        const colIndex = i + 2;
+        durationRow.getCell(colIndex).value = value;
+        durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
       });
 
-      // Calculate total duration
-      const totalHours = Math.floor(totalDurationMinutes / 60);
-      const totalMins = totalDurationMinutes % 60;
-      durationRow.getCell(34).value = `${String(totalHours).padStart(2, '0')}:${String(totalMins).padStart(2, '0')}`;
-      durationRow.getCell(34).font = { bold: true, size: 11, color: { argb: 'FF333333' } };
-      durationRow.getCell(34).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-      durationRow.getCell(34).alignment = { horizontal: 'center', vertical: 'middle' };
+      // Total duration
+      durationRow.getCell(totalColumn).value = empReport.totalDuration;
+      durationRow.getCell(totalColumn).font = { bold: true, size: 11, color: { argb: 'FF333333' } };
+      durationRow.getCell(totalColumn).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+      durationRow.getCell(totalColumn).alignment = { horizontal: 'center', vertical: 'middle' };
 
       currentRow += 3;
 
@@ -375,217 +444,631 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
   }
 };
 
-export const exportDailyAttendanceRecords = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
-  if (!fromDate || !exportToDate) return;
+export interface DailyReportRecord {
+  userId: string;
+  employeeName: string;
+  department: string;
+  location: string;
+  shift: string;
+  date: string;
+  inTime: string;
+  outTime: string;
+  workingDuration: string;
+  lateMinutes: string;
+  earlyMinutes: string;
+  overtimeMinutes: string;
+}
 
-  try {
-    const devicesSnapshot = await getDocs(collection(db, 'devices'));
-    const devicesMap: Record<string, string> = {};
-    devicesSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const key = (data.deviceId ?? '').toString().trim();
-      if (key) devicesMap[key] = data.location ?? '';
-    });
+export interface DailyReportData {
+  headers: string[];
+  rows: DailyReportRecord[];
+}
 
-    const getDeviceIdsForLocation = (loc: string): number[] => {
-      if (!loc) return [];
-      return Object.entries(devicesMap)
-        .filter(([, locationName]) => locationName === loc)
-        .map(([deviceId]) => Number(deviceId))
-        .filter((id) => !isNaN(id));
-    };
+export const getDailyReportData = async (fromDate: string, exportToDate: string, location: string): Promise<DailyReportData | null> => {
+  if (!fromDate || !exportToDate) return null;
 
-    const resolveDeviceLocation = (deviceId?: number): string => {
-      if (!deviceId) return '';
-      return devicesMap[String(deviceId)] ?? String(deviceId);
-    };
+  const devicesSnapshot = await getDocs(collection(db, 'devices'));
+  const devicesMap: Record<string, string> = {};
+  devicesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const key = (data.deviceId ?? '').toString().trim();
+    if (key) devicesMap[key] = data.location ?? '';
+  });
 
-    const employeesSnapshot = await getDocs(collection(db, 'employees'));
-    const employeeMap: Record<string, string> = {};
-    const departmentMap: Record<string, string> = {};
-    employeesSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
-      if (key) {
-        employeeMap[key] = data.employeeName ?? '';
-        departmentMap[key] = data.department ?? '';
+  const getDeviceIdsForLocation = (loc: string): number[] => {
+    if (!loc) return [];
+    return Object.entries(devicesMap)
+      .filter(([, locationName]) => locationName === loc)
+      .map(([deviceId]) => Number(deviceId))
+      .filter((id) => !isNaN(id));
+  };
+
+  const resolveDeviceLocation = (deviceId?: number): string => {
+    if (!deviceId) return '';
+    return devicesMap[String(deviceId)] ?? String(deviceId);
+  };
+
+  const employeesSnapshot = await getDocs(collection(db, 'employees'));
+  const employeeMap: Record<string, string> = {};
+  const departmentMap: Record<string, string> = {};
+  employeesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
+    if (key) {
+      employeeMap[key] = data.employeeName ?? '';
+      departmentMap[key] = data.department ?? '';
+    }
+  });
+
+  const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
+  const shiftsMap: Record<string, any[]> = {};
+  shiftsSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const employees: any[] = data.employees ?? [];
+    employees.forEach((emp) => {
+      const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
+      if (code) {
+        if (!shiftsMap[code]) shiftsMap[code] = [];
+        shiftsMap[code].push({
+          name: data.name ?? '',
+          startTime: data.startTime,
+          endTime: data.endTime,
+          fromDate: emp.fromDate,
+          toDate: emp.toDate,
+        });
       }
     });
+  });
 
-    const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
-    const shiftsMap: Record<string, any[]> = {};
-    shiftsSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const employees: any[] = data.employees ?? [];
-      employees.forEach((emp) => {
-        const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
-        if (code) {
-          if (!shiftsMap[code]) shiftsMap[code] = [];
-          shiftsMap[code].push({
-            name: data.name ?? '',
-            startTime: data.startTime,
-            endTime: data.endTime,
-            fromDate: emp.fromDate,
-            toDate: emp.toDate,
-          });
-        }
-      });
+  const getShiftForPunch = (userId: string | undefined, logDate: any): any | null => {
+    if (!userId) return null;
+    const key = userId.trim().toLowerCase();
+    const shifts = shiftsMap[key];
+    if (!shifts || shifts.length === 0) return null;
+    const d = toDate(logDate);
+    if (!d) return null;
+    const punchDateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
+  };
+
+  const deviceIds = getDeviceIdsForLocation(location);
+  const allPunches: RawPunch[] = [];
+  let cursor: any = null;
+  while (true) {
+    const constraints = buildQueryConstraints(fromDate, exportToDate, deviceIds, cursor);
+    const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+    const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    allPunches.push(...data);
+    if (snapshot.docs.length < SEARCH_LIMIT) break;
+    cursor = snapshot.docs[snapshot.docs.length - 1];
+  }
+
+  const groups: Record<string, RawPunch[]> = {};
+  allPunches.forEach((punch) => {
+    const d = toDate(punch.logDate);
+    if (!d || !punch.userId) return;
+    const dateKey = `${punch.userId.trim().toLowerCase()}_${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    if (!groups[dateKey]) groups[dateKey] = [];
+    groups[dateKey].push(punch);
+  });
+
+  const dailyRecords = Object.values(groups).map((punches) => {
+    const sorted = [...punches].sort((a, b) => {
+      const dA = toDate(a.logDate);
+      const dB = toDate(b.logDate);
+      if (!dA || !dB) return 0;
+      return dA.getTime() - dB.getTime();
     });
 
-    const getShiftForPunch = (userId: string | undefined, logDate: any): any | null => {
-      if (!userId) return null;
-      const key = userId.trim().toLowerCase();
-      const shifts = shiftsMap[key];
-      if (!shifts || shifts.length === 0) return null;
-      const d = toDate(logDate);
-      if (!d) return null;
-      const punchDateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-      return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
-    };
+    const firstPunch = sorted[0];
+    const userId = firstPunch.userId ?? '';
+    const key = userId.trim().toLowerCase();
+    const firstIn = sorted.find((p) => p.direction === 'in');
+    const lastOut = [...sorted].reverse().find((p) => p.direction === 'out');
+    const inDate = toDate(firstIn?.logDate ?? null);
+    const outDate = toDate(lastOut?.logDate ?? null);
+    const date = toDate(firstPunch.logDate);
 
-    const deviceIds = getDeviceIdsForLocation(location);
-    const allPunches: RawPunch[] = [];
-    let cursor: any = null;
-    while (true) {
-      const constraints = buildQueryConstraints(fromDate, exportToDate, deviceIds, cursor);
-      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-      const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      allPunches.push(...data);
-      if (snapshot.docs.length < SEARCH_LIMIT) break;
-      cursor = snapshot.docs[snapshot.docs.length - 1];
+    const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
+    let lateMinutes = 0;
+    let earlyMinutes = 0;
+    let overtimeMinutes = 0;
+
+    if (inDate && shift?.startTime) {
+      const [sh, sm] = shift.startTime.split(':').map(Number);
+      const shiftStartMin = sh * 60 + sm;
+      const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
+      if (!isNaN(shiftStartMin) && inMin > shiftStartMin) {
+        lateMinutes = inMin - shiftStartMin;
+      }
     }
 
-    const groups: Record<string, RawPunch[]> = {};
-    allPunches.forEach((punch) => {
-      const d = toDate(punch.logDate);
-      if (!d || !punch.userId) return;
-      const dateKey = `${punch.userId.trim().toLowerCase()}_${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-      if (!groups[dateKey]) groups[dateKey] = [];
-      groups[dateKey].push(punch);
-    });
+    if (outDate && shift?.endTime) {
+      const [eh, em] = shift.endTime.split(':').map(Number);
+      const shiftEndMin = eh * 60 + em;
+      const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
+      if (!isNaN(shiftEndMin)) {
+        if (outMin < shiftEndMin) {
+          earlyMinutes = shiftEndMin - outMin;
+        } else if (outMin > shiftEndMin) {
+          overtimeMinutes = outMin - shiftEndMin;
+        }
+      }
+    }
 
-    const dailyRecords = Object.values(groups).map((punches) => {
-      const sorted = [...punches].sort((a, b) => {
-        const dA = toDate(a.logDate);
-        const dB = toDate(b.logDate);
-        if (!dA || !dB) return 0;
-        return dA.getTime() - dB.getTime();
+    let workingDurationMinutes = 0;
+    if (inDate && outDate && outDate.getTime() > inDate.getTime()) {
+      workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
+    }
+
+    const locationPunch = firstIn ?? firstPunch;
+
+    return {
+      userId,
+      employeeName: employeeMap[key] ?? '',
+      department: departmentMap[key] ?? '',
+      location: resolveDeviceLocation(locationPunch.deviceId),
+      shift,
+      date,
+      inTime: inDate,
+      outTime: outDate,
+      workingDurationMinutes,
+      lateMinutes,
+      earlyMinutes,
+      overtimeMinutes,
+    };
+  });
+
+  const localFormatTimeHHMM = (date: Date | null): string => {
+    if (!date) return '';
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
+  const localFormatMinutes = (minutes: number): string => {
+    if (!isFinite(minutes) || minutes <= 0) return '';
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    if (h === 0) return `${m}m`;
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+  };
+
+  const headers = [
+    'Employee ID',
+    'Employee Name',
+    'Department',
+    'Location',
+    'Shift',
+    'Date',
+    'In Time',
+    'Out Time',
+    'Working Duration',
+    'Late Minutes',
+    'Early Minutes',
+    'Overtime Minutes',
+  ];
+
+  const rows: DailyReportRecord[] = dailyRecords.map((record) => ({
+    userId: record.userId,
+    employeeName: record.employeeName,
+    department: record.department,
+    location: record.location,
+    shift: record.shift ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}` : '',
+    date: record.date ? record.date.toISOString().split('T')[0] : '',
+    inTime: record.inTime ? localFormatTimeHHMM(record.inTime) : '',
+    outTime: record.outTime ? localFormatTimeHHMM(record.outTime) : '',
+    workingDuration: record.workingDurationMinutes > 0 ? localFormatMinutes(record.workingDurationMinutes) : '',
+    lateMinutes: record.lateMinutes > 0 ? localFormatMinutes(record.lateMinutes) : '',
+    earlyMinutes: record.earlyMinutes > 0 ? localFormatMinutes(record.earlyMinutes) : '',
+    overtimeMinutes: record.overtimeMinutes > 0 ? localFormatMinutes(record.overtimeMinutes) : '',
+  }));
+
+  return { headers, rows };
+};
+
+export const exportDailyAttendanceRecords = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
+  const reportData = await getDailyReportData(fromDate, exportToDate, location);
+  if (!reportData) return;
+
+  try {
+    const { headers, rows } = reportData;
+    const locationLabel = location === '' ? 'ALL LOCATIONS' : location.toUpperCase();
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Daily Attendance Report');
+
+    const headerFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE7F3FF' } };
+    const titleFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F4F8' } };
+    const dateFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE8F0F8' } };
+    const thinBorder = { style: 'thin' as const, color: { argb: 'FFCCCCCC' } };
+
+    let currentRow = 1;
+
+    // Title section
+    worksheet.mergeCells(`A${currentRow}:L${currentRow}`);
+    const locationCell = worksheet.getCell(`A${currentRow}`);
+    locationCell.value = locationLabel;
+    locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
+    locationCell.fill = titleFill;
+    locationCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    worksheet.mergeCells(`A${currentRow}:L${currentRow}`);
+    const titleCell = worksheet.getCell(`A${currentRow}`);
+    titleCell.value = 'DAILY ATTENDANCE REPORT';
+    titleCell.font = { bold: true, size: 16, color: { argb: 'FF333333' } };
+    titleCell.fill = titleFill;
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    worksheet.mergeCells(`A${currentRow}:L${currentRow}`);
+    const dateRangeCell = worksheet.getCell(`A${currentRow}`);
+    dateRangeCell.value = `${fromDate.toUpperCase()} TO ${exportToDate.toUpperCase()}`;
+    dateRangeCell.font = { bold: true, size: 12, color: { argb: 'FF333333' } };
+    dateRangeCell.fill = dateFill;
+    dateRangeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    // Empty row
+    currentRow++;
+
+    // Header row
+    const headerRow = worksheet.getRow(currentRow);
+    headers.forEach((header, index) => {
+      const cell = headerRow.getCell(index + 1);
+      cell.value = header;
+      cell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      cell.fill = headerFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+    });
+    currentRow++;
+
+    // Data rows
+    rows.forEach((record) => {
+      const row = worksheet.getRow(currentRow);
+      const values = [
+        record.userId,
+        record.employeeName,
+        record.department,
+        record.location,
+        record.shift,
+        record.date,
+        record.inTime,
+        record.outTime,
+        record.workingDuration,
+        record.lateMinutes,
+        record.earlyMinutes,
+        record.overtimeMinutes,
+      ];
+      values.forEach((value, index) => {
+        const cell = row.getCell(index + 1);
+        cell.value = value;
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
       });
-
-      const firstPunch = sorted[0];
-      const userId = firstPunch.userId ?? '';
-      const key = userId.trim().toLowerCase();
-      const firstIn = sorted.find((p) => p.direction === 'in');
-      const lastOut = [...sorted].reverse().find((p) => p.direction === 'out');
-      const inDate = toDate(firstIn?.logDate ?? null);
-      const outDate = toDate(lastOut?.logDate ?? null);
-      const date = toDate(firstPunch.logDate);
-
-      const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
-      let lateMinutes = 0;
-      let earlyMinutes = 0;
-      let overtimeMinutes = 0;
-
-      if (inDate && shift?.startTime) {
-        const [sh, sm] = shift.startTime.split(':').map(Number);
-        const shiftStartMin = sh * 60 + sm;
-        const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-        if (!isNaN(shiftStartMin) && inMin > shiftStartMin) {
-          lateMinutes = inMin - shiftStartMin;
-        }
-      }
-
-      if (outDate && shift?.endTime) {
-        const [eh, em] = shift.endTime.split(':').map(Number);
-        const shiftEndMin = eh * 60 + em;
-        const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
-        if (!isNaN(shiftEndMin)) {
-          if (outMin < shiftEndMin) {
-            earlyMinutes = shiftEndMin - outMin;
-          } else if (outMin > shiftEndMin) {
-            overtimeMinutes = outMin - shiftEndMin;
-          }
-        }
-      }
-
-      let workingDurationMinutes = 0;
-      if (inDate && outDate && outDate.getTime() > inDate.getTime()) {
-        workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
-      }
-
-      const locationPunch = firstIn ?? firstPunch;
-
-      return {
-        userId,
-        employeeName: employeeMap[key] ?? '',
-        department: departmentMap[key] ?? '',
-        location: resolveDeviceLocation(locationPunch.deviceId),
-        shift,
-        date,
-        inTime: inDate,
-        outTime: outDate,
-        workingDurationMinutes,
-        lateMinutes,
-        earlyMinutes,
-        overtimeMinutes,
-      };
+      currentRow++;
     });
 
-    const formatTimeHHMM = (date: Date | null): string => {
-      if (!date) return '';
-      const hours = String(date.getUTCHours()).padStart(2, '0');
-      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
-      return `${hours}:${minutes}`;
-    };
+    // Column widths
+    worksheet.getColumn(1).width = 15;
+    worksheet.getColumn(2).width = 25;
+    worksheet.getColumn(3).width = 18;
+    worksheet.getColumn(4).width = 18;
+    worksheet.getColumn(5).width = 25;
+    worksheet.getColumn(6).width = 12;
+    worksheet.getColumn(7).width = 12;
+    worksheet.getColumn(8).width = 12;
+    worksheet.getColumn(9).width = 16;
+    worksheet.getColumn(10).width = 14;
+    worksheet.getColumn(11).width = 14;
+    worksheet.getColumn(12).width = 16;
 
-    const formatMinutes = (minutes: number): string => {
-      if (!isFinite(minutes) || minutes <= 0) return '';
-      const h = Math.floor(minutes / 60);
-      const m = Math.round(minutes % 60);
-      if (h === 0) return `${m}m`;
-      if (m === 0) return `${h}h`;
-      return `${h}h ${m}m`;
-    };
-
-    const headers = [
-      'Employee ID',
-      'Employee Name',
-      'Department',
-      'Location',
-      'Shift',
-      'Date',
-      'In Time',
-      'Out Time',
-      'Working Duration',
-      'Late Minutes',
-      'Early Minutes',
-      'Overtime Minutes',
-    ];
-    const rows = dailyRecords.map((record) => [
-      record.userId,
-      record.employeeName,
-      record.department,
-      record.location,
-      record.shift ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}` : '',
-      record.date ? record.date.toISOString().split('T')[0] : '',
-      record.inTime ? formatTimeHHMM(record.inTime) : '',
-      record.outTime ? formatTimeHHMM(record.outTime) : '',
-      record.workingDurationMinutes > 0 ? formatMinutes(record.workingDurationMinutes) : '',
-      record.lateMinutes > 0 ? formatMinutes(record.lateMinutes) : '',
-      record.earlyMinutes > 0 ? formatMinutes(record.earlyMinutes) : '',
-      record.overtimeMinutes > 0 ? formatMinutes(record.overtimeMinutes) : '',
-    ]);
-
-    const data = [headers, ...rows];
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = headers.map((header, idx) => {
-      const maxLen = Math.max(header.length, ...rows.map((row) => String(row[idx] ?? '').length));
-      return { wch: Math.min(Math.max(maxLen + 2, 10), 40) };
-    });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Attendance');
-    XLSX.writeFile(wb, `attendance-${fromDate}-to-${exportToDate}.xlsx`);
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `daily_attendance_report_${fromDate}_to_${exportToDate}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   } catch (error) {
     console.error('Error exporting daily attendance records:', error);
+  }
+};
+
+export interface ShiftMatrixEmployee {
+  code: string;
+  name: string;
+  designation: string;
+  department: string;
+  values: string[];
+}
+
+export interface ShiftReportData {
+  dayNames: string[];
+  dates: string[];
+  dateLabels: string[];
+  employees: ShiftMatrixEmployee[];
+}
+
+const formatTime12Compact = (time24: string): string => {
+  if (!time24) return '';
+  const [hStr, mStr] = time24.split(':');
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10) || 0;
+  if (isNaN(h)) return time24;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  if (m === 0) return `${h12}${ampm}`;
+  return `${h12}:${String(m).padStart(2, '0')}${ampm}`;
+};
+
+const formatShiftTime = (startTime: string, endTime: string): string => {
+  if (!startTime || !endTime) return '';
+  return `${formatTime12Compact(startTime)}-${formatTime12Compact(endTime)}`;
+};
+
+const getLeaveCode = (type: string, reason: string): string => {
+  if (type === 'weekoff') return 'WO';
+  const r = (reason ?? '').toString().trim();
+  if (!r) return '';
+  const words = r.split(/\s+/).filter((w) => w.length > 0);
+  const initials = words.map((w) => w[0].toUpperCase()).join('');
+  return initials.slice(0, 4);
+};
+
+const generateDateRange = (fromDate: string, toDate: string): string[] => {
+  const start = new Date(fromDate);
+  const end = new Date(toDate);
+  const dates: string[] = [];
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().split('T')[0]);
+  }
+  return dates;
+};
+
+export const getShiftReportData = async (fromDate: string, exportToDate: string): Promise<ShiftReportData | null> => {
+  if (!fromDate || !exportToDate) return null;
+
+  const dateRange = generateDateRange(fromDate, exportToDate);
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  const employeesSnapshot = await getDocs(collection(db, 'employees'));
+  const employeeMap: Record<string, { name: string; designation: string; department: string }> = {};
+  employeesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const code = (data.employeeCode ?? '').toString().trim().toLowerCase();
+    if (code) {
+      employeeMap[code] = {
+        name: data.employeeName ?? '',
+        designation: data.designation ?? '',
+        department: data.department ?? '',
+      };
+    }
+  });
+
+  const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
+  const shiftAssignments: Record<string, Record<string, string>> = {};
+
+  shiftsSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const startTime = data.startTime ?? '';
+    const endTime = data.endTime ?? '';
+    const employees: any[] = data.employees ?? [];
+
+    employees.forEach((emp) => {
+      const empCode = (emp.employeeCode ?? '').toString().trim().toLowerCase();
+      const empFromDate = emp.fromDate ?? '';
+      const empToDate = emp.toDate ?? '';
+
+      if (!empCode || !empFromDate || !empToDate) return;
+
+      if (empToDate < fromDate || empFromDate > exportToDate) return;
+
+      if (!shiftAssignments[empCode]) shiftAssignments[empCode] = {};
+
+      dateRange.forEach((dateStr) => {
+        if (dateStr >= empFromDate && dateStr <= empToDate) {
+          shiftAssignments[empCode][dateStr] = formatShiftTime(startTime, endTime);
+        }
+      });
+    });
+  });
+
+  const leavesSnapshot = await getDocs(collection(db, 'leaves'));
+  const leaveMap: Record<string, Record<string, string>> = {};
+
+  leavesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    const type = data.type ?? '';
+    const reason = data.reason ?? '';
+    const empCode = (data.employeeCode ?? '').toString().trim().toLowerCase();
+    if (!empCode) return;
+
+    const dates: string[] = data.dates ?? [];
+    const from = data.fromDate;
+    const to = data.toDate;
+
+    const leaveDates = new Set<string>();
+    dates.forEach((d) => leaveDates.add(d));
+
+    if (from && to) {
+      const leaveStart = new Date(from);
+      const leaveEnd = new Date(to);
+      for (let d = new Date(leaveStart); d <= leaveEnd; d.setDate(d.getDate() + 1)) {
+        leaveDates.add(d.toISOString().split('T')[0]);
+      }
+    }
+
+    if (!leaveMap[empCode]) leaveMap[empCode] = {};
+    const code = getLeaveCode(type, reason);
+    leaveDates.forEach((dateStr) => {
+      if (dateStr >= fromDate && dateStr <= exportToDate) {
+        leaveMap[empCode][dateStr] = code;
+      }
+    });
+  });
+
+  const employees: ShiftMatrixEmployee[] = Object.entries(employeeMap)
+    .filter(([code]) => {
+      const hasShift = Object.keys(shiftAssignments[code] ?? {}).length > 0;
+      const hasLeave = Object.keys(leaveMap[code] ?? {}).length > 0;
+      return hasShift || hasLeave;
+    })
+    .map(([code, info]) => ({
+      code: code.toUpperCase(),
+      name: info.name,
+      designation: info.designation,
+      department: info.department,
+      values: dateRange.map((dateStr) => {
+        const leaveValue = leaveMap[code]?.[dateStr];
+        if (leaveValue) return leaveValue;
+        return shiftAssignments[code]?.[dateStr] ?? '';
+      }),
+    }));
+
+  employees.sort((a, b) => a.name.localeCompare(b.name));
+
+  const dateLabels = dateRange.map((dateStr) => {
+    const d = new Date(dateStr);
+    return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  });
+
+  return {
+    dayNames: dateRange.map((dateStr) => dayNames[new Date(dateStr).getDay()]),
+    dates: dateRange,
+    dateLabels,
+    employees,
+  };
+};
+
+export const exportShiftReport = async (fromDate: string, exportToDate: string): Promise<void> => {
+  const reportData = await getShiftReportData(fromDate, exportToDate);
+  if (!reportData) return;
+
+  try {
+    const { dayNames, dateLabels, employees } = reportData;
+    const colCount = 4 + dateLabels.length;
+    const endCol = worksheetColumnLetter(colCount);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Shift Report');
+
+    const headerFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE7F3FF' } };
+    const dayFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F8FF' } };
+    const dateFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE8F0F8' } };
+    const titleFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F4F8' } };
+    const rangeFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE8F0F8' } };
+    const thinBorder = { style: 'thin' as const, color: { argb: 'FFCCCCCC' } };
+
+    let currentRow = 1;
+
+    // Title section
+    worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
+    const locationCell = worksheet.getCell(`A${currentRow}`);
+    locationCell.value = 'ALL LOCATIONS';
+    locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
+    locationCell.fill = titleFill;
+    locationCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
+    const titleCell = worksheet.getCell(`A${currentRow}`);
+    titleCell.value = 'SHIFT ASSIGNMENT REPORT';
+    titleCell.font = { bold: true, size: 16, color: { argb: 'FF333333' } };
+    titleCell.fill = titleFill;
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
+    const dateRangeCell = worksheet.getCell(`A${currentRow}`);
+    dateRangeCell.value = `${fromDate.toUpperCase()} TO ${exportToDate.toUpperCase()}`;
+    dateRangeCell.font = { bold: true, size: 12, color: { argb: 'FF333333' } };
+    dateRangeCell.fill = rangeFill;
+    dateRangeCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    // Empty row
+    currentRow++;
+
+    // Header row 1: day names
+    const dayRow = worksheet.getRow(currentRow);
+    ['Emp Code', 'Name', 'Designation', 'Dept'].forEach((header, index) => {
+      const cell = dayRow.getCell(index + 1);
+      cell.value = header;
+      cell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      cell.fill = headerFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+    });
+    dayNames.forEach((day, index) => {
+      const cell = dayRow.getCell(index + 5);
+      cell.value = day;
+      cell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      cell.fill = dayFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+    });
+    currentRow++;
+
+    // Header row 2: dates
+    const dateRow = worksheet.getRow(currentRow);
+    ['Emp Code', 'Name', 'Designation', 'Dept'].forEach((header, index) => {
+      const cell = dateRow.getCell(index + 1);
+      cell.value = header;
+      cell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      cell.fill = headerFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+    });
+    dateLabels.forEach((label, index) => {
+      const cell = dateRow.getCell(index + 5);
+      cell.value = label;
+      cell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      cell.fill = dateFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+    });
+    currentRow++;
+
+    // Data rows
+    employees.forEach((emp) => {
+      const row = worksheet.getRow(currentRow);
+      const values = [emp.code, emp.name, emp.designation, emp.department, ...emp.values];
+      values.forEach((value, index) => {
+        const cell = row.getCell(index + 1);
+        cell.value = value;
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+      });
+      currentRow++;
+    });
+
+    // Column widths
+    worksheet.getColumn(1).width = 12;
+    worksheet.getColumn(2).width = 25;
+    worksheet.getColumn(3).width = 18;
+    worksheet.getColumn(4).width = 18;
+    for (let i = 5; i <= colCount; i++) {
+      worksheet.getColumn(i).width = 14;
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `shift_report_${fromDate}_to_${exportToDate}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (error) {
+    console.error('Error exporting shift report:', error);
   }
 };

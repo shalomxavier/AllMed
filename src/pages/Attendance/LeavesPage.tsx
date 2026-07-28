@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Palmtree, TrendingDown, Calendar, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -398,52 +398,6 @@ export const LeavesPage: React.FC = () => {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  // Count leaves by employee and type in last 30 days
-  const leaveCountsByEmployee = new Map<string, Map<string, number>>();
-  leaves.forEach((leave) => {
-    const empCode = leave.employeeCode ?? '';
-    const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-    const reason = leave.reason?.toLowerCase() ?? 'other';
-    const typeKey = reason.includes('sick') || reason.includes('medical') ? 'sick' :
-                   reason.includes('casual') || reason.includes('personal') ? 'casual' :
-                   reason.includes('holiday') || reason.includes('festival') ? 'holiday' :
-                   reason.includes('maternity') || reason.includes('paternity') ? 'maternity' :
-                   reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
-    
-    const count = dates.filter((d) => new Date(d) >= thirtyDaysAgo).length;
-    if (count > 0) {
-      if (!leaveCountsByEmployee.has(empCode)) {
-        leaveCountsByEmployee.set(empCode, new Map());
-      }
-      const empMap = leaveCountsByEmployee.get(empCode)!;
-      empMap.set(typeKey, (empMap.get(typeKey) ?? 0) + count);
-    }
-  });
-
-  // Count total leaves + week-off days by employee in last 30 days
-  const totalDaysByEmployee = new Map<string, number>();
-  leaves.forEach((leave) => {
-    const empCode = leave.employeeCode ?? '';
-    const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-    const count = dates.filter((d) => new Date(d) >= thirtyDaysAgo).length;
-    if (count > 0) {
-      totalDaysByEmployee.set(empCode, (totalDaysByEmployee.get(empCode) ?? 0) + count);
-    }
-  });
-  weekOffs.forEach((wo) => {
-    const empCode = wo.employeeCode ?? '';
-    const days = wo.days ?? [];
-    let count = 0;
-    for (let i = 0; i < 30; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      if (days.includes(ALL_DAYS[d.getDay()])) count++;
-    }
-    if (count > 0) {
-      totalDaysByEmployee.set(empCode, (totalDaysByEmployee.get(empCode) ?? 0) + count);
-    }
-  });
-
   // Flatten all records into a single list and sort by latest date descending
   const allRecords: Array<{ type: 'leave' | 'weekoff'; data: LeaveRecord }> = [
     ...leaves.map((l) => ({ type: 'leave' as const, data: l })),
@@ -459,6 +413,7 @@ export const LeavesPage: React.FC = () => {
     // Type filter
     if (typeFilter === 'weekoff' && r.type !== 'weekoff') return false;
     if (typeFilter === 'leave' && r.type !== 'leave') return false;
+    if (typeFilter !== 'all' && typeFilter !== 'leave' && typeFilter !== 'weekoff' && r.type === 'weekoff') return false;
     if (r.type === 'leave' && typeFilter !== 'all' && typeFilter !== 'leave') {
       const reason = data.reason?.toLowerCase() ?? '';
       if (typeFilter === 'sick' && !(reason.includes('sick') || reason.includes('medical'))) return false;
@@ -482,6 +437,17 @@ export const LeavesPage: React.FC = () => {
     return matchesSearch;
   });
 
+  const employeeGroups = Array.from(
+    filtered.reduce((map, record) => {
+      const empCode = (record.data as any).employeeCode ?? '';
+      if (!map.has(empCode)) {
+        map.set(empCode, { employeeCode: empCode, employeeName: (record.data as any).employeeName || '', records: [] });
+      }
+      map.get(empCode)!.records.push(record);
+      return map;
+    }, new Map<string, { employeeCode: string; employeeName: string; records: typeof filtered }>())
+      .values()
+  ).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   return (
     <div className="flex flex-col h-full bg-secondary-50">
       {/* Header */}
@@ -567,223 +533,91 @@ export const LeavesPage: React.FC = () => {
             <p className="text-sm font-medium text-secondary-700">No records found</p>
           </div>
         ) : (
-          filtered.flatMap((record) => {
-            const data = record.data as any;
-            if (record.type === 'leave') {
-              const dates: string[] = [...(data.dates ?? (data.fromDate ? [data.fromDate] : []))].sort((a, b) => b.localeCompare(a));
-              const colors = getLeaveColor(data.reason);
-              const empCode = data.employeeCode ?? '';
-              const reason = data.reason?.toLowerCase() ?? 'other';
-              const typeKey = reason.includes('sick') || reason.includes('medical') ? 'sick' :
-                             reason.includes('casual') || reason.includes('personal') ? 'casual' :
-                             reason.includes('holiday') || reason.includes('festival') ? 'holiday' :
-                             reason.includes('maternity') || reason.includes('paternity') ? 'maternity' :
-                             reason.includes('earned') || reason.includes('privilege') ? 'earned' : 'other';
-              const typeCount = leaveCountsByEmployee.get(empCode)?.get(typeKey) ?? 0;
-              const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
-              
-              // Create a separate card for each date
-              return dates.map((date) => (
-                <div key={`${record.data.id}-${date}`} className="bg-white border border-purple-700/30 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow h-[200px]" onClick={() => {
-                          const leaveDetails = leaves
-                            .filter((l) => l.employeeCode === empCode)
-                            .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
-                            .filter((d) => new Date(d) >= thirtyDaysAgo)
-                            .map((d) => {
-                              const leave = leaves.find((l) => {
-                                const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
-                                return dates.includes(d) && l.employeeCode === empCode;
-                              });
-                              return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
-                            });
-                          const wo = weekOffs.find((w) => w.employeeCode === empCode);
-                          const woDays = wo?.days ?? [];
-                          const woDetails: { date: string; type: string }[] = [];
-                          for (let i = 0; i < 30; i++) {
-                            const d = new Date();
-                            d.setDate(d.getDate() - i);
-                            const dayName = ALL_DAYS[d.getDay()];
-                            if (woDays.includes(dayName)) {
-                              woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
-                            }
-                          }
-                          const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
-                          setModalData({
-                            employeeCode: empCode,
-                            employeeName: data.employeeName || '',
-                            type: 'total',
-                            details: allDetails,
-                          });
-                          setModalOpen(true);
-                        }}>
-                  <div className="p-3 h-full">
-                    <div className="flex flex-col gap-1.5">
-                        <div className="flex items-start justify-between gap-1">
-                          <p className="text-sm font-semibold text-purple-700 inline-flex items-center gap-1 flex-1 min-w-0">
-                            <Calendar size={13} className="shrink-0" />
-                            {formatDate(date)}
-                          </p>
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          <p className="text-sm font-semibold text-black leading-tight">{data.employeeName || '—'}</p>
-                          <span className="text-xs text-secondary-500">{data.employeeCode}</span>
-                        </div>
-                        {data.reason && (
-                          <span className={`text-xs font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full self-start`}>{data.reason}</span>
-                        )}
-                        <div className="flex flex-col gap-1.5 mt-1">
-                          <button type="button" onClick={(e) => openEditLeave(record.data, e)}
-                            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors">
-                            <Pencil size={16} />
-                            Edit
-                          </button>
-                          <button type="button" onClick={(e) => handleDeleteLeave(record.data, e)}
-                            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
-                            <Trash2 size={16} />
-                            Delete
-                          </button>
-                          <span
-                            className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-purple-100 transition-colors self-start inline-flex items-center gap-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const details = leaves
-                                .filter((l) => l.employeeCode === empCode)
-                                .filter((l) => {
-                                  const r = l.reason?.toLowerCase() ?? 'other';
-                                  const tk = r.includes('sick') || r.includes('medical') ? 'sick' :
-                                          r.includes('casual') || r.includes('personal') ? 'casual' :
-                                          r.includes('holiday') || r.includes('festival') ? 'holiday' :
-                                          r.includes('maternity') || r.includes('paternity') ? 'maternity' :
-                                          r.includes('earned') || r.includes('privilege') ? 'earned' : 'other';
-                                  return tk === typeKey;
-                                })
-                                .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
-                                .filter((d) => new Date(d) >= thirtyDaysAgo)
-                                .sort((a, b) => b.localeCompare(a));
-                              setModalData({
-                                employeeCode: empCode,
-                                employeeName: data.employeeName || '',
-                                type: 'type',
-                                typeKey,
-                                details: details.map((d) => {
-                                  const leave = leaves.find((l) => {
-                                    const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
-                                    return dates.includes(d) && l.employeeCode === empCode;
-                                  });
-                                  return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
-                                }),
-                              });
-                              setModalOpen(true);
-                            }}
-                          >
-                            <Palmtree size={12} /><strong>{typeCount}</strong> {typeKey} in last 30 days
-                          </span>
-                          <span
-                            className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-pink-100 transition-colors self-start inline-flex items-center gap-1"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const leaveDetails = leaves
-                                .filter((l) => l.employeeCode === empCode)
-                                .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
-                                .filter((d) => new Date(d) >= thirtyDaysAgo)
-                                .map((d) => {
-                                  const leave = leaves.find((l) => {
-                                    const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
-                                    return dates.includes(d) && l.employeeCode === empCode;
-                                  });
-                                  return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
-                                });
-                              const wo = weekOffs.find((w) => w.employeeCode === empCode);
-                              const woDays = wo?.days ?? [];
-                              const woDetails: { date: string; type: string }[] = [];
-                              for (let i = 0; i < 30; i++) {
-                                const d = new Date();
-                                d.setDate(d.getDate() - i);
-                                const dayName = ALL_DAYS[d.getDay()];
-                                if (woDays.includes(dayName)) {
-                                  woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
-                                }
-                              }
-                              const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
-                              setModalData({
-                                employeeCode: empCode,
-                                employeeName: data.employeeName || '',
-                                type: 'total',
-                                details: allDetails,
-                              });
-                              setModalOpen(true);
-                            }}
-                          >
-                            <TrendingDown size={12} /><strong>{totalCount}</strong> total days off in last 30 days
-                          </span>
-                        </div>
+          employeeGroups.map((group) => {
+            const weekOffRecord = group.records.find((r) => r.type === 'weekoff')?.data as LeaveRecord | undefined;
+            const leaveRecords = group.records.filter((r) => r.type === 'leave').map((r) => r.data as LeaveRecord);
+            const allLeaveDates = leaveRecords.flatMap((l) => l.dates ?? (l.fromDate ? [l.fromDate] : [])).sort((a, b) => b.localeCompare(a));
+            const uniqueLeaveDates = Array.from(new Set(allLeaveDates));
+            const empCode = group.employeeCode;
+
+            return (
+              <div key={empCode} className="bg-white border border-purple-700/30 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow h-auto min-h-[200px]" onClick={() => {
+                const leaveDetails = leaves
+                  .filter((l) => l.employeeCode === empCode)
+                  .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
+                  .filter((d) => new Date(d) >= thirtyDaysAgo)
+                  .map((d) => {
+                    const leave = leaves.find((l) => {
+                      const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
+                      return dates.includes(d) && l.employeeCode === empCode;
+                    });
+                    return { date: d, type: 'leave', leaveType: leave?.reason || 'Leave' };
+                  });
+                const wo = weekOffs.find((w) => w.employeeCode === empCode);
+                const woDays = wo?.days ?? [];
+                const woDetails: { date: string; type: string }[] = [];
+                for (let i = 0; i < 30; i++) {
+                  const d = new Date();
+                  d.setDate(d.getDate() - i);
+                  const dayName = ALL_DAYS[d.getDay()];
+                  if (woDays.includes(dayName)) {
+                    woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
+                  }
+                }
+                const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
+                setModalData({
+                  employeeCode: empCode,
+                  employeeName: group.employeeName || '',
+                  type: 'total',
+                  details: allDetails,
+                });
+                setModalOpen(true);
+              }}>
+                <div className="p-3 h-full">
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-start justify-between gap-1">
+                      <p className="text-sm font-semibold text-black leading-tight flex-1 min-w-0">{group.employeeName || '—'}</p>
                     </div>
-                  </div>
-                </div>
-              ));
-            } else {
-              const empCode = data.employeeCode ?? '';
-              const totalCount = totalDaysByEmployee.get(empCode) ?? 0;
-              return (
-                <div key={record.data.id} className="bg-white border border-purple-700/30 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow h-[200px]" onClick={() => {
-                          const leaveDetails = leaves
-                            .filter((l) => l.employeeCode === empCode)
-                            .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
-                            .filter((d) => new Date(d) >= thirtyDaysAgo)
-                            .map((d) => ({ date: d, type: 'leave' }));
-                          const wo = weekOffs.find((w) => w.employeeCode === empCode);
-                          const woDays = wo?.days ?? [];
-                          const woDetails: { date: string; type: string }[] = [];
-                          for (let i = 0; i < 30; i++) {
-                            const d = new Date();
-                            d.setDate(d.getDate() - i);
-                            const dayName = ALL_DAYS[d.getDay()];
-                            if (woDays.includes(dayName)) {
-                              woDetails.push({ date: d.toISOString().split('T')[0], type: 'weekoff' });
-                            }
-                          }
-                          const allDetails = [...leaveDetails, ...woDetails].sort((a, b) => b.date.localeCompare(a.date));
-                          setModalData({
-                            employeeCode: empCode,
-                            employeeName: data.employeeName || '',
-                            type: 'total',
-                            details: allDetails,
-                          });
-                          setModalOpen(true);
-                        }}>
-                  <div className="p-3 h-full">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1">
-                        <div className="flex flex-col gap-0.5 mb-2">
-                          <p className="text-sm font-semibold text-blue-700 leading-tight">{data.employeeName || '—'}</p>
-                          <span className="text-xs text-secondary-500">{data.employeeCode}</span>
-                        </div>
-                        <p className="text-xs font-semibold text-secondary-700 mb-2">Week Off Days</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ALL_DAYS.map((day) => {
-                            const isOff = data.days?.includes(day);
-                            return (
-                              <span
-                                key={day}
-                                className={`text-xs px-2 py-1 rounded-full font-medium ${isOff ? 'bg-blue-600 text-white' : 'bg-white text-secondary-400 border border-secondary-200'}`}
-                              >
-                                {day.slice(0, 3)}
-                              </span>
-                            );
-                          })}
-                        </div>
-                        <span
-                          className="text-sm font-medium text-pink-600 bg-pink-50 px-2 py-0.5 rounded-full mt-2 inline-block cursor-pointer hover:bg-pink-100 transition-colors"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <strong>{totalCount}</strong> total days off in last 30 days
-                        </span>
+                    <span className="text-xs text-secondary-500">{empCode}</span>
+                    {weekOffRecord && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {ALL_DAYS.map((day) => {
+                          const isOff = weekOffRecord.days?.includes(day);
+                          return (
+                            <span key={day} className={`text-xs px-2 py-0.5 rounded-full font-medium ${isOff ? 'bg-blue-600 text-white' : 'bg-white text-secondary-400 border border-secondary-200'}`}>
+                              {day.slice(0, 3)}
+                            </span>
+                          );
+                        })}
                       </div>
-                    </div>
+                    )}
+                    {uniqueLeaveDates.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {uniqueLeaveDates.slice(0, 5).map((date) => {
+                          const leave = leaves.find((l) => {
+                            const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
+                            return l.employeeCode === empCode && dates.includes(date);
+                          });
+                          const reason = leave?.reason || 'Leave';
+                          const colors = getLeaveColor(reason);
+                          return (
+                            <span key={date} className={`text-sm font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full inline-flex items-center gap-1.5`}>
+                              <span>{formatDate(date)}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>{reason}</span>
+                            </span>
+                          );
+                        })}
+                        {uniqueLeaveDates.length > 5 && (
+                          <span className="text-sm font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
+                            +{uniqueLeaveDates.length - 5} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
-              );
-            }
+              </div>
+            );
           })
         )}
       </div>
@@ -807,12 +641,28 @@ export const LeavesPage: React.FC = () => {
                   if (detail.type === 'leave') {
                     const leaveType = (detail as any).leaveType?.toLowerCase() || 'other';
                     const colors = getLeaveColor(leaveType);
+                    const matchingLeave = leaves.find((l) => {
+                      const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
+                      return l.employeeCode === modalData.employeeCode && dates.includes(detail.date);
+                    });
                     return (
                       <div key={idx} className="flex items-center justify-between px-3 py-2 bg-secondary-50 rounded-lg">
                         <span className="text-sm text-secondary-800">{formatDate(detail.date)}</span>
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colors.badge} ${colors.text}`}>
-                          {(detail as any).leaveType || 'Leave'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colors.badge} ${colors.text}`}>
+                            {(detail as any).leaveType || 'Leave'}
+                          </span>
+                          {matchingLeave && (
+                            <div className="flex items-center gap-1">
+                              <button type="button" onClick={(e) => openEditLeave(matchingLeave, e)} className="p-1 rounded hover:bg-secondary-200 text-secondary-600">
+                                <Pencil size={14} />
+                              </button>
+                              <button type="button" onClick={(e) => handleDeleteLeave(matchingLeave, e)} className="p-1 rounded hover:bg-red-100 text-red-600">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   }

@@ -12,6 +12,9 @@ import { DesignationsPage } from '@pages/Attendance/DesignationsPage';
 import { DepartmentsPage } from '@pages/Attendance/DepartmentsPage';
 import { ReportsPage } from '@pages/Attendance/ReportsPage';
 import { InsightsPage } from '@pages/Attendance/InsightsPage';
+import { MonthlyReportPreviewPage } from '@pages/Attendance/MonthlyReportPreviewPage';
+import { DailyReportPreviewPage } from '@pages/Attendance/DailyReportPreviewPage';
+import { ShiftReportPreviewPage } from '@pages/Attendance/ShiftReportPreviewPage';
 import { UsersPage } from '@pages/Users/UsersPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
@@ -69,6 +72,36 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/dms/lost-customers" element={<LostCustomersPage />} />
         <Route path="/dms/whatsapp-enquiry" element={<WhatsAppEnquiryPage />} />
       </Route>
+      <Route
+        path="/attendance/reports/preview/monthly"
+        element={
+          <ProtectedRoute>
+            <RoleProtectedRoute>
+              <MonthlyReportPreviewPage />
+            </RoleProtectedRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/attendance/reports/preview/daily"
+        element={
+          <ProtectedRoute>
+            <RoleProtectedRoute>
+              <DailyReportPreviewPage />
+            </RoleProtectedRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/attendance/reports/preview/shifts"
+        element={
+          <ProtectedRoute>
+            <RoleProtectedRoute>
+              <ShiftReportPreviewPage />
+            </RoleProtectedRoute>
+          </ProtectedRoute>
+        }
+      />
       <Route path="/" element={<Navigate to="/attendance" replace />} />
     </Routes>
   );

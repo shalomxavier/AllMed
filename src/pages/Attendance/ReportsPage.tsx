@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download } from 'lucide-react';
+import { ArrowLeft, Download, Eye } from 'lucide-react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
-import { exportAttendanceReport, exportDailyAttendanceRecords } from '@/utils/attendanceExport';
+import { exportAttendanceReport, exportDailyAttendanceRecords, exportShiftReport } from '@/utils/attendanceExport';
 
 export const ReportsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -13,9 +13,12 @@ export const ReportsPage: React.FC = () => {
   const [dailyFromDate, setDailyFromDate] = useState('');
   const [dailyToDate, setDailyToDate] = useState('');
   const [dailyLocation, setDailyLocation] = useState('');
+  const [shiftFromDate, setShiftFromDate] = useState('');
+  const [shiftToDate, setShiftToDate] = useState('');
   const [locations, setLocations] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [exportingDaily, setExportingDaily] = useState(false);
+  const [exportingShift, setExportingShift] = useState(false);
 
   useEffect(() => {
     const today = new Date();
@@ -32,6 +35,8 @@ export const ReportsPage: React.FC = () => {
     setMonthlyToDate(to);
     setDailyFromDate(from);
     setDailyToDate(to);
+    setShiftFromDate(from);
+    setShiftToDate(to);
   }, []);
 
   useEffect(() => {
@@ -61,6 +66,16 @@ export const ReportsPage: React.FC = () => {
     }
   };
 
+  const handleView = () => {
+    if (!monthlyFromDate || !monthlyToDate) return;
+    const params = new URLSearchParams({
+      from: monthlyFromDate,
+      to: monthlyToDate,
+      location: monthlyLocation,
+    });
+    window.open(`/attendance/reports/preview/monthly?${params.toString()}`, '_blank');
+  };
+
   const handleDailyExport = async () => {
     if (!dailyFromDate || !dailyToDate) return;
     setExportingDaily(true);
@@ -69,6 +84,35 @@ export const ReportsPage: React.FC = () => {
     } finally {
       setExportingDaily(false);
     }
+  };
+
+  const handleDailyView = () => {
+    if (!dailyFromDate || !dailyToDate) return;
+    const params = new URLSearchParams({
+      from: dailyFromDate,
+      to: dailyToDate,
+      location: dailyLocation,
+    });
+    window.open(`/attendance/reports/preview/daily?${params.toString()}`, '_blank');
+  };
+
+  const handleShiftExport = async () => {
+    if (!shiftFromDate || !shiftToDate) return;
+    setExportingShift(true);
+    try {
+      await exportShiftReport(shiftFromDate, shiftToDate);
+    } finally {
+      setExportingShift(false);
+    }
+  };
+
+  const handleShiftView = () => {
+    if (!shiftFromDate || !shiftToDate) return;
+    const params = new URLSearchParams({
+      from: shiftFromDate,
+      to: shiftToDate,
+    });
+    window.open(`/attendance/reports/preview/shifts?${params.toString()}`, '_blank');
   };
 
   return (
@@ -128,14 +172,24 @@ export const ReportsPage: React.FC = () => {
                 </select>
               </div>
             </div>
-            <button
-              onClick={handleExport}
-              disabled={!monthlyFromDate || !monthlyToDate || exporting}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Download size={16} />
-              {exporting ? 'Exporting...' : 'Export Monthly Report'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleView}
+                disabled={!monthlyFromDate || !monthlyToDate}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Eye size={16} />
+                View Monthly Report
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={!monthlyFromDate || !monthlyToDate || exporting}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={16} />
+                {exporting ? 'Exporting...' : 'Export Monthly Report'}
+              </button>
+            </div>
           </div>
 
           {/* Daily Attendance */}
@@ -178,14 +232,70 @@ export const ReportsPage: React.FC = () => {
                 </select>
               </div>
             </div>
-            <button
-              onClick={handleDailyExport}
-              disabled={!dailyFromDate || !dailyToDate || exportingDaily}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Download size={16} />
-              {exportingDaily ? 'Exporting...' : 'Export Attendance Log'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleDailyView}
+                disabled={!dailyFromDate || !dailyToDate}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Eye size={16} />
+                View Attendance Log
+              </button>
+              <button
+                onClick={handleDailyExport}
+                disabled={!dailyFromDate || !dailyToDate || exportingDaily}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={16} />
+                {exportingDaily ? 'Exporting...' : 'Export Attendance Log'}
+              </button>
+            </div>
+          </div>
+
+          {/* Shifts */}
+          <div className="bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
+            <h2 className="text-lg font-medium text-secondary-900 mb-2">Shifts</h2>
+            <p className="text-sm text-secondary-500 mb-4">Export shift assignment report.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label htmlFor="shiftFromDate" className="block text-sm font-medium text-secondary-700 mb-1">From Date</label>
+                <input
+                  id="shiftFromDate"
+                  type="date"
+                  value={shiftFromDate}
+                  onChange={(e) => setShiftFromDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label htmlFor="shiftToDate" className="block text-sm font-medium text-secondary-700 mb-1">To Date</label>
+                <input
+                  id="shiftToDate"
+                  type="date"
+                  value={shiftToDate}
+                  onChange={(e) => setShiftToDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleShiftView}
+                disabled={!shiftFromDate || !shiftToDate}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Eye size={16} />
+                View Shift Report
+              </button>
+              <button
+                onClick={handleShiftExport}
+                disabled={!shiftFromDate || !shiftToDate || exportingShift}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={16} />
+                {exportingShift ? 'Exporting...' : 'Export Shift Report'}
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -119,6 +119,10 @@ export const ShiftsPage: React.FC = () => {
   const [isCtrlPressed, setIsCtrlPressed] = useState(false);
   const [isSavingLeaves, setIsSavingLeaves] = useState(false);
   const [justAssignedEmps, setJustAssignedEmps] = useState<{ employeeCode: string; employeeName: string; employeeId: string; fromDate: string; toDate: string; }[]>([]);
+  const [changeShiftDate, setChangeShiftDate] = useState<string | null>(null);
+  const [changeShiftModalOpen, setChangeShiftModalOpen] = useState(false);
+  const [isSavingShiftOverride, setIsSavingShiftOverride] = useState(false);
+  const [shiftChangedDates, setShiftChangedDates] = useState<Record<string, { date: string; startTime: string; endTime: string }[]>>({});
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1075,10 +1079,16 @@ export const ShiftsPage: React.FC = () => {
                             <p className="text-xs text-secondary-500">{e.employeeCode}</p>
                           </div>
                         </div>
-                        {leaves.length === 0 ? (
+                        {leaves.length === 0 && (shiftChangedDates[e.employeeCode] ?? []).length === 0 ? (
                           <p className="text-xs text-secondary-400 italic">No leaves assigned</p>
                         ) : (
                           <div className="space-y-1">
+                            {(shiftChangedDates[e.employeeCode] ?? []).map(sc => (
+                              <div key={sc.date} className="flex items-center justify-between text-xs">
+                                <span className="text-secondary-700 text-sm">{sc.date} <span className="text-blue-300">{new Date(sc.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}</span></span>
+                                <span className="px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Shift: {formatTime12(sc.startTime)} – {formatTime12(sc.endTime)}</span>
+                              </div>
+                            ))}
                             {leaves.map(l => (
                               <div key={l.date} className="flex items-center justify-between text-xs">
                                 <span className="text-secondary-700 text-sm">{l.date} <span className="text-blue-300">{new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}</span></span>
@@ -1237,9 +1247,10 @@ export const ShiftsPage: React.FC = () => {
                           className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors
                             ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
                               wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
+                              (shiftChangedDates[emp.employeeCode] ?? []).some(sc => sc.date === ds) ? 'bg-orange-500 text-white font-semibold' :
                               isSelected ? `${getLeaveColor(leaveType ?? '').dot} text-white font-semibold` :
                               'hover:bg-secondary-100 text-secondary-800'}`}
-                          title={leaveType ?? undefined}
+                          title={(shiftChangedDates[emp.employeeCode] ?? []).some(sc => sc.date === ds) ? 'Shift Changed' : leaveType ?? undefined}
                         >
                           {day}
                         </button>
@@ -1266,6 +1277,17 @@ export const ShiftsPage: React.FC = () => {
                                 {lt}
                               </button>
                             ))}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setChangeShiftDate(ds);
+                                setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                setChangeShiftModalOpen(true);
+                              }}
+                              className="w-full text-left px-2 py-1.5 text-sm rounded text-orange-600 hover:bg-orange-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
+                            >
+                              Change Shift
+                            </button>
                             {isSelected && (
                               <button
                                 type="button"
@@ -1383,6 +1405,128 @@ export const ShiftsPage: React.FC = () => {
                 >
                   {wizardEmpIndex < wizardEmployees.length - 1 ? 'Next Employee' : 'Review'}
                 </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Change Shift Modal */}
+      {changeShiftModalOpen && changeShiftDate && (() => {
+        const emp = wizardEmployees[wizardEmpIndex];
+        if (!emp) return null;
+        const uniqueSlots: { startTime: string; endTime: string }[] = [];
+        const seen = new Set<string>();
+        slots.forEach(s => {
+          const key = `${s.startTime}|${s.endTime}`;
+          if (!seen.has(key)) { seen.add(key); uniqueSlots.push({ startTime: s.startTime, endTime: s.endTime }); }
+        });
+        return (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+                <div>
+                  <h2 className="text-base font-semibold text-secondary-900">Change Shift</h2>
+                  <p className="text-xs text-secondary-500 mt-0.5">
+                    {new Date(changeShiftDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} &bull; {emp.employeeName}
+                  </p>
+                </div>
+                <button onClick={() => { setChangeShiftModalOpen(false); setChangeShiftDate(null); }} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                <p className="text-sm text-secondary-600 mb-3">Select a shift to apply for this day only:</p>
+                {uniqueSlots.length === 0 ? (
+                  <p className="text-sm text-secondary-400 text-center py-4">No shifts available.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {uniqueSlots.map((t, i) => {
+                      const label = `${formatTime12(t.startTime)} — ${formatTime12(t.endTime)}`;
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          disabled={isSavingShiftOverride}
+                          onClick={async () => {
+                            if (!changeShiftDate) return;
+                            setIsSavingShiftOverride(true);
+                            try {
+                              const shiftsRef = collection(db, 'shifts');
+                              const allSnap = await getDocs(query(shiftsRef));
+                              const changeDate = new Date(changeShiftDate);
+
+                              let foundDocId: string | null = null;
+                              let foundEmpEntry: any = null;
+                              let foundDocData: any = null;
+                              allSnap.forEach((d) => {
+                                const data = d.data();
+                                const employees: any[] = data.employees ?? [];
+                                const match = employees.find((em: any) => {
+                                  if ((em.employeeCode ?? '').trim().toLowerCase() !== emp.employeeCode.trim().toLowerCase()) return false;
+                                  const from = new Date(em.fromDate);
+                                  const to = new Date(em.toDate);
+                                  return changeDate >= from && changeDate <= to;
+                                });
+                                if (match && !foundDocId) {
+                                  foundDocId = d.id;
+                                  foundEmpEntry = match;
+                                  foundDocData = data;
+                                }
+                              });
+
+                              if (foundDocId && foundEmpEntry && foundDocData) {
+                                const origFrom = new Date(foundEmpEntry.fromDate);
+                                const origTo = new Date(foundEmpEntry.toDate);
+                                const dayBefore = new Date(changeDate); dayBefore.setDate(dayBefore.getDate() - 1);
+                                const dayAfter = new Date(changeDate); dayAfter.setDate(dayAfter.getDate() + 1);
+
+                                const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+                                const updatedEmployees = (foundDocData.employees ?? []).filter((em: any) => {
+                                  if ((em.employeeCode ?? '').trim().toLowerCase() !== emp.employeeCode.trim().toLowerCase()) return true;
+                                  return em.fromDate !== foundEmpEntry.fromDate || em.toDate !== foundEmpEntry.toDate;
+                                });
+
+                                if (origFrom < changeDate) {
+                                  updatedEmployees.push({ employeeCode: emp.employeeCode, employeeName: emp.employeeName, fromDate: foundEmpEntry.fromDate, toDate: fmt(dayBefore) });
+                                }
+                                if (origTo > changeDate) {
+                                  updatedEmployees.push({ employeeCode: emp.employeeCode, employeeName: emp.employeeName, fromDate: fmt(dayAfter), toDate: foundEmpEntry.toDate });
+                                }
+
+                                await updateDoc(doc(db, 'shifts', foundDocId), { employees: updatedEmployees, updatedAt: serverTimestamp() });
+
+                                const newEmpEntry = { employeeCode: emp.employeeCode, employeeName: emp.employeeName, fromDate: changeShiftDate, toDate: changeShiftDate };
+                                const slotSnap = await getDocs(query(shiftsRef, where('startTime', '==', t.startTime), where('endTime', '==', t.endTime)));
+                                if (!slotSnap.empty) {
+                                  await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(newEmpEntry) });
+                                } else {
+                                  await addDoc(shiftsRef, { startTime: t.startTime, endTime: t.endTime, employees: [newEmpEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
+                                }
+                              }
+
+                              setShiftChangedDates(prev => ({
+                                ...prev,
+                                [emp.employeeCode]: [...(prev[emp.employeeCode] ?? []), { date: changeShiftDate, startTime: t.startTime, endTime: t.endTime }]
+                              }));
+                              setChangeShiftModalOpen(false);
+                              setChangeShiftDate(null);
+                            } catch (err) {
+                              console.error('Error changing shift:', err);
+                            } finally {
+                              setIsSavingShiftOverride(false);
+                            }
+                          }}
+                          className="w-full flex items-center justify-between px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Clock size={16} className="text-blue-600" />
+                            <span className="text-sm font-medium text-secondary-900">{label}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>

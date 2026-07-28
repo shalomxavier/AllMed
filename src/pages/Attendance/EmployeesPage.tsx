@@ -97,6 +97,25 @@ export const EmployeesPage: React.FC = () => {
   const [employeeShifts, setEmployeeShifts] = useState<any[]>([]);
   const [shiftsLoading, setShiftsLoading] = useState(false);
   const [selectedShift, setSelectedShift] = useState<any>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [shiftToDelete, setShiftToDelete] = useState<any>(null);
+  const [askLeavesDialog, setAskLeavesDialog] = useState(false);
+  const [leaveWizardOpen, setLeaveWizardOpen] = useState(false);
+  const [wizardEmployee, setWizardEmployee] = useState<{ employeeCode: string; employeeName: string; fromDate: string; toDate: string } | null>(null);
+  const [wizardEmpLeaves, setWizardEmpLeaves] = useState<{ date: string; type: string }[]>([]);
+  const [wizardCalYear, setWizardCalYear] = useState(new Date().getFullYear());
+  const [wizardCalMonth, setWizardCalMonth] = useState(new Date().getMonth());
+  const [wizardShowConfirm, setWizardShowConfirm] = useState(false);
+  const [wizardTooltipDate, setWizardTooltipDate] = useState<string | null>(null);
+  const [wizardTooltipPos, setWizardTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const [wizardMultiSelectedDates, setWizardMultiSelectedDates] = useState<string[]>([]);
+  const [isCtrlPressed, setIsCtrlPressed] = useState(false);
+  const [isSavingLeaves, setIsSavingLeaves] = useState(false);
+  const [lastAssignedShiftDates, setLastAssignedShiftDates] = useState<{ fromDate: string; toDate: string } | null>(null);
+  const [changeShiftDate, setChangeShiftDate] = useState<string | null>(null);
+  const [changeShiftModalOpen, setChangeShiftModalOpen] = useState(false);
+  const [isSavingShiftOverride, setIsSavingShiftOverride] = useState(false);
+  const [shiftChangedDates, setShiftChangedDates] = useState<{ date: string; startTime: string; endTime: string }[]>([]);
   const [editShiftForm, setEditShiftForm] = useState({
     fromDate: '',
     toDate: '',
@@ -235,6 +254,18 @@ export const EmployeesPage: React.FC = () => {
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') setIsCtrlPressed(true);
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Control' || event.key === 'Meta') setIsCtrlPressed(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); };
   }, []);
 
   const filteredEmployees = employees.filter((emp) => {
@@ -766,13 +797,15 @@ export const EmployeesPage: React.FC = () => {
     const newStart = timeToMinutes(newShift.startTime);
     const newEnd = timeToMinutes(newShift.endTime);
 
+    const empCode = (selectedEmployee?.employeeCode ?? '').trim().toLowerCase();
     return existingShifts.filter((shift) => {
       const existingStart = timeToMinutes(shift.startTime);
       const existingEnd = timeToMinutes(shift.endTime);
       if (!timeRangesOverlap(newStart, newEnd, existingStart, existingEnd)) return false;
-      // Check if any employee entry in this shift has a date range overlapping newShift
+      // Check only entries for the current employee in this shift
       const employees: any[] = shift.employees ?? [];
       return employees.some((em) => {
+        if ((em.employeeCode ?? '').trim().toLowerCase() !== empCode) return false;
         if (!em.fromDate || !em.toDate) return true;
         const existingFrom = new Date(em.fromDate);
         const existingTo = new Date(em.toDate);
@@ -789,8 +822,9 @@ export const EmployeesPage: React.FC = () => {
     } else if (action === 'view') {
       setShowViewShifts(true);
       await fetchShiftsForEmployee();
-    } else {
-      console.log(`Action: ${action} for employee: ${selectedEmployee?.employeeName}`);
+    } else if (action === 'edit') {
+      setShowViewShifts(true);
+      await fetchShiftsForEmployee();
     }
   };
 
@@ -824,6 +858,34 @@ export const EmployeesPage: React.FC = () => {
       console.error('Error fetching shifts:', error);
     } finally {
       setShiftsLoading(false);
+    }
+  };
+
+  const handleDeleteShift = (shift: any) => {
+    setShiftToDelete(shift);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteShift = async () => {
+    if (!selectedEmployee || !shiftToDelete) return;
+    setShowDeleteConfirm(false);
+    try {
+      const db = getFirestore();
+      const shiftRef = doc(db, 'shifts', shiftToDelete.id);
+      const shiftDoc = await getDocs(query(collection(db, 'shifts')));
+      const shiftData = shiftDoc.docs.find(d => d.id === shiftToDelete.id)?.data();
+      if (shiftData) {
+        const updatedEmployees = (shiftData.employees ?? []).filter(
+          (e: any) => (e.employeeCode ?? '').trim().toLowerCase() !== (selectedEmployee.employeeCode ?? '').trim().toLowerCase()
+        );
+        await updateDoc(shiftRef, { employees: updatedEmployees, updatedAt: serverTimestamp() });
+      }
+      setShiftToDelete(null);
+      setSuccessMessage('Shift Deleted Successfully');
+      setShowSuccessDialog(true);
+    } catch (error) {
+      console.error('Error deleting shift:', error);
+      setShiftToDelete(null);
     }
   };
 
@@ -947,11 +1009,11 @@ export const EmployeesPage: React.FC = () => {
         await addDoc(shiftsRef, { startTime: startTime24, endTime: endTime24, employees: [empEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
       }
 
+      setLastAssignedShiftDates({ fromDate: shiftForm.fromDate, toDate: shiftForm.toDate });
       setShowAddShiftForm(false);
       setShiftForm({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
       setShiftModalOpen(false);
-      setSuccessMessage('Shift Saved Successfully');
-      setShowSuccessDialog(true);
+      setAskLeavesDialog(true);
     } catch (error) {
       console.error('Error saving shift:', error);
     } finally {
@@ -1598,7 +1660,7 @@ export const EmployeesPage: React.FC = () => {
                     <h3 className="text-sm font-medium text-secondary-700">Shift Records</h3>
                     <button
                       onClick={() => setShowViewShifts(false)}
-                      className="text-sm text-blue-600 hover:text-blue-700"
+                      className="text-sm text-secondary-500 hover:text-secondary-700"
                     >
                       Back
                     </button>
@@ -1622,12 +1684,20 @@ export const EmployeesPage: React.FC = () => {
                               <span className="text-black"> to </span>
                               <span className="text-blue-600">{formatShiftDate(shift.toDate)}</span>
                             </span>
-                            <button
-                              onClick={() => handleEditShift(shift)}
-                              className="text-xs text-blue-600 hover:text-blue-700"
-                            >
-                              Edit
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleEditShift(shift)}
+                                className="text-blue-600 hover:text-blue-700"
+                              >
+                                <Edit size={16} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteShift(shift)}
+                                className="text-red-500 hover:text-red-700"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
                           </div>
                           <div className="flex items-center gap-4 text-sm">
                             <span className="text-green-600">Start: {formatTime12(shift.startTime)}</span>
@@ -2532,6 +2602,83 @@ export const EmployeesPage: React.FC = () => {
         </div>
       )}
 
+      {/* Ask Leaves Dialog */}
+      {askLeavesDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
+            <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
+              <Clock className="w-7 h-7 text-blue-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-secondary-900 mb-2">Assign Week-offs & Leaves?</h3>
+            <p className="text-sm text-secondary-600 mb-6">Would you like to assign week-off and leave dates for {selectedEmployee?.employeeName}?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setAskLeavesDialog(false);
+                  setSuccessMessage('Shift Saved Successfully');
+                  setShowSuccessDialog(true);
+                }}
+                className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+              >
+                No, Skip
+              </button>
+              <button
+                onClick={() => {
+                  setAskLeavesDialog(false);
+                  if (selectedEmployee && lastAssignedShiftDates) {
+                    setWizardEmployee({
+                      employeeCode: selectedEmployee.employeeCode ?? '',
+                      employeeName: selectedEmployee.employeeName ?? '',
+                      fromDate: lastAssignedShiftDates.fromDate,
+                      toDate: lastAssignedShiftDates.toDate,
+                    });
+                    setWizardEmpLeaves([]);
+                    setWizardMultiSelectedDates([]);
+                    setWizardShowConfirm(false);
+                    const d = new Date(lastAssignedShiftDates.fromDate);
+                    setWizardCalYear(d.getFullYear());
+                    setWizardCalMonth(d.getMonth());
+                    setLeaveWizardOpen(true);
+                  }
+                }}
+                className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Yes, Assign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+              <Trash2 size={32} className="text-red-600" />
+            </div>
+            <h3 className="text-lg font-semibold text-secondary-900 mb-2">Delete Shift</h3>
+            <p className="text-sm text-secondary-600 mb-6">
+              Are you sure you want to delete this shift assignment for {selectedEmployee?.employeeName}?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowDeleteConfirm(false); setShiftToDelete(null); }}
+                className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteShift}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Success Dialog */}
       {showSuccessDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -2547,11 +2694,468 @@ export const EmployeesPage: React.FC = () => {
               The shift has been assigned to {selectedEmployee?.employeeName}.
             </p>
             <button
-              onClick={() => setShowSuccessDialog(false)}
+              onClick={() => {
+                setShowSuccessDialog(false);
+                if (successMessage === 'Shift Deleted Successfully') {
+                  setShowViewShifts(true);
+                  fetchShiftsForEmployee();
+                } else {
+                  closeModal();
+                }
+              }}
               className="w-full px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
             >
               OK
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Wizard Modal */}
+      {leaveWizardOpen && wizardEmployee && (() => {
+        const emp = wizardEmployee;
+        const getLeaveColor = (type: string) => {
+          const t = type.toLowerCase();
+          if (t.includes('week off')) return { badge: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500' };
+          if (t.includes('casual')) return { badge: 'bg-green-100 text-green-700', dot: 'bg-green-500' };
+          if (t.includes('earned') || t.includes('privilege')) return { badge: 'bg-indigo-100 text-indigo-700', dot: 'bg-indigo-500' };
+          if (t.includes('holiday') || t.includes('festival')) return { badge: 'bg-yellow-100 text-yellow-700', dot: 'bg-yellow-500' };
+          if (t.includes('overtime')) return { badge: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500' };
+          return { badge: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500' };
+        };
+
+        const LEAVE_TYPES = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
+        const DAY_HEADERS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+        const selectedDates = wizardEmpLeaves.map(l => l.date);
+
+        const fromDate = emp.fromDate ? new Date(emp.fromDate) : null;
+        const toDate = emp.toDate ? new Date(emp.toDate) : null;
+        const minYear = fromDate?.getFullYear() ?? wizardCalYear;
+        const minMonth = fromDate?.getMonth() ?? wizardCalMonth;
+        const maxYear = toDate?.getFullYear() ?? wizardCalYear;
+        const maxMonth = toDate?.getMonth() ?? wizardCalMonth;
+
+        const canPrevMonth = wizardCalYear > minYear || (wizardCalYear === minYear && wizardCalMonth > minMonth);
+        const canNextMonth = wizardCalYear < maxYear || (wizardCalYear === maxYear && wizardCalMonth < maxMonth);
+
+        const firstDay = new Date(wizardCalYear, wizardCalMonth, 1).getDay();
+        const daysInMonth = new Date(wizardCalYear, wizardCalMonth + 1, 0).getDate();
+        const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+        const isInRange = (day: number) => {
+          const d = new Date(wizardCalYear, wizardCalMonth, day);
+          if (fromDate && d < fromDate) return false;
+          if (toDate && d > toDate) return false;
+          return true;
+        };
+
+        const dateStr = (day: number) => `${wizardCalYear}-${String(wizardCalMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const getLeaveType = (ds: string) => wizardEmpLeaves.find(l => l.date === ds)?.type ?? null;
+        const monthName = new Date(wizardCalYear, wizardCalMonth, 1).toLocaleString('default', { month: 'long' });
+
+        if (wizardShowConfirm) {
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+                  <h2 className="text-lg font-semibold text-secondary-900">Confirm Leave Assignments</h2>
+                  <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  <div className="border border-secondary-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                        <Users className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-secondary-900">{emp.employeeName}</p>
+                        <p className="text-xs text-secondary-500">{emp.employeeCode}</p>
+                      </div>
+                    </div>
+                    {wizardEmpLeaves.length === 0 && shiftChangedDates.length === 0 ? (
+                      <p className="text-xs text-secondary-400 italic">No leaves assigned</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {shiftChangedDates.map(sc => (
+                          <div key={sc.date} className="flex items-center justify-between text-xs">
+                            <span className="text-secondary-700 text-sm">{sc.date} <span className="text-blue-300">{new Date(sc.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}</span></span>
+                            <span className="px-2 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Shift: {formatTime12(sc.startTime)} – {formatTime12(sc.endTime)}</span>
+                          </div>
+                        ))}
+                        {wizardEmpLeaves.map(l => (
+                          <div key={l.date} className="flex items-center justify-between text-xs">
+                            <span className="text-secondary-700 text-sm">{l.date} <span className="text-blue-300">{new Date(l.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })}</span></span>
+                            <span className={`px-2 py-0.5 rounded-full font-medium ${getLeaveColor(l.type).badge}`}>{l.type}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="p-4 border-t border-secondary-200 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setWizardShowConfirm(false)}
+                    className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSavingLeaves}
+                    onClick={async () => {
+                      setIsSavingLeaves(true);
+                      try {
+                        const leaves = wizardEmpLeaves;
+                        if (leaves.length > 0) {
+                          const empSnap = await getDocs(query(collection(db, 'employees'), where('employeeCode', '==', emp.employeeCode)));
+                          const empDocId = empSnap.empty ? '' : empSnap.docs[0].id;
+                          const byType: Record<string, string[]> = {};
+                          for (const leave of leaves) {
+                            if (!byType[leave.type]) byType[leave.type] = [];
+                            byType[leave.type].push(leave.date);
+                          }
+                          for (const [type, dates] of Object.entries(byType)) {
+                            const sorted = dates.sort();
+                            await addDoc(collection(db, 'leaves'), {
+                              type: 'leave',
+                              employeeCode: emp.employeeCode,
+                              employeeName: emp.employeeName,
+                              employeeId: empDocId,
+                              dates: sorted,
+                              fromDate: sorted[0],
+                              toDate: sorted[sorted.length - 1],
+                              reason: type,
+                              createdAt: serverTimestamp(),
+                              createdBy: currentUser?.uid,
+                            });
+                          }
+                        }
+                        setLeaveWizardOpen(false);
+                        setWizardEmployee(null);
+                        setWizardEmpLeaves([]);
+                      } catch (err) { console.error(err); }
+                      finally { setIsSavingLeaves(false); }
+                    }}
+                    className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60"
+                  >
+                    {isSavingLeaves ? 'Saving...' : 'Confirm & Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+                <div>
+                  <h2 className="text-base font-semibold text-secondary-900">Assign Leaves / Week-offs</h2>
+                  <p className="text-xs text-secondary-500 mt-0.5">Employee 1 of 1</p>
+                </div>
+                <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
+              </div>
+
+              <div className="p-4 border-b border-secondary-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                    <Users className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-secondary-900">{emp.employeeName}</p>
+                    <p className="text-xs text-secondary-500">{emp.employeeCode} &bull; {emp.fromDate} &rarr; {emp.toDate}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <button
+                    type="button"
+                    disabled={!canPrevMonth}
+                    onClick={() => {
+                      if (wizardCalMonth === 0) { setWizardCalMonth(11); setWizardCalYear(y => y - 1); }
+                      else setWizardCalMonth(m => m - 1);
+                    }}
+                    className="p-1 rounded hover:bg-secondary-100 text-secondary-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <span className="text-sm font-semibold text-secondary-900">{monthName} {wizardCalYear}</span>
+                  <button
+                    type="button"
+                    disabled={!canNextMonth}
+                    onClick={() => {
+                      if (wizardCalMonth === 11) { setWizardCalMonth(0); setWizardCalYear(y => y + 1); }
+                      else setWizardCalMonth(m => m + 1);
+                    }}
+                    className="p-1 rounded hover:bg-secondary-100 text-secondary-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-7 mb-1">
+                  {DAY_HEADERS.map(d => <div key={d} className="text-center text-xs font-medium text-secondary-400 py-1">{d}</div>)}
+                </div>
+
+                <div className="grid grid-cols-7 gap-0.5 relative">
+                  {cells.map((day, i) => {
+                    if (!day) return <div key={i} />;
+                    const ds = dateStr(day);
+                    const inRange = isInRange(day);
+                    const leaveType = getLeaveType(ds);
+                    const isSelected = selectedDates.includes(ds);
+                    const isTooltipOpen = wizardTooltipDate === ds;
+
+                    return (
+                      <div key={i} className="relative">
+                        <button
+                          type="button"
+                          disabled={!inRange}
+                          onClick={(e) => {
+                            if (e.ctrlKey || e.metaKey) {
+                              setWizardMultiSelectedDates((dates) => dates.includes(ds) ? dates.filter((date) => date !== ds) : [...dates, ds]);
+                              setWizardTooltipDate(null);
+                              setWizardTooltipPos(null);
+                              return;
+                            }
+                            if (isTooltipOpen) { setWizardTooltipDate(null); setWizardTooltipPos(null); }
+                            else {
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              setWizardTooltipPos({ x: rect.left, y: rect.bottom + 6 });
+                              setWizardTooltipDate(ds);
+                            }
+                          }}
+                          className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors
+                            ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
+                              wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
+                              shiftChangedDates.some(sc => sc.date === ds) ? 'bg-orange-500 text-white font-semibold' :
+                              isSelected ? `${getLeaveColor(leaveType ?? '').dot} text-white font-semibold` :
+                              'hover:bg-secondary-100 text-secondary-800'}`}
+                          title={shiftChangedDates.some(sc => sc.date === ds) ? 'Shift Changed' : leaveType ?? undefined}
+                        >
+                          {day}
+                        </button>
+                        {isTooltipOpen && wizardTooltipPos && (
+                          <>
+                            <div className="fixed inset-0 z-[99]" onClick={() => { setWizardTooltipDate(null); setWizardTooltipPos(null); }} />
+                            <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
+                              style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
+                              {LEAVE_TYPES.map(lt => (
+                                <button
+                                  key={lt}
+                                  type="button"
+                                  onClick={() => {
+                                    setWizardEmpLeaves(prev => {
+                                      const filtered = prev.filter(l => l.date !== ds);
+                                      return [...filtered, { date: ds, type: lt }];
+                                    });
+                                    setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                  }}
+                                  className={`w-full text-left px-2 py-1.5 text-sm rounded transition-colors hover:opacity-80 ${leaveType === lt ? `${getLeaveColor(lt).badge} font-semibold` : 'text-secondary-700 hover:bg-secondary-50'}`}
+                                >
+                                  {lt}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setChangeShiftDate(ds);
+                                  setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                  fetchShiftTemplates();
+                                  setChangeShiftModalOpen(true);
+                                }}
+                                className="w-full text-left px-2 py-1.5 text-sm rounded text-orange-600 hover:bg-orange-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
+                              >
+                                Change Shift
+                              </button>
+                              {isSelected && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setWizardEmpLeaves(prev => prev.filter(l => l.date !== ds));
+                                    setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {wizardMultiSelectedDates.length > 0 && !isCtrlPressed && (
+                  <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {LEAVE_TYPES.map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => {
+                            setWizardEmpLeaves((prev) => {
+                              const remaining = prev.filter((leave) => !wizardMultiSelectedDates.includes(leave.date));
+                              return [...remaining, ...wizardMultiSelectedDates.map((date) => ({ date, type }))];
+                            });
+                            setWizardMultiSelectedDates([]);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-full hover:bg-blue-100 transition-colors"
+                        >
+                          {type}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setWizardMultiSelectedDates([])}
+                        className="px-2.5 py-1.5 text-xs font-medium text-secondary-600 hover:bg-white rounded-full transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {selectedDates.length > 0 && (
+                  <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
+                )}
+              </div>
+
+              <div className="p-4 border-t border-secondary-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWizardTooltipDate(null); setWizardTooltipPos(null);
+                    setWizardShowConfirm(true);
+                  }}
+                  className="w-full h-10 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Review
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Change Shift Modal */}
+      {changeShiftModalOpen && changeShiftDate && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-secondary-200">
+              <div>
+                <h2 className="text-base font-semibold text-secondary-900">Change Shift</h2>
+                <p className="text-xs text-secondary-500 mt-0.5">
+                  {new Date(changeShiftDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} &bull; {wizardEmployee?.employeeName}
+                </p>
+              </div>
+              <button onClick={() => { setChangeShiftModalOpen(false); setChangeShiftDate(null); }} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <p className="text-sm text-secondary-600 mb-3">Select a shift to apply for this day only:</p>
+              {shiftTemplates.length === 0 ? (
+                <p className="text-sm text-secondary-400 text-center py-4">No shifts available.</p>
+              ) : (
+                <div className="space-y-2">
+                  {shiftTemplates.map((t, i) => {
+                    const s = to12Hour(t.startTime);
+                    const e = to12Hour(t.endTime);
+                    const label = `${s.hour}:${s.minute} ${s.ampm} — ${e.hour}:${e.minute} ${e.ampm}`;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        disabled={isSavingShiftOverride}
+                        onClick={async () => {
+                          if (!wizardEmployee || !changeShiftDate) return;
+                          setIsSavingShiftOverride(true);
+                          try {
+                            const shiftsRef = collection(db, 'shifts');
+                            const allSnap = await getDocs(query(shiftsRef));
+                            const changeDate = new Date(changeShiftDate);
+
+                            // Find the shift doc containing this employee where changeDate falls in range
+                            let foundDocId: string | null = null;
+                            let foundEmpEntry: any = null;
+                            let foundDocData: any = null;
+                            allSnap.forEach((d) => {
+                              const data = d.data();
+                              const employees: any[] = data.employees ?? [];
+                              const match = employees.find((em: any) => {
+                                if ((em.employeeCode ?? '').trim().toLowerCase() !== wizardEmployee.employeeCode.trim().toLowerCase()) return false;
+                                const from = new Date(em.fromDate);
+                                const to = new Date(em.toDate);
+                                return changeDate >= from && changeDate <= to;
+                              });
+                              if (match && !foundDocId) {
+                                foundDocId = d.id;
+                                foundEmpEntry = match;
+                                foundDocData = data;
+                              }
+                            });
+
+                            if (foundDocId && foundEmpEntry && foundDocData) {
+                              const origFrom = new Date(foundEmpEntry.fromDate);
+                              const origTo = new Date(foundEmpEntry.toDate);
+                              const dayBefore = new Date(changeDate); dayBefore.setDate(dayBefore.getDate() - 1);
+                              const dayAfter = new Date(changeDate); dayAfter.setDate(dayAfter.getDate() + 1);
+
+                              const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+                              // Remove the original employee entry from the old shift doc
+                              const updatedEmployees = (foundDocData.employees ?? []).filter((em: any) => {
+                                if ((em.employeeCode ?? '').trim().toLowerCase() !== wizardEmployee.employeeCode.trim().toLowerCase()) return true;
+                                return em.fromDate !== foundEmpEntry.fromDate || em.toDate !== foundEmpEntry.toDate;
+                              });
+
+                              // Add back split entries (before the change date) to the SAME shift doc
+                              if (origFrom < changeDate) {
+                                updatedEmployees.push({ employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: foundEmpEntry.fromDate, toDate: fmt(dayBefore) });
+                              }
+                              // Add back split entries (after the change date) to the SAME shift doc
+                              if (origTo > changeDate) {
+                                updatedEmployees.push({ employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: fmt(dayAfter), toDate: foundEmpEntry.toDate });
+                              }
+
+                              await updateDoc(doc(db, 'shifts', foundDocId), { employees: updatedEmployees, updatedAt: serverTimestamp() });
+
+                              // Now add the employee to the NEW shift doc (matching the chosen time slot)
+                              const newEmpEntry = { employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: changeShiftDate, toDate: changeShiftDate };
+                              const slotSnap = await getDocs(query(shiftsRef, where('startTime', '==', t.startTime), where('endTime', '==', t.endTime)));
+                              if (!slotSnap.empty) {
+                                await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(newEmpEntry) });
+                              } else {
+                                await addDoc(shiftsRef, { startTime: t.startTime, endTime: t.endTime, employees: [newEmpEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
+                              }
+                            }
+
+                            setShiftChangedDates(prev => [...prev, { date: changeShiftDate, startTime: t.startTime, endTime: t.endTime }]);
+                            setChangeShiftModalOpen(false);
+                            setChangeShiftDate(null);
+                          } catch (err) {
+                            console.error('Error changing shift:', err);
+                          } finally {
+                            setIsSavingShiftOverride(false);
+                          }
+                        }}
+                        className="w-full flex items-center justify-between px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Clock size={16} className="text-blue-600" />
+                          <span className="text-sm font-medium text-secondary-900">{label}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
