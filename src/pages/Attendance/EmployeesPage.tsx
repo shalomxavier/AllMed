@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, RefreshCw, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion } from 'firebase/firestore';
@@ -64,14 +64,9 @@ interface Employee {
   employeeId?: string;
   employeeName?: string;
   syncedAt?: any;
-  branchManagerId?: string;
   designation?: string;
   employmentStatus?: string;
-}
-
-interface BranchManager {
-  id: string;
-  name: string;
+  workLocation?: string;
 }
 
 export const EmployeesPage: React.FC = () => {
@@ -80,10 +75,9 @@ export const EmployeesPage: React.FC = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [branchManagerFilter, setBranchManagerFilter] = useState('');
-  const [branchManagers, setBranchManagers] = useState<BranchManager[]>([]);
-  const [branchManagerDropdownOpen, setBranchManagerDropdownOpen] = useState(false);
-  const branchManagerDropdownRef = useRef<HTMLDivElement>(null);
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddShiftForm, setShowAddShiftForm] = useState(false);
@@ -200,24 +194,51 @@ export const EmployeesPage: React.FC = () => {
     
     try {
       const db = getFirestore();
+      let allowedEmployeeIds: string[] | null = null;
+
+      // If user is Branch Manager, fetch the branch(es) they manage
+      if (userData?.designation === 'Branch Manager') {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedEmployeeIds = branchData.employeeIds || [];
+            setManagerBranchName(branchData.name || '');
+          } else {
+            allowedEmployeeIds = [];
+            setManagerBranchName('');
+          }
+        } catch (err) {
+          console.error('Error fetching branch employees:', err);
+        }
+      } else {
+        // Admin/HR: load all branches for the branch filter dropdown
+        try {
+          const branchesSnapshot = await getDocs(collection(db, 'branches'));
+          setBranchOptions(branchesSnapshot.docs.map((b) => b.data().name).filter(Boolean).sort());
+        } catch (err) {
+          console.error('Error fetching branches list:', err);
+        }
+      }
+
       const employeesRef = collection(db, 'employees');
       const q = query(employeesRef, orderBy('employeeName'));
       const snapshot = await getDocs(q);
       
       const employeesData: Employee[] = [];
       snapshot.forEach((doc) => {
+        // Filter by branch if allowedEmployeeIds is set
+        if (allowedEmployeeIds && !allowedEmployeeIds.includes(doc.id)) {
+          return;
+        }
         employeesData.push({
           id: doc.id,
           ...doc.data(),
         });
       });
       
-      // Filter by branch manager if current user is a Branch Manager
-      if (userData?.designation === 'Branch Manager') {
-        setEmployees(employeesData.filter((e) => e.branchManagerId === userData.id));
-      } else {
-        setEmployees(employeesData);
-      }
+      setEmployees(employeesData);
     } catch (error) {
       console.error('Error fetching employees:', error);
     } finally {
@@ -225,36 +246,10 @@ export const EmployeesPage: React.FC = () => {
     }
   };
 
-  const fetchBranchManagers = async () => {
-    try {
-      const db = getFirestore();
-      const snapshot = await getDocs(query(collection(db, 'users'), where('designation', '==', 'Branch Manager'), orderBy('name')));
-      const managers: BranchManager[] = [];
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        managers.push({ id: doc.id, name: data.name || 'Unnamed' });
-      });
-      setBranchManagers(managers);
-    } catch (error) {
-      console.error('Error fetching branch managers:', error);
-    }
-  };
-
   useEffect(() => {
     if (!currentUser) return;
     fetchEmployees();
-    fetchBranchManagers();
   }, [currentUser, userData]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (branchManagerDropdownRef.current && !branchManagerDropdownRef.current.contains(event.target as Node)) {
-        setBranchManagerDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -274,8 +269,7 @@ export const EmployeesPage: React.FC = () => {
       return false;
     }
 
-    // Apply branch manager filter (only meaningful for non-managers who see all employees)
-    if (branchManagerFilter && emp.branchManagerId !== branchManagerFilter) {
+    if (branchFilter && emp.workLocation !== branchFilter) {
       return false;
     }
 
@@ -654,14 +648,35 @@ export const EmployeesPage: React.FC = () => {
     if (!employee.employeeCode) return;
     try {
       const db = getFirestore();
+      let allowedShiftIds: string[] | null = null;
+      
+      // If user is Branch Manager, fetch the branch(es) they manage
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedShiftIds = branchData.shiftIds || [];
+          } else {
+            allowedShiftIds = [];
+          }
+        } catch (err) {
+          console.error('Error fetching branch shifts:', err);
+        }
+      }
+
       const shiftsRef = collection(db, 'shifts');
       const snapshot = await getDocs(shiftsRef);
       const shifts: any[] = [];
       const empCode = (employee.employeeCode ?? '').trim().toLowerCase();
       snapshot.forEach((doc) => {
+        // Filter by branch if allowedShiftIds is set
+        if (allowedShiftIds && !allowedShiftIds.includes(doc.id)) {
+          return;
+        }
+        
         const data = doc.data();
-        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
-        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const employees: any[] = data.employees ?? [];
         const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
         if (entry) {
@@ -817,7 +832,6 @@ export const EmployeesPage: React.FC = () => {
   const handleShiftAction = async (action: 'view' | 'add' | 'edit') => {
     if (action === 'add') {
       setShowAddShiftForm(true);
-      if (userData?.designation === 'Branch Manager') setShiftMode('existing');
       fetchShiftTemplates();
     } else if (action === 'view') {
       setShowViewShifts(true);
@@ -833,13 +847,34 @@ export const EmployeesPage: React.FC = () => {
     setShiftsLoading(true);
     try {
       const db = getFirestore();
+      let allowedShiftIds: string[] | null = null;
+      
+      // If user is Branch Manager, fetch the branch(es) they manage
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedShiftIds = branchData.shiftIds || [];
+          } else {
+            allowedShiftIds = [];
+          }
+        } catch (err) {
+          console.error('Error fetching branch shifts:', err);
+        }
+      }
+
       const snapshot = await getDocs(collection(db, 'shifts'));
       const shifts: any[] = [];
       const empCode = (selectedEmployee.employeeCode ?? '').trim().toLowerCase();
       snapshot.forEach((doc) => {
+        // Filter by branch if allowedShiftIds is set
+        if (allowedShiftIds && !allowedShiftIds.includes(doc.id)) {
+          return;
+        }
+        
         const data = doc.data();
-        const shiftManagerIds: string[] = data.branchManagerIds ?? (data.branchManagerId ? [data.branchManagerId] : []);
-        if (userData?.designation === 'Branch Manager' && !shiftManagerIds.includes(userData.id)) return;
         const employees: any[] = data.employees ?? [];
         const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
         if (entry) {
@@ -1055,14 +1090,33 @@ export const EmployeesPage: React.FC = () => {
   const fetchShiftTemplates = async () => {
     try {
       const db = getFirestore();
+      let allowedShiftIds: string[] | null = null;
+
+      // If user is Branch Manager, fetch the branch(es) they manage
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedShiftIds = branchData.shiftIds || [];
+          } else {
+            allowedShiftIds = [];
+          }
+        } catch (err) {
+          console.error('Error fetching branch shifts:', err);
+        }
+      }
+
       const snap = await getDocs(query(collection(db, 'shifts'), orderBy('startTime')));
       const seen = new Set<string>();
       const templates: { startTime: string; endTime: string }[] = [];
-      const isBranchManager = userData?.designation === 'Branch Manager';
-      const authorizedIds = isBranchManager ? new Set(userData?.assignedShiftIds ?? []) : null;
       snap.forEach((d) => {
+        // Filter by branch if allowedShiftIds is set
+        if (allowedShiftIds && !allowedShiftIds.includes(d.id)) {
+          return;
+        }
         const data = d.data();
-        if (authorizedIds && !authorizedIds.has(d.id)) return;
         const key = `${data.startTime}|${data.endTime}`;
         if (!seen.has(key)) { seen.add(key); templates.push({ startTime: data.startTime, endTime: data.endTime }); }
       });
@@ -1185,43 +1239,25 @@ export const EmployeesPage: React.FC = () => {
                 className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
-            {userData?.designation !== 'Branch Manager' && (
-              <div className="relative z-50" ref={branchManagerDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setBranchManagerDropdownOpen((open) => !open)}
-                  className="w-48 px-3 py-2 text-left bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center justify-between"
-                >
-                  <span className="truncate">
-                    {branchManagerFilter
-                      ? branchManagers.find((m) => m.id === branchManagerFilter)?.name || 'All Branch Managers'
-                      : 'All Branch Managers'}
-                  </span>
-                  <span className="ml-2 text-secondary-400">▼</span>
-                </button>
-                {branchManagerDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-secondary-200 rounded-lg shadow-lg max-h-60 overflow-y-auto z-50">
-                    <button
-                      type="button"
-                      onClick={() => { setBranchManagerFilter(''); setBranchManagerDropdownOpen(false); }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 ${branchManagerFilter === '' ? 'bg-blue-50 text-blue-700' : ''}`}
-                    >
-                      All Branch Managers
-                    </button>
-                    {branchManagers.map((manager) => (
-                      <button
-                        key={manager.id}
-                        type="button"
-                        onClick={() => { setBranchManagerFilter(manager.id); setBranchManagerDropdownOpen(false); }}
-                        className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 ${branchManagerFilter === manager.id ? 'bg-blue-50 text-blue-700' : ''}`}
-                      >
-                        {manager.name}
-                      </button>
+            <div className="w-52">
+              <select
+                value={userData?.designation === 'Branch Manager' ? (managerBranchName ?? '') : branchFilter}
+                onChange={(e) => setBranchFilter(e.target.value)}
+                disabled={userData?.designation === 'Branch Manager'}
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+              >
+                {userData?.designation === 'Branch Manager' ? (
+                  <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+                ) : (
+                  <>
+                    <option value="">All Branches</option>
+                    {branchOptions.map((b) => (
+                      <option key={b} value={b}>{b}</option>
                     ))}
-                  </div>
+                  </>
                 )}
-              </div>
-            )}
+              </select>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1234,7 +1270,6 @@ export const EmployeesPage: React.FC = () => {
             <button
               onClick={() => {
                 setBulkAssignModalOpen(true);
-                if (userData?.designation === 'Branch Manager') setBulkShiftMode('existing');
                 fetchShiftTemplates();
               }}
               className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
@@ -1256,11 +1291,11 @@ export const EmployeesPage: React.FC = () => {
               <Users className="w-10 h-10 text-blue-600" />
             </div>
             <h3 className="text-lg font-medium text-secondary-900 mb-2">
-              {searchQuery || branchManagerFilter ? 'No employees found' : 'No employees yet'}
+              {searchQuery ? 'No employees found' : 'No employees yet'}
             </h3>
             <p className="text-sm text-secondary-500 max-w-sm">
-              {searchQuery || branchManagerFilter
-                ? 'Try adjusting your search or branch manager filter'
+              {searchQuery
+                ? 'Try adjusting your search'
                 : 'Employee records will appear here once they are added to the system.'}
             </p>
           </div>
@@ -1544,15 +1579,13 @@ export const EmployeesPage: React.FC = () => {
                       }`}>
                       Existing Shift
                     </button>
-                    {userData?.designation !== 'Branch Manager' && (
-                      <button type="button"
-                        onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
-                        className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                          shiftMode === 'new' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-secondary-500 hover:text-secondary-700'
-                        }`}>
-                        New Shift
-                      </button>
-                    )}
+                    <button type="button"
+                      onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
+                      className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                        shiftMode === 'new' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-secondary-500 hover:text-secondary-700'
+                      }`}>
+                      New Shift
+                    </button>
                   </div>
 
                   {/* Existing shift picker */}
@@ -2105,15 +2138,13 @@ export const EmployeesPage: React.FC = () => {
                   }`}>
                   Use Existing Shift
                 </button>
-                {userData?.designation !== 'Branch Manager' && (
-                  <button type="button"
-                    onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
-                    className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                      bulkShiftMode === 'new' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
-                    }`}>
-                    Add New Shift
-                  </button>
-                )}
+                <button type="button"
+                  onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
+                  className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                    bulkShiftMode === 'new' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
+                  }`}>
+                  Add New Shift
+                </button>
               </div>
 
               {bulkShiftMode === 'existing' && shiftTemplates.length > 0 && (

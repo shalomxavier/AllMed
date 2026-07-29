@@ -34,8 +34,6 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
     allowed = isAttendancePath || isUsersPath;
   } else if (designation === 'Operations Manager') {
     allowed = isDmsPath || isUsersPath;
-  } else if (designation === 'Branch Manager') {
-    allowed = isAttendancePath;
   } else if (designation === 'WhatsApp Messager') {
     allowed = isDmsPath;
   } else {

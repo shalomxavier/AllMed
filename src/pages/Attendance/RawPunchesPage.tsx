@@ -93,19 +93,20 @@ export const RawPunchesPage: React.FC = () => {
   const { showToast, ToastContainer } = useToast();
 
   const [allPunches, setAllPunches] = useState<RawPunch[]>([]);
-  const [allowedUserIds, setAllowedUserIds] = useState<Set<string>>(new Set());
-  const [isBranchManager, setIsBranchManager] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
   const [departmentMap, setDepartmentMap] = useState<Record<string, string>>({});
-  const [devicesMap, setDevicesMap] = useState<Record<string, string>>({});
+  const [workLocationMap, setWorkLocationMap] = useState<Record<string, string>>({});
+  const [employeeCodeOriginalMap, setEmployeeCodeOriginalMap] = useState<Record<string, string>>({});
+  const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [shiftsMap, setShiftsMap] = useState<Record<string, any[]>>({});
   const [employeesLoaded, setEmployeesLoaded] = useState(false);
   const [locationFilter, setLocationFilter] = useState('');
+  const [managerBranch, setManagerBranch] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState('');
   const [toDateFilter, setToDateFilter] = useState('');
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -180,15 +181,20 @@ export const RawPunchesPage: React.FC = () => {
     setExportToDate(to);
   }, []);
 
-  const getDeviceIdsForLocation = (loc: string): number[] => {
-    if (!loc) return [];
-    return Object.entries(devicesMap)
-      .filter(([, locationName]) => locationName === loc)
-      .map(([deviceId]) => Number(deviceId))
-      .filter((id) => !isNaN(id));
+  // Returns null when no branch filter is active (i.e. show everything).
+  // Returns a (possibly empty) array of matching userIds when a branch IS selected,
+  // so that a branch with zero matching employees correctly shows zero results
+  // instead of silently falling back to "no filter".
+  // Matches by employee.workLocation (same source of truth used by EmployeesPage,
+  // ReportsPage, InsightsPage) rather than branches.employeeIds, which can go stale.
+  const getUserIdsForBranch = (branchName: string): string[] | null => {
+    if (!branchName) return null;
+    return Object.entries(workLocationMap)
+      .filter(([, loc]) => loc === branchName)
+      .map(([key]) => employeeCodeOriginalMap[key] ?? key);
   };
 
-  const buildQueryConstraints = (from: string, to: string, deviceIds: number[], cursor?: QueryDocumentSnapshot<DocumentData>) => {
+  const buildQueryConstraints = (from: string, to: string, userIds: string[] | null, cursor?: QueryDocumentSnapshot<DocumentData>) => {
     const constraints: any[] = [orderBy('logDate', 'desc')];
     if (from) {
       // Treat the date string as UTC to match the wall-clock interpretation of stored timestamps.
@@ -199,28 +205,33 @@ export const RawPunchesPage: React.FC = () => {
       const toTs = Timestamp.fromDate(new Date(to + 'T23:59:59Z'));
       constraints.push(where('logDate', '<=', toTs));
     }
-    if (deviceIds.length > 0) {
-      constraints.push(where('deviceId', 'in', deviceIds.slice(0, 30)));
+    if (userIds && userIds.length > 0) {
+      constraints.push(where('userId', 'in', userIds.slice(0, 30)));
     }
     if (cursor) constraints.push(startAfter(cursor));
     constraints.push(limit(SEARCH_LIMIT));
     return constraints;
   };
 
-  const applyBranchFilter = (data: RawPunch[]) =>
-    isBranchManager ? data.filter((p) => p.userId && allowedUserIds.has(p.userId.trim().toLowerCase())) : data;
-
   const fetchPage = async (from = fromDate, to = toDateFilter, loc = locationFilter) => {
     if (!currentUser) return;
     activeFilters.current = { fromDate: from, toDateFilter: to, locationFilter: loc };
     setLoading(true);
     try {
-      const deviceIds = getDeviceIdsForLocation(loc);
-      const constraints = buildQueryConstraints(from, to, deviceIds);
+      const userIds = getUserIdsForBranch(loc);
+      // Branch selected but no employees match it: show zero results instead of
+      // silently skipping the filter (Firestore 'in' rejects empty arrays).
+      if (userIds !== null && userIds.length === 0) {
+        setAllPunches([]);
+        setLastDoc(null);
+        setHasMore(false);
+        setCurrentPageIndex(0);
+        return;
+      }
+      const constraints = buildQueryConstraints(from, to, userIds);
       const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
       console.log('[fetchPage] docs returned:', snapshot.docs.length, 'hasMore:', snapshot.docs.length === SEARCH_LIMIT);
-      let data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      data = applyBranchFilter(data);
+      const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setAllPunches(data);
       setLastDoc(snapshot.docs[snapshot.docs.length - 1] ?? null);
       setHasMore(snapshot.docs.length === SEARCH_LIMIT);
@@ -237,11 +248,14 @@ export const RawPunchesPage: React.FC = () => {
     const { fromDate: from, toDateFilter: to, locationFilter: loc } = activeFilters.current;
     setLoadingMore(true);
     try {
-      const deviceIds = getDeviceIdsForLocation(loc);
-      const constraints = buildQueryConstraints(from, to, deviceIds, lastDoc);
+      const userIds = getUserIdsForBranch(loc);
+      if (userIds !== null && userIds.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const constraints = buildQueryConstraints(from, to, userIds, lastDoc);
       const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-      let data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      data = applyBranchFilter(data);
+      const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setAllPunches((prev) => {
         const merged = [...prev, ...data];
         setCurrentPageIndex(Math.floor(prev.length / PAGE_SIZE));
@@ -261,7 +275,25 @@ export const RawPunchesPage: React.FC = () => {
     setEmployeesLoaded(false);
     fetchEmployees();
     fetchShifts();
-    fetchDevices();
+    fetchBranches();
+  }, [currentUser]);
+
+  useEffect(() => {
+    const resolveManagerBranch = async () => {
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          const branchName = branchSnapshot.empty ? '' : (branchSnapshot.docs[0].data().name || '');
+          setManagerBranch(branchName);
+          setLocationFilter(branchName);
+        } catch (err) {
+          console.error('Error resolving manager branch:', err);
+          setManagerBranch('');
+        }
+      }
+    };
+    resolveManagerBranch();
   }, [currentUser, userData]);
 
   useEffect(() => {
@@ -292,25 +324,36 @@ export const RawPunchesPage: React.FC = () => {
       const snapshot = await getDocs(collection(db, 'employees'));
       const map: Record<string, string> = {};
       const deptMap: Record<string, string> = {};
-      const allowedIds = new Set<string>();
+      const workLocMap: Record<string, string> = {};
+      const originalCaseMap: Record<string, string> = {};
       snapshot.forEach((doc) => {
         const data = doc.data();
-        const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
+        const rawCode = (data.employeeCodeInDevice ?? '').toString().trim();
+        const key = rawCode.toLowerCase();
         if (key) {
           map[key] = data.employeeName ?? '';
           deptMap[key] = data.department ?? '';
-          if (userData?.designation === 'Branch Manager' && data.branchManagerId === userData.id) {
-            allowedIds.add(key);
-          }
+          workLocMap[key] = data.workLocation ?? '';
+          originalCaseMap[key] = rawCode;
         }
       });
       setEmployeeMap(map);
       setDepartmentMap(deptMap);
-      setAllowedUserIds(allowedIds);
-      setIsBranchManager(userData?.designation === 'Branch Manager');
+      setWorkLocationMap(workLocMap);
+      setEmployeeCodeOriginalMap(originalCaseMap);
       setEmployeesLoaded(true);
     } catch (error) {
       console.error('Error fetching employees:', error);
+    }
+  };
+
+  const fetchBranches = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'branches'));
+      const list = snapshot.docs.map((b) => ({ id: b.id, name: b.data().name || '', employeeIds: b.data().employeeIds || [] }));
+      setBranchesList(list);
+    } catch (error) {
+      console.error('Error fetching branches:', error);
     }
   };
 
@@ -343,22 +386,6 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
-  const fetchDevices = async () => {
-    if (!currentUser) return;
-    try {
-      const snapshot = await getDocs(collection(db, 'devices'));
-      const map: Record<string, string> = {};
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const key = (data.deviceId ?? '').toString().trim();
-        if (key) map[key] = data.location ?? '';
-      });
-      setDevicesMap(map);
-    } catch (error) {
-      console.error('Error fetching devices:', error);
-    }
-  };
-
   const getShiftForPunch = (userId: string | undefined, logDate: any): any | null => {
     if (!userId) return null;
     const key = userId.trim().toLowerCase();
@@ -368,11 +395,6 @@ export const RawPunchesPage: React.FC = () => {
     if (!d) return null;
     const punchDateStr = formatLocalDate(d);
     return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
-  };
-
-  const resolveDeviceLocation = (deviceId?: number): string => {
-    if (!deviceId) return '—';
-    return devicesMap[String(deviceId)] ?? String(deviceId);
   };
 
   const handleNextPage = () => {
@@ -581,12 +603,12 @@ export const RawPunchesPage: React.FC = () => {
     if (!currentUser) return [];
     const all: RawPunch[] = [];
     let cursor: QueryDocumentSnapshot<DocumentData> | null = null;
-    const deviceIds = getDeviceIdsForLocation(loc);
+    const userIds = getUserIdsForBranch(loc);
+    if (userIds !== null && userIds.length === 0) return [];
     while (true) {
-      const constraints = buildQueryConstraints(from, to, deviceIds, cursor || undefined);
+      const constraints = buildQueryConstraints(from, to, userIds, cursor || undefined);
       const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-      let data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      data = applyBranchFilter(data);
+      const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       all.push(...data);
       if (snapshot.docs.length < SEARCH_LIMIT) break;
       cursor = snapshot.docs[snapshot.docs.length - 1];
@@ -599,7 +621,7 @@ export const RawPunchesPage: React.FC = () => {
       'Employee ID',
       'Employee Name',
       'Department',
-      'Location',
+      'Branch',
       'Shift',
       'Date',
       'In Time',
@@ -717,14 +739,12 @@ export const RawPunchesPage: React.FC = () => {
         });
       }
 
-      const locationPunch = firstIn ?? firstPunch;
-
       return {
         id: `${key}_${date ? formatLocalDate(date) : firstPunch.id}`,
         userId,
         employeeName: employeeMap[key] ?? '',
         department: departmentMap[key] ?? '—',
-        location: resolveDeviceLocation(locationPunch.deviceId),
+        location: workLocationMap[key] || '—',
         shift,
         date,
         inTime: inDate,
@@ -764,7 +784,7 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
-  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, devicesMap, shiftsMap]);
+  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, workLocationMap, shiftsMap]);
 
   const filteredRecords = dailyRecords.filter((record) => {
     if (debouncedSearch.trim()) {
@@ -861,16 +881,23 @@ export const RawPunchesPage: React.FC = () => {
             />
           </div>
           <div className="w-48">
-            <label className="block text-xs font-medium text-secondary-600 mb-1">Location</label>
+            <label className="block text-xs font-medium text-secondary-600 mb-1">Branch</label>
             <select
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              disabled={userData?.designation === 'Branch Manager'}
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
             >
-              <option value="">All Locations</option>
-              {Array.from(new Set(Object.values(devicesMap))).sort().map((loc) => (
-                <option key={loc} value={loc}>{loc}</option>
-              ))}
+              {userData?.designation === 'Branch Manager' ? (
+                <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
+              ) : (
+                <>
+                  <option value="">All Branches</option>
+                  {branchesList.map((b) => (
+                    <option key={b.id} value={b.name}>{b.name}</option>
+                  ))}
+                </>
+              )}
             </select>
           </div>
         </div>
@@ -897,7 +924,7 @@ export const RawPunchesPage: React.FC = () => {
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Employee ID</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Employee Name</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Department</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Location</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Branch</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Date</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Shift</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">In Time</th>
@@ -1067,15 +1094,15 @@ export const RawPunchesPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-secondary-600 mb-1">Location</label>
+                <label className="block text-xs font-medium text-secondary-600 mb-1">Branch</label>
                 <select
                   value={analyzeLocationFilter}
                   onChange={(e) => setAnalyzeLocationFilter(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 >
-                  <option value="">All Locations</option>
-                  {Array.from(new Set(Object.values(devicesMap))).filter(Boolean).sort().map((loc) => (
-                    <option key={loc} value={loc}>{loc}</option>
+                  <option value="">All Branches</option>
+                  {branchesList.map((b) => (
+                    <option key={b.id} value={b.name}>{b.name}</option>
                   ))}
                 </select>
               </div>
@@ -1115,7 +1142,7 @@ export const RawPunchesPage: React.FC = () => {
                     <tr className="border-b border-secondary-200">
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee ID</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee Name</th>
-                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Location</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Branch</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Date</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Type</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Shift Time</th>

@@ -1,4 +1,4 @@
-import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import ExcelJS from 'exceljs';
 
@@ -34,24 +34,6 @@ const toDate = (logDate: any): Date | null => {
 };
 
 const SEARCH_LIMIT = 1000;
-
-const buildQueryConstraints = (from: string, to: string, deviceIds: number[], cursor?: any) => {
-  const constraints: any[] = [orderBy('logDate', 'desc')];
-  if (from) {
-    const fromTs = Timestamp.fromDate(new Date(from + 'T00:00:00'));
-    constraints.push(where('logDate', '>=', fromTs));
-  }
-  if (to) {
-    const toTs = Timestamp.fromDate(new Date(to + 'T23:59:59'));
-    constraints.push(where('logDate', '<=', toTs));
-  }
-  if (deviceIds.length > 0) {
-    constraints.push(where('deviceId', 'in', deviceIds.slice(0, 30)));
-  }
-  if (cursor) constraints.push(startAfter(cursor));
-  constraints.push(limit(SEARCH_LIMIT));
-  return constraints;
-};
 
 export interface MonthlyEmployeeReport {
   employee: any;
@@ -98,42 +80,57 @@ const getLeaveCode = (type: string, reason: string): string => {
 export const getMonthlyReportData = async (fromDate: string, exportToDate: string, location: string): Promise<MonthlyReportData | null> => {
   if (!fromDate || !exportToDate) return null;
 
-  // Fetch devices
-  const devicesSnapshot = await getDocs(collection(db, 'devices'));
-  const devicesMap: Record<string, string> = {};
-  devicesSnapshot.forEach((doc) => {
-    const data = doc.data();
-    const key = (data.deviceId ?? '').toString().trim();
-    if (key) devicesMap[key] = data.location ?? '';
-  });
-
-  const getDeviceIdsForLocation = (loc: string): number[] => {
-    if (!loc) return [];
-    return Object.entries(devicesMap)
-      .filter(([, locationName]) => locationName === loc)
-      .map(([deviceId]) => Number(deviceId))
-      .filter((id) => !isNaN(id));
-  };
-
-  // Fetch all employees
+  // Fetch all employees and build workLocationMap
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
   const employees: any[] = [];
+  const workLocationMap: Record<string, string> = {};
   employeesSnapshot.forEach((doc) => {
     const data = doc.data();
+    const empCode = data.employeeCode;
+    if (empCode && data.workLocation) {
+      workLocationMap[empCode] = data.workLocation;
+    }
     employees.push({
       id: doc.id,
       employeeCode: data.employeeCode,
       employeeCodeInDevice: data.employeeCodeInDevice,
       employeeName: data.employeeName,
       designation: data.designation,
+      workLocation: data.workLocation,
     });
   });
 
-  // Fetch all punches in date range
-  const deviceIds = getDeviceIdsForLocation(location);
-  const constraints = buildQueryConstraints(fromDate, exportToDate, deviceIds);
-  const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-  let punches: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  // Filter employees by branch if location is specified
+  const branchFilteredEmployees = location 
+    ? employees.filter((e) => e.workLocation === location)
+    : employees;
+
+  // Get employee codes for filtering punches
+  const employeeCodes = branchFilteredEmployees
+    .map((e) => e.employeeCodeInDevice ?? e.employeeCode)
+    .filter((code) => code)
+    .map((code) => code.toString());
+
+  // Fetch all punches in date range, filtered by employee codes if branch is specified
+  let punches: RawPunch[] = [];
+  if (employeeCodes.length > 0) {
+    const constraints: any[] = [orderBy('logDate', 'desc')];
+    if (fromDate) {
+      const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00'));
+      constraints.push(where('logDate', '>=', fromTs));
+    }
+    if (exportToDate) {
+      const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59'));
+      constraints.push(where('logDate', '<=', toTs));
+    }
+    if (employeeCodes.length > 0) {
+      constraints.push(where('userId', 'in', employeeCodes.slice(0, 30)));
+    }
+    constraints.push(limit(SEARCH_LIMIT));
+    
+    const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+    punches = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  }
 
   // Fetch leaves (including week offs) and build a per-employee, per-date abbreviation map
   const leavesSnapshot = await getDocs(collection(db, 'leaves'));
@@ -191,7 +188,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   });
 
   // Filter employees to those with at least one punch or an assigned shift in the date range
-  const filteredEmployees = employees.filter((employee) => {
+  const filteredEmployees = branchFilteredEmployees.filter((employee) => {
     const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
     if (!empCode) return false;
 
@@ -502,38 +499,43 @@ export interface DailyReportData {
 export const getDailyReportData = async (fromDate: string, exportToDate: string, location: string): Promise<DailyReportData | null> => {
   if (!fromDate || !exportToDate) return null;
 
-  const devicesSnapshot = await getDocs(collection(db, 'devices'));
-  const devicesMap: Record<string, string> = {};
-  devicesSnapshot.forEach((doc) => {
-    const data = doc.data();
-    const key = (data.deviceId ?? '').toString().trim();
-    if (key) devicesMap[key] = data.location ?? '';
-  });
-
-  const getDeviceIdsForLocation = (loc: string): number[] => {
-    if (!loc) return [];
-    return Object.entries(devicesMap)
-      .filter(([, locationName]) => locationName === loc)
-      .map(([deviceId]) => Number(deviceId))
-      .filter((id) => !isNaN(id));
-  };
-
-  const resolveDeviceLocation = (deviceId?: number): string => {
-    if (!deviceId) return '';
-    return devicesMap[String(deviceId)] ?? String(deviceId);
-  };
-
+  // Fetch all employees and build workLocationMap
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
   const employeeMap: Record<string, string> = {};
   const departmentMap: Record<string, string> = {};
+  const workLocationMap: Record<string, string> = {};
+  const employees: any[] = [];
+  
   employeesSnapshot.forEach((doc) => {
     const data = doc.data();
     const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
+    const empCode = data.employeeCode;
     if (key) {
       employeeMap[key] = data.employeeName ?? '';
       departmentMap[key] = data.department ?? '';
     }
+    if (empCode && data.workLocation) {
+      workLocationMap[empCode] = data.workLocation;
+    }
+    employees.push({
+      employeeCode: data.employeeCode,
+      employeeCodeInDevice: data.employeeCodeInDevice,
+      employeeName: data.employeeName,
+      department: data.department,
+      workLocation: data.workLocation,
+    });
   });
+
+  // Filter employees by branch if location is specified
+  const filteredEmployees = location 
+    ? employees.filter((e) => e.workLocation === location)
+    : employees;
+
+  // Get employee codes for filtering punches
+  const employeeCodes = filteredEmployees
+    .map((e) => e.employeeCodeInDevice ?? e.employeeCode)
+    .filter((code) => code)
+    .map((code) => code.toString());
 
   const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
   const shiftsMap: Record<string, any[]> = {};
@@ -566,16 +568,25 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
   };
 
-  const deviceIds = getDeviceIdsForLocation(location);
+  // Fetch all punches in date range, filtered by employee codes if branch is specified
   const allPunches: RawPunch[] = [];
-  let cursor: any = null;
-  while (true) {
-    const constraints = buildQueryConstraints(fromDate, exportToDate, deviceIds, cursor);
+  if (employeeCodes.length > 0) {
+    const constraints: any[] = [orderBy('logDate', 'desc')];
+    if (fromDate) {
+      const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00'));
+      constraints.push(where('logDate', '>=', fromTs));
+    }
+    if (exportToDate) {
+      const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59'));
+      constraints.push(where('logDate', '<=', toTs));
+    }
+    if (employeeCodes.length > 0) {
+      constraints.push(where('userId', 'in', employeeCodes.slice(0, 30)));
+    }
+    constraints.push(limit(SEARCH_LIMIT));
+    
     const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-    const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    allPunches.push(...data);
-    if (snapshot.docs.length < SEARCH_LIMIT) break;
-    cursor = snapshot.docs[snapshot.docs.length - 1];
+    allPunches.push(...snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
   }
 
   const groups: Record<string, RawPunch[]> = {};
@@ -636,13 +647,11 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
       workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
     }
 
-    const locationPunch = firstIn ?? firstPunch;
-
     return {
       userId,
       employeeName: employeeMap[key] ?? '',
       department: departmentMap[key] ?? '',
-      location: resolveDeviceLocation(locationPunch.deviceId),
+      location: location || '',
       shift,
       date,
       inTime: inDate,
@@ -858,7 +867,7 @@ const generateDateRange = (fromDate: string, toDate: string): string[] => {
   return dates;
 };
 
-export const getShiftReportData = async (fromDate: string, exportToDate: string): Promise<ShiftReportData | null> => {
+export const getShiftReportData = async (fromDate: string, exportToDate: string, location = ''): Promise<ShiftReportData | null> => {
   if (!fromDate || !exportToDate) return null;
 
   const dateRange = generateDateRange(fromDate, exportToDate);
@@ -868,6 +877,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string)
   const employeeMap: Record<string, { name: string; designation: string; department: string }> = {};
   employeesSnapshot.forEach((doc) => {
     const data = doc.data();
+    if (location && data.workLocation !== location) return;
     const code = (data.employeeCode ?? '').toString().trim().toLowerCase();
     if (code) {
       employeeMap[code] = {
@@ -976,8 +986,8 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string)
   };
 };
 
-export const exportShiftReport = async (fromDate: string, exportToDate: string): Promise<void> => {
-  const reportData = await getShiftReportData(fromDate, exportToDate);
+export const exportShiftReport = async (fromDate: string, exportToDate: string, location = ''): Promise<void> => {
+  const reportData = await getShiftReportData(fromDate, exportToDate, location);
   if (!reportData) return;
 
   try {
@@ -1000,7 +1010,7 @@ export const exportShiftReport = async (fromDate: string, exportToDate: string):
     // Title section
     worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
     const locationCell = worksheet.getCell(`A${currentRow}`);
-    locationCell.value = 'ALL LOCATIONS';
+    locationCell.value = location ? location.toUpperCase() : 'ALL LOCATIONS';
     locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
     locationCell.fill = titleFill;
     locationCell.alignment = { horizontal: 'center', vertical: 'middle' };

@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Eye } from 'lucide-react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '@/firebase/firebase';
+import { collection, getDocs, getFirestore, query, where } from 'firebase/firestore';
 import { exportAttendanceReport, exportDailyAttendanceRecords, exportShiftReport } from '@/utils/attendanceExport';
+import { useAuthContext } from '@/contexts/AuthContext';
 
 export const ReportsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { currentUser, userData } = useAuthContext();
   const [monthlyFromDate, setMonthlyFromDate] = useState('');
   const [monthlyToDate, setMonthlyToDate] = useState('');
   const [monthlyLocation, setMonthlyLocation] = useState('');
@@ -15,10 +16,40 @@ export const ReportsPage: React.FC = () => {
   const [dailyLocation, setDailyLocation] = useState('');
   const [shiftFromDate, setShiftFromDate] = useState('');
   const [shiftToDate, setShiftToDate] = useState('');
-  const [locations, setLocations] = useState<string[]>([]);
+  const [shiftLocation, setShiftLocation] = useState('');
   const [exporting, setExporting] = useState(false);
   const [exportingDaily, setExportingDaily] = useState(false);
   const [exportingShift, setExportingShift] = useState(false);
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const resolveBranches = async () => {
+      const db = getFirestore();
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          const branchName = branchSnapshot.empty ? '' : (branchSnapshot.docs[0].data().name || '');
+          setManagerBranchName(branchName);
+          setMonthlyLocation(branchName);
+          setDailyLocation(branchName);
+          setShiftLocation(branchName);
+        } catch (err) {
+          console.error('Error resolving manager branch:', err);
+          setManagerBranchName('');
+        }
+      } else {
+        try {
+          const branchesSnapshot = await getDocs(collection(db, 'branches'));
+          setBranchOptions(branchesSnapshot.docs.map((b) => b.data().name).filter(Boolean).sort());
+        } catch (err) {
+          console.error('Error fetching branches list:', err);
+        }
+      }
+    };
+    resolveBranches();
+  }, [currentUser, userData]);
 
   useEffect(() => {
     const today = new Date();
@@ -37,23 +68,6 @@ export const ReportsPage: React.FC = () => {
     setDailyToDate(to);
     setShiftFromDate(from);
     setShiftToDate(to);
-  }, []);
-
-  useEffect(() => {
-    const fetchDevices = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, 'devices'));
-        const locs = new Set<string>();
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          if (data.location) locs.add(data.location);
-        });
-        setLocations(Array.from(locs).sort());
-      } catch (error) {
-        console.error('Error fetching devices:', error);
-      }
-    };
-    fetchDevices();
   }, []);
 
   const handleExport = async () => {
@@ -100,7 +114,7 @@ export const ReportsPage: React.FC = () => {
     if (!shiftFromDate || !shiftToDate) return;
     setExportingShift(true);
     try {
-      await exportShiftReport(shiftFromDate, shiftToDate);
+      await exportShiftReport(shiftFromDate, shiftToDate, shiftLocation);
     } finally {
       setExportingShift(false);
     }
@@ -111,6 +125,7 @@ export const ReportsPage: React.FC = () => {
     const params = new URLSearchParams({
       from: shiftFromDate,
       to: shiftToDate,
+      location: shiftLocation,
     });
     window.open(`/attendance/reports/preview/shifts?${params.toString()}`, '_blank');
   };
@@ -158,17 +173,24 @@ export const ReportsPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label htmlFor="monthlyLocation" className="block text-sm font-medium text-secondary-700 mb-1">Location</label>
+                <label htmlFor="monthlyLocation" className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
                 <select
                   id="monthlyLocation"
                   value={monthlyLocation}
                   onChange={(e) => setMonthlyLocation(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  disabled={userData?.designation === 'Branch Manager'}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
-                  <option value="">All Locations</option>
-                  {locations.map((loc) => (
-                    <option key={loc} value={loc}>{loc}</option>
-                  ))}
+                  {userData?.designation === 'Branch Manager' ? (
+                    <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+                  ) : (
+                    <>
+                      <option value="">All Branches</option>
+                      {branchOptions.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </>
+                  )}
                 </select>
               </div>
             </div>
@@ -218,17 +240,24 @@ export const ReportsPage: React.FC = () => {
                 />
               </div>
               <div>
-                <label htmlFor="dailyLocation" className="block text-sm font-medium text-secondary-700 mb-1">Location</label>
+                <label htmlFor="dailyLocation" className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
                 <select
                   id="dailyLocation"
                   value={dailyLocation}
                   onChange={(e) => setDailyLocation(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  disabled={userData?.designation === 'Branch Manager'}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
-                  <option value="">All Locations</option>
-                  {locations.map((loc) => (
-                    <option key={loc} value={loc}>{loc}</option>
-                  ))}
+                  {userData?.designation === 'Branch Manager' ? (
+                    <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+                  ) : (
+                    <>
+                      <option value="">All Branches</option>
+                      {branchOptions.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </>
+                  )}
                 </select>
               </div>
             </div>
@@ -256,7 +285,7 @@ export const ReportsPage: React.FC = () => {
           <div className="bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Shifts</h2>
             <p className="text-sm text-secondary-500 mb-4">Export shift assignment report.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
               <div>
                 <label htmlFor="shiftFromDate" className="block text-sm font-medium text-secondary-700 mb-1">From Date</label>
                 <input
@@ -276,6 +305,27 @@ export const ReportsPage: React.FC = () => {
                   onChange={(e) => setShiftToDate(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
+              </div>
+              <div>
+                <label htmlFor="shiftLocation" className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
+                <select
+                  id="shiftLocation"
+                  value={shiftLocation}
+                  onChange={(e) => setShiftLocation(e.target.value)}
+                  disabled={userData?.designation === 'Branch Manager'}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                >
+                  {userData?.designation === 'Branch Manager' ? (
+                    <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+                  ) : (
+                    <>
+                      <option value="">All Branches</option>
+                      {branchOptions.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </>
+                  )}
+                </select>
               </div>
             </div>
             <div className="flex flex-wrap gap-3">

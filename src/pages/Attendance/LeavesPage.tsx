@@ -115,15 +115,20 @@ export const LeavesPage: React.FC = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deletingLeave, setDeletingLeave] = useState<LeaveRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [workLocationMap, setWorkLocationMap] = useState<Record<string, string>>({});
+  const [managerBranch, setManagerBranch] = useState<string | null>(null);
 
   const fetchData = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
       const db = getFirestore();
-      const [leavesSnap, employeesSnap] = await Promise.all([
+      const [leavesSnap, employeesSnap, branchesSnap] = await Promise.all([
         getDocs(query(collection(db, 'leaves'), orderBy('createdAt', 'desc'))),
         getDocs(query(collection(db, 'employees'), orderBy('employeeName'))),
+        getDocs(query(collection(db, 'branches'))),
       ]);
       const allLeavesData: LeaveRecord[] = [];
       leavesSnap.forEach((d) => allLeavesData.push({ id: d.id, ...d.data() }));
@@ -132,18 +137,40 @@ export const LeavesPage: React.FC = () => {
       const employeesData: any[] = [];
       employeesSnap.forEach((d) => employeesData.push({ id: d.id, ...d.data() }));
       const filteredEmployees = employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
-      
-      // Filter leaves by branch manager if current user is a Branch Manager
-      if (userData?.designation === 'Branch Manager') {
-        const assignedEmployeeCodes = new Set(filteredEmployees.filter((e) => e.branchManagerId === userData.id).map((e) => e.employeeCode));
-        setLeaves(leavesData.filter((l) => l.employeeCode && assignedEmployeeCodes.has(l.employeeCode)));
-        setWeekOffs(weekOffsData.filter((w) => w.employeeCode && assignedEmployeeCodes.has(w.employeeCode)));
-        setEmployees(filteredEmployees.filter((e) => e.branchManagerId === userData.id));
-      } else {
-        setLeaves(leavesData);
-        setWeekOffs(weekOffsData);
-        setEmployees(filteredEmployees);
+
+      // Build workLocationMap from employee.workLocation
+      const locationMap: Record<string, string> = {};
+      filteredEmployees.forEach((e) => {
+        if (e.employeeCode && e.workLocation) {
+          locationMap[e.employeeCode] = e.workLocation;
+        }
+      });
+      setWorkLocationMap(locationMap);
+
+      // Build branchesList
+      const branchesData: { id: string; name: string; employeeIds: string[] }[] = [];
+      branchesSnap.forEach((d) => {
+        branchesData.push({ id: d.id, name: d.data().name || '', employeeIds: d.data().employeeIds || [] });
+      });
+      setBranchesList(branchesData);
+
+      // Set manager branch if user is a branch manager
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          const branchName = branchSnapshot.empty ? '' : (branchSnapshot.docs[0].data().name || '');
+          setManagerBranch(branchName);
+          setBranchFilter(branchName);
+        } catch (err) {
+          console.error('Error resolving manager branch:', err);
+          setManagerBranch('');
+        }
       }
+
+      setLeaves(leavesData);
+      setWeekOffs(weekOffsData);
+      setEmployees(filteredEmployees);
     } catch (e) {
       console.error('Error fetching data:', e);
     } finally {
@@ -151,7 +178,7 @@ export const LeavesPage: React.FC = () => {
     }
   };
 
-  useEffect(() => { if (currentUser) fetchData(); }, [currentUser, userData]);
+  useEffect(() => { if (currentUser) fetchData(); }, [currentUser]);
 
   const openEditLeave = (leave: LeaveRecord, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -410,6 +437,12 @@ export const LeavesPage: React.FC = () => {
     const code = data.employeeCode?.toLowerCase() ?? '';
     const matchesSearch = name.includes(searchQuery.toLowerCase()) || code.includes(searchQuery.toLowerCase());
 
+    // Branch filter
+    if (branchFilter) {
+      const empBranch = workLocationMap[data.employeeCode] || '';
+      if (empBranch !== branchFilter) return false;
+    }
+
     // Type filter
     if (typeFilter === 'weekoff' && r.type !== 'weekoff') return false;
     if (typeFilter === 'leave' && r.type !== 'leave') return false;
@@ -491,6 +524,25 @@ export const LeavesPage: React.FC = () => {
               onChange={(e) => setToDateFilter(e.target.value)}
               className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
             />
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              disabled={userData?.designation === 'Branch Manager'}
+            >
+              {userData?.designation === 'Branch Manager' ? (
+                <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
+              ) : (
+                <>
+                  <option value="">All Branches</option>
+                  {branchesList.map((branch) => (
+                    <option key={branch.id} value={branch.name}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </>
+              )}
+            </select>
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value as any)}

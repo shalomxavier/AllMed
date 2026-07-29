@@ -6,6 +6,7 @@ export const ShiftReportPreviewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const fromDate = searchParams.get('from') ?? '';
   const toDate = searchParams.get('to') ?? '';
+  const location = searchParams.get('location') ?? '';
 
   const [data, setData] = useState<ShiftReportData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -14,7 +15,7 @@ export const ShiftReportPreviewPage: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const reportData = await getShiftReportData(fromDate, toDate);
+        const reportData = await getShiftReportData(fromDate, toDate, location);
         setData(reportData);
       } catch (err) {
         setError('Failed to load preview.');
@@ -23,7 +24,7 @@ export const ShiftReportPreviewPage: React.FC = () => {
       }
     };
     load();
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, location]);
 
   if (loading) {
     return (

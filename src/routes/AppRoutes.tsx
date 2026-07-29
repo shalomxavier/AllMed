@@ -10,6 +10,7 @@ import { LeavesPage } from '@pages/Attendance/LeavesPage';
 import { DevicesPage } from '@pages/Attendance/DevicesPage';
 import { DesignationsPage } from '@pages/Attendance/DesignationsPage';
 import { DepartmentsPage } from '@pages/Attendance/DepartmentsPage';
+import { BranchesPage } from '@pages/Attendance/BranchesPage';
 import { ReportsPage } from '@pages/Attendance/ReportsPage';
 import { InsightsPage } from '@pages/Attendance/InsightsPage';
 import { MonthlyReportPreviewPage } from '@pages/Attendance/MonthlyReportPreviewPage';
@@ -63,6 +64,7 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/attendance/devices" element={<DevicesPage />} />
         <Route path="/attendance/designations" element={<DesignationsPage />} />
         <Route path="/attendance/departments" element={<DepartmentsPage />} />
+        <Route path="/attendance/branches" element={<BranchesPage />} />
         <Route path="/attendance/reports" element={<ReportsPage />} />
         <Route path="/attendance/insights" element={<InsightsPage />} />
         <Route path="/users" element={<UsersPage />} />

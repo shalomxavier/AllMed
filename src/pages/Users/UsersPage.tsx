@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, UserPlus, User, Search, X, Pencil, Eye, Clock } from 'lucide-react';
+import { ArrowLeft, RefreshCw, UserPlus, User, Search, X, Pencil, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { doc, setDoc, getDocs, collection, query, orderBy, updateDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '@/firebase/firebase';
@@ -10,14 +10,6 @@ interface Device {
   deviceId: string;
 }
 
-interface Employee {
-  id: string;
-  employeeCode?: string;
-  employeeCodeInDevice?: string;
-  employeeName?: string;
-  branchManagerId?: string;
-}
-
 interface User {
   id: string;
   name: string;
@@ -25,13 +17,6 @@ interface User {
   designation: string;
   branch: string;
   createdAt?: string;
-  assignedShiftIds?: string[];
-}
-
-interface Shift {
-  id: string;
-  startTime: string;
-  endTime: string;
 }
 
 export const UsersPage: React.FC = () => {
@@ -50,19 +35,7 @@ export const UsersPage: React.FC = () => {
   const [savingUser, setSavingUser] = useState(false);
   const [viewUserModalOpen, setViewUserModalOpen] = useState(false);
   const [viewingUser, setViewingUser] = useState<User | null>(null);
-  const [manageShiftsModalOpen, setManageShiftsModalOpen] = useState(false);
-  const [selectedManagerForShifts, setSelectedManagerForShifts] = useState<User | null>(null);
-  const [allShifts, setAllShifts] = useState<Shift[]>([]);
-  const [selectedShiftIds, setSelectedShiftIds] = useState<Set<string>>(new Set());
-  const [loadingShifts, setLoadingShifts] = useState(false);
-  const [savingShifts, setSavingShifts] = useState(false);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
-  const [assignEmployeesModalOpen, setAssignEmployeesModalOpen] = useState(false);
-  const [selectedBranchManager, setSelectedBranchManager] = useState<User | null>(null);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set());
-  const [assigningEmployees, setAssigningEmployees] = useState(false);
-  const [employeeSearchQuery, setEmployeeSearchQuery] = useState('');
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -84,7 +57,6 @@ export const UsersPage: React.FC = () => {
   useEffect(() => {
     fetchUsers();
     fetchDevices();
-    fetchEmployees();
   }, []);
 
   const fetchDevices = async () => {
@@ -99,63 +71,6 @@ export const UsersPage: React.FC = () => {
     } catch (error) {
       console.error('Error fetching devices:', error);
     }
-  };
-
-  const fetchEmployees = async () => {
-    try {
-      const snapshot = await getDocs(collection(db, 'employees'));
-      const employeesData: Employee[] = [];
-      snapshot.forEach((doc) => {
-        employeesData.push({ id: doc.id, ...doc.data() } as Employee);
-      });
-      setEmployees(employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del')));
-    } catch (error) {
-      console.error('Error fetching employees:', error);
-    }
-  };
-
-  const openAssignEmployeesModal = (user: User) => {
-    setSelectedBranchManager(user);
-    setSelectedEmployeeIds(new Set(employees.filter((e) => e.branchManagerId === user.id).map((e) => e.id)));
-    setAssignEmployeesModalOpen(true);
-  };
-
-  const handleAssignEmployees = async () => {
-    if (!selectedBranchManager) return;
-    setAssigningEmployees(true);
-    try {
-      const batch = employees.map((emp) => {
-        const isAssigned = selectedEmployeeIds.has(emp.id);
-        const shouldUpdate = isAssigned !== (emp.branchManagerId === selectedBranchManager.id);
-        if (shouldUpdate) {
-          return updateDoc(doc(db, 'employees', emp.id), {
-            branchManagerId: isAssigned ? selectedBranchManager.id : null,
-          });
-        }
-        return Promise.resolve();
-      });
-      await Promise.all(batch);
-      setAssignEmployeesModalOpen(false);
-      setSelectedBranchManager(null);
-      setSelectedEmployeeIds(new Set());
-      fetchEmployees();
-    } catch (error) {
-      console.error('Error assigning employees:', error);
-    } finally {
-      setAssigningEmployees(false);
-    }
-  };
-
-  const toggleEmployeeSelection = (employeeId: string) => {
-    setSelectedEmployeeIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(employeeId)) {
-        newSet.delete(employeeId);
-      } else {
-        newSet.add(employeeId);
-      }
-      return newSet;
-    });
   };
 
   const createUserViaAPI = async (email: string, password: string) => {
@@ -241,58 +156,6 @@ export const UsersPage: React.FC = () => {
   const closeViewUserModal = () => {
     setViewUserModalOpen(false);
     setViewingUser(null);
-  };
-
-  const openManageShiftsModal = async (user: User) => {
-    setSelectedManagerForShifts(user);
-    setSelectedShiftIds(new Set(user.assignedShiftIds ?? []));
-    setManageShiftsModalOpen(true);
-    setLoadingShifts(true);
-    try {
-      const snapshot = await getDocs(query(collection(db, 'shifts'), orderBy('startTime')));
-      const shifts: Shift[] = [];
-      snapshot.forEach((d) => {
-        const data = d.data();
-        shifts.push({ id: d.id, startTime: data.startTime || '', endTime: data.endTime || '' });
-      });
-      setAllShifts(shifts);
-    } catch (error) {
-      console.error('Error fetching shifts:', error);
-    } finally {
-      setLoadingShifts(false);
-    }
-  };
-
-  const closeManageShiftsModal = () => {
-    setManageShiftsModalOpen(false);
-    setSelectedManagerForShifts(null);
-    setAllShifts([]);
-    setSelectedShiftIds(new Set());
-  };
-
-  const toggleShiftSelection = (shiftId: string) => {
-    setSelectedShiftIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(shiftId)) next.delete(shiftId);
-      else next.add(shiftId);
-      return next;
-    });
-  };
-
-  const handleSaveShifts = async () => {
-    if (!selectedManagerForShifts) return;
-    setSavingShifts(true);
-    try {
-      await updateDoc(doc(db, 'users', selectedManagerForShifts.id), {
-        assignedShiftIds: Array.from(selectedShiftIds),
-      });
-      closeManageShiftsModal();
-      fetchUsers();
-    } catch (error) {
-      console.error('Error saving shifts:', error);
-    } finally {
-      setSavingShifts(false);
-    }
   };
 
   const handleEditUser = async (e: React.FormEvent) => {
@@ -464,37 +327,6 @@ export const UsersPage: React.FC = () => {
                 <p className="text-sm text-red-600">{editUserError}</p>
               )}
 
-              {editingUser.designation === 'Branch Manager' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!editingUser) return;
-                      const user = editingUser;
-                      closeEditUserModal();
-                      openAssignEmployeesModal(user);
-                    }}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                  >
-                    <User size={16} />
-                    Manage Employees
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!editingUser) return;
-                      const user = editingUser;
-                      closeEditUserModal();
-                      openManageShiftsModal(user);
-                    }}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-orange-700 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors"
-                  >
-                    <Clock size={16} />
-                    Manage Shifts
-                  </button>
-                </>
-              )}
-
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
@@ -659,177 +491,6 @@ export const UsersPage: React.FC = () => {
         </div>
       )}
 
-      {/* Assign Employees Modal */}
-      {assignEmployeesModalOpen && selectedBranchManager && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-semibold text-secondary-900">Assign Employees</h3>
-                <p className="text-sm text-secondary-500">Assign employees to {selectedBranchManager.name}</p>
-              </div>
-              <button onClick={() => setAssignEmployeesModalOpen(false)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-                <X size={18} className="text-secondary-500" />
-              </button>
-            </div>
-
-            <div className="mb-4">
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
-                <input
-                  type="text"
-                  placeholder="Search employees..."
-                  value={employeeSearchQuery}
-                  onChange={(e) => setEmployeeSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto mb-4">
-              {employees.length === 0 ? (
-                <div className="text-center py-8 text-secondary-500">No employees found</div>
-              ) : (
-                <div className="space-y-2">
-                  {employees
-                    .filter((employee) => {
-                      const searchLower = employeeSearchQuery.toLowerCase();
-                      const name = (employee.employeeName || '').toLowerCase();
-                      const code = (employee.employeeCode || employee.employeeCodeInDevice || '').toLowerCase();
-                      return name.includes(searchLower) || code.includes(searchLower);
-                    })
-                    .sort((a, b) => {
-                      const aSelected = selectedEmployeeIds.has(a.id);
-                      const bSelected = selectedEmployeeIds.has(b.id);
-                      if (aSelected && !bSelected) return -1;
-                      if (!aSelected && bSelected) return 1;
-                      return 0;
-                    })
-                    .map((employee) => (
-                    <div
-                      key={employee.id}
-                      onClick={() => toggleEmployeeSelection(employee.id)}
-                      className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                        selectedEmployeeIds.has(employee.id) ? 'bg-red-50 border border-red-200' : 'bg-secondary-50 border border-secondary-200 hover:bg-secondary-100'
-                      }`}
-                    >
-                      <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                        selectedEmployeeIds.has(employee.id) ? 'bg-red-600 border-red-600' : 'border-secondary-300'
-                      }`}>
-                        {selectedEmployeeIds.has(employee.id) && (
-                          <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-secondary-900">{employee.employeeName || 'Unknown'}</p>
-                        <p className="text-xs text-secondary-500">ID: {employee.employeeCode || employee.employeeCodeInDevice || 'N/A'}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setAssignEmployeesModalOpen(false)}
-                className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAssignEmployees}
-                disabled={assigningEmployees}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
-              >
-                {assigningEmployees ? 'Updating...' : `Update (${selectedEmployeeIds.size})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Manage Shifts Modal */}
-      {manageShiftsModalOpen && selectedManagerForShifts && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-semibold text-secondary-900">Manage Shifts</h3>
-                <p className="text-sm text-secondary-500">Select shifts for {selectedManagerForShifts.name}</p>
-              </div>
-              <button onClick={closeManageShiftsModal} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-                <X size={18} className="text-secondary-500" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto mb-4">
-              {loadingShifts ? (
-                <div className="flex items-center justify-center py-8">
-                  <div className="w-6 h-6 border-2 border-secondary-300 border-t-red-600 rounded-full animate-spin" />
-                </div>
-              ) : allShifts.length === 0 ? (
-                <div className="text-center py-8 text-secondary-500">No shifts found</div>
-              ) : (
-                <div className="space-y-2">
-                  {allShifts.map((shift) => {
-                    const isSelected = selectedShiftIds.has(shift.id);
-                    const formatTime = (t: string) => {
-                      if (!t) return '--:--';
-                      const [hStr, mStr] = t.split(':');
-                      const h = parseInt(hStr, 10);
-                      const m = mStr || '00';
-                      const ampm = h >= 12 ? 'PM' : 'AM';
-                      const h12 = h % 12 === 0 ? 12 : h % 12;
-                      return `${h12}:${m} ${ampm}`;
-                    };
-                    return (
-                      <div
-                        key={shift.id}
-                        onClick={() => toggleShiftSelection(shift.id)}
-                        className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
-                          isSelected ? 'bg-orange-50 border border-orange-200' : 'bg-secondary-50 border border-secondary-200 hover:bg-secondary-100'
-                        }`}
-                      >
-                        <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                          isSelected ? 'bg-orange-600 border-orange-600' : 'border-secondary-300'
-                        }`}>
-                          {isSelected && (
-                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-secondary-900">{formatTime(shift.startTime)} — {formatTime(shift.endTime)}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={closeManageShiftsModal}
-                className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveShifts}
-                disabled={savingShifts || loadingShifts}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
-              >
-                {savingShifts ? 'Saving...' : `Update (${selectedShiftIds.size})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

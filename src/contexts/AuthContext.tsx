@@ -14,7 +14,6 @@ export interface UserData {
   email: string;
   designation: string;
   branch: string;
-  assignedShiftIds?: string[];
 }
 
 export interface AuthContextType {

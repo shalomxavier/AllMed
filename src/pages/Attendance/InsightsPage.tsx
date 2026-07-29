@@ -4,11 +4,7 @@ import { Lightbulb, X, ArrowLeft } from 'lucide-react';
 import { Timestamp, collection, getDocs, getFirestore, orderBy, query, where } from 'firebase/firestore';
 import { PageContainer } from '@/components/common';
 import { PieChart } from '@/pages/DMS/dashboard/PieChart';
-
-interface BranchManager {
-  id: string;
-  name: string;
-}
+import { useAuthContext } from '@/contexts/AuthContext';
 
 interface Employee {
   employeeCode?: string;
@@ -16,7 +12,6 @@ interface Employee {
   employeeName?: string;
   designation?: string;
   subDesignation?: string;
-  branchManagerId?: string;
   workLocation?: string;
 }
 
@@ -51,7 +46,6 @@ interface ManagerChart {
   emptyText: string;
 }
 
-const UNASSIGNED_MANAGER_KEY = 'unassigned';
 const CHART_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#9333ea', '#db2777', '#0891b2', '#ca8a04', '#4f46e5'];
 
 const getToday = (): string => {
@@ -60,32 +54,44 @@ const getToday = (): string => {
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 10);
 };
 
+const ALL_EMPLOYEES_KEY = 'all';
+
 export const InsightsPage: React.FC = () => {
   const navigate = useNavigate();
-  const [branchManagers, setBranchManagers] = useState<BranchManager[]>([]);
-  const [selectedManagerId, setSelectedManagerId] = useState('');
+  const { currentUser, userData } = useAuthContext();
   const [selectedDate, setSelectedDate] = useState(getToday);
   const [managerCharts, setManagerCharts] = useState<ManagerChart[]>([]);
-  const [loading, setLoading] = useState(true);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
   const [selectedDesignation, setSelectedDesignation] = useState<{ chartTitle: string; designation: string; employees: ChartEmployee[] } | null>(null);
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchBranchManagers = async () => {
-      try {
-        const snapshot = await getDocs(
-          query(collection(getFirestore(), 'users'), where('designation', '==', 'Branch Manager'), orderBy('name')),
-        );
-        setBranchManagers(snapshot.docs.map((manager) => ({ id: manager.id, name: manager.data().name || 'Unnamed' })));
-      } catch (error) {
-        console.error('Error fetching branch managers:', error);
-      } finally {
-        setLoading(false);
+    const resolveBranches = async () => {
+      const firestore = getFirestore();
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(firestore, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          const branchName = branchSnapshot.empty ? '' : (branchSnapshot.docs[0].data().name || '');
+          setManagerBranchName(branchName);
+          setBranchFilter(branchName);
+        } catch (err) {
+          console.error('Error resolving manager branch:', err);
+          setManagerBranchName('');
+        }
+      } else {
+        try {
+          const branchesSnapshot = await getDocs(collection(firestore, 'branches'));
+          setBranchOptions(branchesSnapshot.docs.map((b) => b.data().name).filter(Boolean).sort());
+        } catch (err) {
+          console.error('Error fetching branches list:', err);
+        }
       }
     };
-
-    fetchBranchManagers();
-  }, []);
+    resolveBranches();
+  }, [currentUser, userData]);
 
   useEffect(() => {
     const fetchAttendanceInsights = async () => {
@@ -102,7 +108,9 @@ export const InsightsPage: React.FC = () => {
           getDocs(collection(firestore, 'shifts')),
         ]);
 
-        const employees = employeesSnapshot.docs.map((employee) => employee.data() as Employee);
+        const employees = employeesSnapshot.docs
+          .map((employee) => employee.data() as Employee)
+          .filter((employee) => !branchFilter || employee.workLocation === branchFilter);
         const employeeByCode = new Map<string, Employee>();
         employees.forEach((employee) => {
           [employee.employeeCodeInDevice, employee.employeeCode].forEach((code) => {
@@ -124,35 +132,9 @@ export const InsightsPage: React.FC = () => {
           });
         });
 
-        const visibleManagers = selectedManagerId
-          ? branchManagers.filter((manager) => manager.id === selectedManagerId)
-          : branchManagers;
-        const visibleManagerIds = new Set(visibleManagers.map((manager) => manager.id));
-        const employeesByChart = new Map<string, Employee[]>();
-        visibleManagers.forEach((manager) => employeesByChart.set(manager.id, []));
-        employeesByChart.set(UNASSIGNED_MANAGER_KEY, []);
-        employees.forEach((employee) => {
-          const chartKey = !employee.branchManagerId
-            ? UNASSIGNED_MANAGER_KEY
-            : visibleManagerIds.has(employee.branchManagerId)
-              ? employee.branchManagerId
-              : null;
-          if (chartKey) employeesByChart.get(chartKey)!.push(employee);
-        });
-
-        const attendanceByManager = new Map<string, Map<string, Set<string>>>();
-        [...visibleManagers.map((manager) => manager.id), UNASSIGNED_MANAGER_KEY]
-          .forEach((managerId) => attendanceByManager.set(managerId, new Map()));
-        const getChartKey = (employee: Employee): string | null => {
-          if (!employee.branchManagerId) return UNASSIGNED_MANAGER_KEY;
-          return visibleManagerIds.has(employee.branchManagerId) ? employee.branchManagerId : null;
-        };
+        const attendanceByDesignation = new Map<string, Set<string>>();
         const addEmployeeToAttendance = (employee: Employee, employeeCode: string) => {
-          const chartKey = getChartKey(employee);
-          if (!chartKey) return;
-
           const designation = employee.designation?.trim() || 'Unassigned Designation';
-          const attendanceByDesignation = attendanceByManager.get(chartKey)!;
           if (!attendanceByDesignation.has(designation)) attendanceByDesignation.set(designation, new Set());
           attendanceByDesignation.get(designation)!.add(employeeCode);
         };
@@ -182,50 +164,41 @@ export const InsightsPage: React.FC = () => {
         }
 
         const designationColors = new Map(
-          Array.from(new Set(
-            Array.from(attendanceByManager.values()).flatMap((attendanceByDesignation) => Array.from(attendanceByDesignation.keys())),
-          )).sort().map((designation, index) => [designation, CHART_COLORS[index % CHART_COLORS.length]]),
+          Array.from(attendanceByDesignation.keys())
+            .sort()
+            .map((designation, index) => [designation, CHART_COLORS[index % CHART_COLORS.length]]),
         );
-        const chartDefinitions = [
-          ...visibleManagers.map((manager) => ({
-            key: manager.id,
-            title: manager.name.replace(/\s*Manager\s*$/i, '') || manager.name,
-          })),
-          { key: UNASSIGNED_MANAGER_KEY, title: 'Unspecified' },
-        ];
-        setManagerCharts(chartDefinitions.map((chart) => {
-          const attendanceByDesignation = attendanceByManager.get(chart.key)!;
-          const data = Array.from(attendanceByDesignation.entries())
-            .map(([label, employeesPresent]) => ({
-              label,
-              value: employeesPresent.size,
-              color: designationColors.get(label) || CHART_COLORS[0],
-            }))
-            .sort((first, second) => second.value - first.value);
-          const employeesByDesignation = Object.fromEntries(
-            Array.from(attendanceByDesignation.entries()).map(([designation, employeeCodes]) => [
-              designation,
-              Array.from(employeeCodes).map((employeeCode) => {
-                const employee = employeeByCode.get(employeeCode);
-                return {
-                  name: employee?.employeeName || employeeCode,
-                  employeeCode: employee?.employeeCode || employeeCode,
-                  subDesignation: employee?.subDesignation || '—',
-                  shiftTime: shiftTimesByEmployee.get(employeeCode) || 'No shift assigned',
-                };
-              }).sort((first, second) => first.name.localeCompare(second.name)),
-            ]),
-          );
-          const hasEmployees = (employeesByChart.get(chart.key) ?? []).length > 0;
-          const emptyText = !hasEmployees
-            ? chart.key === UNASSIGNED_MANAGER_KEY
-              ? 'No data. No employees are unassigned; please assign employees to a manager.'
-              : 'No data. Please assign employees to this manager.'
-            : selectedDate > getToday()
-              ? 'No data. Please assign shifts to the employees.'
-              : 'No data. No punches yet for this date.';
-          return { ...chart, data, employeesByDesignation, emptyText };
-        }));
+        const data = Array.from(attendanceByDesignation.entries())
+          .map(([label, employeesPresent]) => ({
+            label,
+            value: employeesPresent.size,
+            color: designationColors.get(label) || CHART_COLORS[0],
+          }))
+          .sort((first, second) => second.value - first.value);
+        const employeesByDesignation = Object.fromEntries(
+          Array.from(attendanceByDesignation.entries()).map(([designation, employeeCodes]) => [
+            designation,
+            Array.from(employeeCodes).map((employeeCode) => {
+              const employee = employeeByCode.get(employeeCode);
+              return {
+                name: employee?.employeeName || employeeCode,
+                employeeCode: employee?.employeeCode || employeeCode,
+                subDesignation: employee?.subDesignation || '—',
+                shiftTime: shiftTimesByEmployee.get(employeeCode) || 'No shift assigned',
+              };
+            }).sort((first, second) => first.name.localeCompare(second.name)),
+          ]),
+        );
+        const emptyText = selectedDate > getToday()
+          ? 'No data. Please assign shifts to the employees.'
+          : 'No data. No punches yet for this date.';
+        setManagerCharts([{
+          key: ALL_EMPLOYEES_KEY,
+          title: 'All Employees',
+          data,
+          employeesByDesignation,
+          emptyText,
+        }]);
       } catch (error) {
         console.error('Error fetching attendance insights:', error);
         setManagerCharts([]);
@@ -235,7 +208,7 @@ export const InsightsPage: React.FC = () => {
     };
 
     fetchAttendanceInsights();
-  }, [branchManagers, selectedDate, selectedManagerId]);
+  }, [selectedDate, branchFilter]);
 
   const handleDesignationClick = (chart: ManagerChart, designation: string) => {
     const employees = chart.employeesByDesignation[designation] ?? [];
@@ -265,30 +238,11 @@ export const InsightsPage: React.FC = () => {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-secondary-900">Attendance Insights</h2>
-              <p className="text-sm text-secondary-500">Select a branch manager to view their insights.</p>
+              <p className="text-sm text-secondary-500">View attendance breakdown for all employees.</p>
             </div>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="branch-manager" className="block mb-2 text-sm font-medium text-secondary-700">
-                Branch Manager
-              </label>
-              <select
-                id="branch-manager"
-                value={selectedManagerId}
-                onChange={(event) => setSelectedManagerId(event.target.value)}
-                disabled={loading}
-                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100"
-              >
-                <option value="">{loading ? 'Loading branch managers...' : 'All Branch Managers'}</option>
-                {branchManagers.map((manager) => (
-                  <option key={manager.id} value={manager.id}>
-                    {manager.name}
-                  </option>
-                ))}
-              </select>
-            </div>
             <div>
               <label htmlFor="insights-date" className="block mb-2 text-sm font-medium text-secondary-700">
                 Date
@@ -300,6 +254,29 @@ export const InsightsPage: React.FC = () => {
                 onChange={(event) => setSelectedDate(event.target.value)}
                 className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+            </div>
+            <div>
+              <label htmlFor="insights-branch" className="block mb-2 text-sm font-medium text-secondary-700">
+                Branch
+              </label>
+              <select
+                id="insights-branch"
+                value={branchFilter}
+                onChange={(event) => setBranchFilter(event.target.value)}
+                disabled={userData?.designation === 'Branch Manager'}
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+              >
+                {userData?.designation === 'Branch Manager' ? (
+                  <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+                ) : (
+                  <>
+                    <option value="">All Branches</option>
+                    {branchOptions.map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </>
+                )}
+              </select>
             </div>
           </div>
         </div>

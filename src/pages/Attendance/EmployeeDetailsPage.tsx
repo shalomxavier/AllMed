@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, X, Edit } from 'lucide-react';
-import { getFirestore, doc, getDoc, updateDoc, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { useAuthContext } from '@/contexts/AuthContext';
 
 interface Employee {
   id: string;
@@ -50,20 +51,38 @@ export const EmployeeDetailsPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const isEditing = searchParams.get('edit') === 'true';
+  const { currentUser, userData } = useAuthContext();
 
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [unauthorized, setUnauthorized] = useState(false);
   const [employmentDetails, setEmploymentDetails] = useState<Partial<Employee>>({});
   const [saving, setSaving] = useState(false);
   const [designations, setDesignations] = useState<{ name: string; subDesignations: string[] }[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
 
   const fetchEmployee = async () => {
     if (!id) return;
     setLoading(true);
     try {
       const db = getFirestore();
+
+      // If user is Branch Manager, verify this employee belongs to their branch
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+        const branchSnapshot = await getDocs(branchQuery);
+        const allowedEmployeeIds: string[] = branchSnapshot.empty
+          ? []
+          : (branchSnapshot.docs[0].data().employeeIds || []);
+        if (!allowedEmployeeIds.includes(id)) {
+          setUnauthorized(true);
+          setLoading(false);
+          return;
+        }
+      }
+
       const snapshot = await getDoc(doc(db, 'employees', id));
       if (snapshot.exists()) {
         const data = { id: snapshot.id, ...snapshot.data() } as Employee;
@@ -83,9 +102,10 @@ export const EmployeeDetailsPage: React.FC = () => {
   const fetchOptions = async () => {
     try {
       const db = getFirestore();
-      const [designationsSnapshot, departmentsSnapshot] = await Promise.all([
+      const [designationsSnapshot, departmentsSnapshot, branchesSnapshot] = await Promise.all([
         getDocs(collection(db, 'designations')),
         getDocs(collection(db, 'departments')),
+        getDocs(collection(db, 'branches')),
       ]);
       setDesignations(
         designationsSnapshot.docs
@@ -102,6 +122,12 @@ export const EmployeeDetailsPage: React.FC = () => {
       setDepartments(
         departmentsSnapshot.docs.map((d) => d.data().name).filter(Boolean).sort()
       );
+      setBranches(
+        branchesSnapshot.docs
+          .map((d) => ({ id: d.id, name: d.data().name }))
+          .filter((b) => b.name)
+          .sort((a, b) => a.name.localeCompare(b.name))
+      );
     } catch (error) {
       console.error('Error fetching options:', error);
     }
@@ -110,11 +136,11 @@ export const EmployeeDetailsPage: React.FC = () => {
   useEffect(() => {
     fetchEmployee();
     fetchOptions();
-  }, [id]);
+  }, [id, userData]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!employee || !id) return;
+    if (!employee || !id || unauthorized) return;
     setSaving(true);
     try {
       const db = getFirestore();
@@ -179,6 +205,10 @@ export const EmployeeDetailsPage: React.FC = () => {
           <div className="flex items-center justify-center py-12">
             <div className="w-8 h-8 border-2 border-secondary-300 border-t-blue-600 rounded-full animate-spin" />
           </div>
+        ) : unauthorized ? (
+          <div className="text-center py-12 text-secondary-600">
+            You do not have permission to view this employee.
+          </div>
         ) : notFound || !employee ? (
           <div className="text-center py-12 text-secondary-600">
             Employee not found.
@@ -222,7 +252,7 @@ export const EmployeeDetailsPage: React.FC = () => {
                     <label htmlFor={key} className="block text-sm font-medium text-secondary-700 mb-1">
                       {label}
                     </label>
-                    {key === 'employmentType' || key === 'employmentStatus' || key === 'department' || key === 'designation' || isSubDesignation ? (
+                    {key === 'employmentType' || key === 'employmentStatus' || key === 'department' || key === 'designation' || key === 'workLocation' || isSubDesignation ? (
                       <select
                         id={key}
                         value={employmentDetails[key] || ''}
@@ -251,6 +281,8 @@ export const EmployeeDetailsPage: React.FC = () => {
                             ? departments
                             : key === 'designation'
                             ? designations.map((d) => d.name)
+                            : key === 'workLocation'
+                            ? branches.map((b) => b.name)
                             : subDesignationOptions
                         ).map((option) => (
                           <option key={option} value={option}>{option}</option>

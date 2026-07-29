@@ -79,6 +79,9 @@ export const ShiftsPage: React.FC = () => {
   const [slots, setSlots] = useState<ShiftSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSlot, setSelectedSlot] = useState<ShiftSlot | null>(null);
+  const [branchOptions, setBranchOptions] = useState<{ id: string; name: string; shiftIds: string[] }[]>([]);
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState('');
+  const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
 
   // Assign shift modal state
   const [assignOpen, setAssignOpen] = useState(false);
@@ -141,10 +144,34 @@ export const ShiftsPage: React.FC = () => {
 
   const fetchEmployees = async () => {
     try {
+      let allowedEmployeeIds: string[] | null = null;
+      
+      // If user is Branch Manager, fetch the branch(es) they manage
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedEmployeeIds = branchData.employeeIds || [];
+          } else {
+            allowedEmployeeIds = [];
+          }
+        } catch (err) {
+          console.error('Error fetching branch employees:', err);
+        }
+      }
+
       const snap = await getDocs(query(collection(db, 'employees'), orderBy('employeeName')));
       const data: Employee[] = [];
       snap.forEach((d) => data.push({ id: d.id, ...d.data() as Omit<Employee, 'id'> }));
-      const filtered = data.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
+      let filtered = data.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
+      
+      // Filter by branch if allowedEmployeeIds is set
+      if (allowedEmployeeIds) {
+        filtered = filtered.filter((e) => allowedEmployeeIds.includes(e.id));
+      }
+      
       setAllEmployees(filtered);
     } catch (e) { console.error(e); }
   };
@@ -317,10 +344,45 @@ export const ShiftsPage: React.FC = () => {
     if (!currentUser) return;
     setLoading(true);
     try {
+      let allowedShiftIds: string[] | null = null;
+      
+      // If user is Branch Manager, fetch the branch(es) they manage
+      if (userData?.designation === 'Branch Manager' && currentUser) {
+        try {
+          const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
+          const branchSnapshot = await getDocs(branchQuery);
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedShiftIds = branchData.shiftIds || [];
+            setManagerBranchName(branchData.name || '');
+          } else {
+            allowedShiftIds = [];
+            setManagerBranchName('');
+          }
+        } catch (err) {
+          console.error('Error fetching branch shifts:', err);
+        }
+      } else {
+        // Admin/HR: load all branches for the branch filter dropdown
+        try {
+          const branchesSnapshot = await getDocs(collection(db, 'branches'));
+          setBranchOptions(
+            branchesSnapshot.docs.map((b) => ({ id: b.id, name: b.data().name || '', shiftIds: b.data().shiftIds || [] }))
+          );
+        } catch (err) {
+          console.error('Error fetching branches list:', err);
+        }
+      }
+
       const q = query(collection(db, 'shifts'));
       const snapshot = await getDocs(q);
       const results: ShiftSlot[] = [];
       snapshot.forEach((d) => {
+        // Filter by branch if allowedShiftIds is set
+        if (allowedShiftIds && !allowedShiftIds.includes(d.id)) {
+          return;
+        }
+        
         const data = d.data();
         const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any) => ({ 
           employeeName: e.employeeName ?? '', 
@@ -339,16 +401,17 @@ export const ShiftsPage: React.FC = () => {
         });
       });
       results.sort((a, b) => a.startTime.localeCompare(b.startTime));
-      const isBranchManager = userData?.designation === 'Branch Manager';
-      const authorizedIds = isBranchManager ? new Set(userData?.assignedShiftIds ?? []) : null;
-      const visibleSlots = authorizedIds ? results.filter((s) => authorizedIds.has(s.key)) : results;
-      setSlots(visibleSlots);
+      setSlots(results);
     } catch (err) {
       console.error('Error fetching shifts:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  const filteredSlots = selectedBranchFilter
+    ? slots.filter((s) => branchOptions.find((b) => b.name === selectedBranchFilter)?.shiftIds.includes(s.key))
+    : slots;
 
   useEffect(() => {
     if (!currentUser) return;
@@ -384,8 +447,28 @@ export const ShiftsPage: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
-        {userData?.designation !== 'Branch Manager' && (
-          <div className="flex justify-end mb-4">
+        <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+          <div className="w-56">
+            <label className="block text-xs font-medium text-secondary-600 mb-1">Branch</label>
+            <select
+              value={userData?.designation === 'Branch Manager' ? (managerBranchName ?? '') : selectedBranchFilter}
+              onChange={(e) => setSelectedBranchFilter(e.target.value)}
+              disabled={userData?.designation === 'Branch Manager'}
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+            >
+              {userData?.designation === 'Branch Manager' ? (
+                <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+              ) : (
+                <>
+                  <option value="">All Branches</option>
+                  {branchOptions.map((b) => (
+                    <option key={b.id} value={b.name}>{b.name}</option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
+          {userData?.designation !== 'Branch Manager' && (
             <button
               onClick={() => setAssignOpen(true)}
               className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
@@ -393,13 +476,13 @@ export const ShiftsPage: React.FC = () => {
               <Plus size={16} />
               Add Shifts
             </button>
-          </div>
-        )}
+          )}
+        </div>
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="w-8 h-8 border-2 border-secondary-300 border-t-orange-500 rounded-full animate-spin" />
           </div>
-        ) : slots.length === 0 ? (
+        ) : filteredSlots.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center mb-4">
               <Clock className="w-10 h-10 text-orange-500" />
@@ -409,7 +492,7 @@ export const ShiftsPage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {slots.map((slot) => (
+            {filteredSlots.map((slot) => (
               <div key={slot.key} className="card relative p-5 hover:shadow-md transition-shadow flex flex-col">
                 <button
                   type="button"
@@ -447,39 +530,35 @@ export const ShiftsPage: React.FC = () => {
                   <Plus size={16} />
                   Add Employees
                 </button>
-                {userData?.designation !== 'Branch Manager' && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const parse12 = (t: string) => {
-                          const [hStr, mStr] = t.split(':');
-                          const h = parseInt(hStr, 10);
-                          const ampm = h >= 12 ? 'PM' : 'AM';
-                          const h12 = h % 12 === 0 ? 12 : h % 12;
-                          return { hour: h12.toString(), minute: mStr ?? '00', ampm };
-                        };
-                        const s = parse12(slot.startTime);
-                        const e = parse12(slot.endTime);
-                        setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
-                        setEditingSlot(slot);
-                        setAssignOpen(true);
-                      }}
-                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
-                    >
-                      <Pencil size={16} />
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteSlot(slot)}
-                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                    >
-                      <Trash2 size={16} />
-                      Delete
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const parse12 = (t: string) => {
+                      const [hStr, mStr] = t.split(':');
+                      const h = parseInt(hStr, 10);
+                      const ampm = h >= 12 ? 'PM' : 'AM';
+                      const h12 = h % 12 === 0 ? 12 : h % 12;
+                      return { hour: h12.toString(), minute: mStr ?? '00', ampm };
+                    };
+                    const s = parse12(slot.startTime);
+                    const e = parse12(slot.endTime);
+                    setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
+                    setEditingSlot(slot);
+                    setAssignOpen(true);
+                  }}
+                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
+                >
+                  <Pencil size={16} />
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteSlot(slot)}
+                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                >
+                  <Trash2 size={16} />
+                  Delete
+                </button>
               </div>
             ))}
           </div>
