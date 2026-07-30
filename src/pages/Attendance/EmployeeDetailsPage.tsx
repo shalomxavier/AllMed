@@ -33,9 +33,9 @@ const employmentFields: Array<{ key: keyof Employee; label: string; type?: strin
   { key: 'username', label: 'Username' },
   { key: 'loginId', label: 'Login ID' },
   { key: 'dateOfJoining', label: 'Date of Joining', type: 'date' },
-  { key: 'employmentType', label: 'Employment Type' },
-  { key: 'department', label: 'Department' },
   { key: 'designation', label: 'Designation' },
+  { key: 'department', label: 'Department' },
+  { key: 'employmentType', label: 'Employment Type' },
   { key: 'subDesignation', label: 'Sub Designation' },
   { key: 'grade', label: 'Grade' },
   { key: 'group', label: 'Group' },
@@ -149,7 +149,7 @@ export const EmployeeDetailsPage: React.FC = () => {
       );
       await updateDoc(doc(db, 'employees', id), updates);
       setEmployee({ ...employee, ...updates });
-      setSearchParams({});
+      navigate('/attendance/employees');
     } catch (error) {
       console.error('Error updating employee:', error);
     } finally {
@@ -223,12 +223,6 @@ export const EmployeeDetailsPage: React.FC = () => {
                 </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-secondary-700 mb-1">Employee ID</label>
-                <p className="text-sm text-secondary-900 bg-secondary-50 px-3 py-2 rounded-lg">
-                  {employee.employeeId || '—'}
-                </p>
-              </div>
-              <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Employee Code</label>
                 <p className="text-sm text-secondary-900 bg-secondary-50 px-3 py-2 rounded-lg">
                   {employee.employeeCode || '—'}
@@ -241,7 +235,6 @@ export const EmployeeDetailsPage: React.FC = () => {
                 </p>
               </div>
               {employmentFields.map(({ key, label, type = 'text' }) => {
-                const isSubDesignation = key === 'subDesignation';
                 const currentDesignation = designations.find(
                   (d) => d.name === employmentDetails.designation
                 );
@@ -252,7 +245,7 @@ export const EmployeeDetailsPage: React.FC = () => {
                     <label htmlFor={key} className="block text-sm font-medium text-secondary-700 mb-1">
                       {label}
                     </label>
-                    {key === 'employmentType' || key === 'employmentStatus' || key === 'department' || key === 'designation' || key === 'workLocation' || isSubDesignation ? (
+                    {key === 'employmentType' || key === 'employmentStatus' || key === 'department' || key === 'designation' || key === 'workLocation' ? (
                       <select
                         id={key}
                         value={employmentDetails[key] || ''}
@@ -262,19 +255,20 @@ export const EmployeeDetailsPage: React.FC = () => {
                             setEmploymentDetails({
                               ...employmentDetails,
                               designation: value,
+                              employmentType: '',
                               subDesignation: '',
                             });
                           } else {
                             setEmploymentDetails({ ...employmentDetails, [key]: value });
                           }
                         }}
-                        disabled={isSubDesignation && subDesignationOptions.length === 0}
+                        disabled={key === 'employmentType' && subDesignationOptions.length === 0}
                         className="w-full px-3 py-2 text-sm text-secondary-900 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:text-secondary-400"
                       >
-                        <option value="">{isSubDesignation && subDesignationOptions.length === 0 ? 'No sub designations' : `Select ${label}`}</option>
+                        <option value="">{key === 'employmentType' && subDesignationOptions.length === 0 ? 'No options' : `Select ${label}`}</option>
                         {(
                           key === 'employmentType'
-                            ? ['Permanent', 'Contract', 'Intern']
+                            ? subDesignationOptions
                             : key === 'employmentStatus'
                             ? ['Active', 'Inactive']
                             : key === 'department'
@@ -283,7 +277,7 @@ export const EmployeeDetailsPage: React.FC = () => {
                             ? designations.map((d) => d.name)
                             : key === 'workLocation'
                             ? branches.map((b) => b.name)
-                            : subDesignationOptions
+                            : []
                         ).map((option) => (
                           <option key={option} value={option}>{option}</option>
                         ))}
@@ -327,10 +321,6 @@ export const EmployeeDetailsPage: React.FC = () => {
               <div>
                 <p className="text-sm font-medium text-secondary-500 mb-1">Employee Name</p>
                 <p className="text-base text-secondary-900">{employee.employeeName || '—'}</p>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-secondary-500 mb-1">Employee ID</p>
-                <p className="text-base text-secondary-900">{employee.employeeId || '—'}</p>
               </div>
               <div>
                 <p className="text-sm font-medium text-secondary-500 mb-1">Employee Code</p>
