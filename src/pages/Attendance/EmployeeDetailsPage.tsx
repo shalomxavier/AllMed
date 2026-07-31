@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, X, Edit } from 'lucide-react';
-import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 
 interface Employee {
@@ -62,6 +62,7 @@ export const EmployeeDetailsPage: React.FC = () => {
   const [designations, setDesignations] = useState<{ name: string; subDesignations: string[] }[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: string; employeeName: string; employeeCode: string; employmentStatus?: string }[]>([]);
 
   const fetchEmployee = async () => {
     if (!id) return;
@@ -102,10 +103,11 @@ export const EmployeeDetailsPage: React.FC = () => {
   const fetchOptions = async () => {
     try {
       const db = getFirestore();
-      const [designationsSnapshot, departmentsSnapshot, branchesSnapshot] = await Promise.all([
+      const [designationsSnapshot, departmentsSnapshot, branchesSnapshot, employeesSnapshot] = await Promise.all([
         getDocs(collection(db, 'designations')),
         getDocs(collection(db, 'departments')),
         getDocs(collection(db, 'branches')),
+        getDocs(collection(db, 'employees')),
       ]);
       setDesignations(
         designationsSnapshot.docs
@@ -128,6 +130,24 @@ export const EmployeeDetailsPage: React.FC = () => {
           .filter((b) => b.name)
           .sort((a, b) => a.name.localeCompare(b.name))
       );
+      setEmployees(
+        employeesSnapshot.docs
+          .map((d) => ({
+            id: d.id,
+            employeeName: d.data().employeeName || '',
+            employeeCode: d.data().employeeCode || '',
+            employmentStatus: d.data().employmentStatus || ''
+          }))
+          .filter((e) => {
+            const employeeCode = e.employeeCode?.toLowerCase() || '';
+            const employmentStatus = e.employmentStatus?.toLowerCase() || '';
+            // Filter out employees with code starting with "del" and inactive employees
+            return e.employeeName && 
+                   !employeeCode.startsWith('del') && 
+                   employmentStatus !== 'inactive';
+          })
+          .sort((a, b) => a.employeeName.localeCompare(b.employeeName))
+      );
     } catch (error) {
       console.error('Error fetching options:', error);
     }
@@ -147,8 +167,45 @@ export const EmployeeDetailsPage: React.FC = () => {
       const updates = Object.fromEntries(
         employmentFields.map(({ key }) => [key, employmentDetails[key] || ''])
       );
+      
+      // Check if workLocation has changed
+      const oldWorkLocation = employee.workLocation;
+      const newWorkLocation = employmentDetails.workLocation;
+      
+      // Update employee document
       await updateDoc(doc(db, 'employees', id), updates);
       setEmployee({ ...employee, ...updates });
+      
+      // Update branches collection if workLocation changed
+      if (oldWorkLocation !== newWorkLocation) {
+        const batch = writeBatch(db);
+        
+        // Remove employee from old branch if exists
+        if (oldWorkLocation) {
+          const oldBranchQuery = query(collection(db, 'branches'), where('name', '==', oldWorkLocation));
+          const oldBranchSnapshot = await getDocs(oldBranchQuery);
+          if (!oldBranchSnapshot.empty) {
+            const oldBranchRef = doc(db, 'branches', oldBranchSnapshot.docs[0].id);
+            batch.update(oldBranchRef, { employeeIds: arrayRemove(id) });
+          }
+        }
+        
+        // Add employee to new branch if exists
+        if (newWorkLocation) {
+          const newBranchQuery = query(collection(db, 'branches'), where('name', '==', newWorkLocation));
+          const newBranchSnapshot = await getDocs(newBranchQuery);
+          if (!newBranchSnapshot.empty) {
+            const newBranchRef = doc(db, 'branches', newBranchSnapshot.docs[0].id);
+            batch.update(newBranchRef, { employeeIds: arrayUnion(id) });
+          }
+        }
+        
+        // Commit the batch if there are any updates
+        if (oldWorkLocation || newWorkLocation) {
+          await batch.commit();
+        }
+      }
+      
       navigate('/attendance/employees');
     } catch (error) {
       console.error('Error updating employee:', error);
@@ -245,7 +302,7 @@ export const EmployeeDetailsPage: React.FC = () => {
                     <label htmlFor={key} className="block text-sm font-medium text-secondary-700 mb-1">
                       {label}
                     </label>
-                    {key === 'employmentType' || key === 'employmentStatus' || key === 'department' || key === 'designation' || key === 'workLocation' ? (
+                    {key === 'employmentType' || key === 'employmentStatus' || key === 'department' || key === 'designation' || key === 'workLocation' || key === 'reportingManager' ? (
                       <select
                         id={key}
                         value={employmentDetails[key] || ''}
@@ -277,6 +334,8 @@ export const EmployeeDetailsPage: React.FC = () => {
                             ? designations.map((d) => d.name)
                             : key === 'workLocation'
                             ? branches.map((b) => b.name)
+                            : key === 'reportingManager'
+                            ? employees.map((e) => `${e.employeeName} (${e.employeeCode})`)
                             : []
                         ).map((option) => (
                           <option key={option} value={option}>{option}</option>

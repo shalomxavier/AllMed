@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, X, Plus, Pencil, Trash2, ArrowLeft } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Building2, X, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
 import {
   getFirestore,
@@ -19,7 +18,6 @@ interface Department {
 }
 
 export const DepartmentsPage: React.FC = () => {
-  const navigate = useNavigate();
   const { currentUser } = useAuthContext();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,13 +112,6 @@ export const DepartmentsPage: React.FC = () => {
     <div className="flex flex-col h-full bg-secondary-50">
       <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-secondary-200">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/attendance')}
-            className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
-            aria-label="Go back"
-          >
-            <ArrowLeft size={20} className="text-secondary-600" />
-          </button>
           <h1 className="text-xl font-semibold text-secondary-900">Departments</h1>
         </div>
         <button

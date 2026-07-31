@@ -117,7 +117,6 @@ export const LeavesPage: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
-  const [workLocationMap, setWorkLocationMap] = useState<Record<string, string>>({});
   const [managerBranch, setManagerBranch] = useState<string | null>(null);
 
   const fetchData = async () => {
@@ -137,15 +136,6 @@ export const LeavesPage: React.FC = () => {
       const employeesData: any[] = [];
       employeesSnap.forEach((d) => employeesData.push({ id: d.id, ...d.data() }));
       const filteredEmployees = employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
-
-      // Build workLocationMap from employee.workLocation
-      const locationMap: Record<string, string> = {};
-      filteredEmployees.forEach((e) => {
-        if (e.employeeCode && e.workLocation) {
-          locationMap[e.employeeCode] = e.workLocation;
-        }
-      });
-      setWorkLocationMap(locationMap);
 
       // Build branchesList
       const branchesData: { id: string; name: string; employeeIds: string[] }[] = [];
@@ -437,10 +427,12 @@ export const LeavesPage: React.FC = () => {
     const code = data.employeeCode?.toLowerCase() ?? '';
     const matchesSearch = name.includes(searchQuery.toLowerCase()) || code.includes(searchQuery.toLowerCase());
 
-    // Branch filter
+    // Branch filter (branches collection is the source of truth)
     if (branchFilter) {
-      const empBranch = workLocationMap[data.employeeCode] || '';
-      if (empBranch !== branchFilter) return false;
+      const branchData = branchesList.find((b) => b.name === branchFilter);
+      const branchEmployeeIds = branchData?.employeeIds || [];
+      const employee = employees.find((e) => e.employeeCode === data.employeeCode);
+      if (!employee || !branchEmployeeIds.includes(employee.id)) return false;
     }
 
     // Type filter
@@ -814,7 +806,18 @@ export const LeavesPage: React.FC = () => {
                 <div className="max-h-40 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
                   {employees.filter((emp) => {
                     const s = bulkLeaveSearchQuery.toLowerCase();
-                    return emp.employeeName?.toLowerCase().includes(s) || emp.employeeCode?.toLowerCase().includes(s);
+                    const matchesSearch = emp.employeeName?.toLowerCase().includes(s) || emp.employeeCode?.toLowerCase().includes(s);
+
+                    // Branch filter using branches collection as source of truth.
+                    // Branch Managers are locked to their own branch; others follow the selected branch filter (if any).
+                    const effectiveBranch = userData?.designation === 'Branch Manager' ? managerBranch : branchFilter;
+                    if (effectiveBranch) {
+                      const branchData = branchesList.find((b) => b.name === effectiveBranch);
+                      const branchEmployeeIds = branchData?.employeeIds || [];
+                      return matchesSearch && branchEmployeeIds.includes(emp.id);
+                    }
+
+                    return matchesSearch;
                   }).map((emp) => (
                     <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
                       <input type="checkbox" checked={bulkLeaveSelectedIds.has(emp.id)} onChange={() => toggleBulkLeaveEmployee(emp.id)}

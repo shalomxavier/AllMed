@@ -1,9 +1,16 @@
-import { X, CalendarDays, Truck, Users, LogOut } from 'lucide-react';
+import { X, CalendarDays, Truck, Users, LogOut, Building, Briefcase, Building2, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import type { SidebarProps } from '@/types/index';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useState, useEffect } from 'react';
 
 interface NavItem {
+  path: string;
+  label: string;
+  icon: React.ReactNode;
+}
+
+interface SubNavItem {
   path: string;
   label: string;
   icon: React.ReactNode;
@@ -27,9 +34,36 @@ const navItems: NavItem[] = [
   },
 ];
 
+const masterSubItems: SubNavItem[] = [
+  {
+    path: '/attendance/branches',
+    label: 'Branches',
+    icon: <Building size={18} />,
+  },
+  {
+    path: '/attendance/designations',
+    label: 'Designations',
+    icon: <Briefcase size={18} />,
+  },
+  {
+    path: '/attendance/departments',
+    label: 'Departments',
+    icon: <Building2 size={18} />,
+  },
+];
+
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
   const { logout, userData } = useAuthContext();
+  const [masterExpanded, setMasterExpanded] = useState(false);
+
+  // Auto-collapse Master section when main nav items are selected
+  useEffect(() => {
+    const mainNavPaths = ['/attendance', '/dms', '/users'];
+    if (mainNavPaths.includes(location.pathname)) {
+      setMasterExpanded(false);
+    }
+  }, [location.pathname]);
 
   const visibleNavItems = (() => {
     if (userData?.designation === 'HR') {
@@ -88,7 +122,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               <NavLink
                 key={item.path}
                 to={item.path}
-                onClick={() => onClose()}
+                onClick={() => {
+                  onClose();
+                  setMasterExpanded(false);
+                }}
                 className={`flex items-center gap-3 px-4 py-3 font-medium transition-colors duration-200 ${
                   isActive
                     ? 'bg-primary-50 text-primary-700 rounded-lg'
@@ -102,6 +139,51 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
               </NavLink>
             );
           })}
+
+          {/* Master Section */}
+          <div className="mt-4">
+            <button
+              onClick={() => setMasterExpanded(!masterExpanded)}
+              className={`flex items-center justify-between w-full px-4 py-3 font-medium transition-colors duration-200 rounded-lg ${
+                masterExpanded || masterSubItems.some(item => location.pathname === item.path)
+                  ? 'bg-primary-50 text-primary-700'
+                  : 'text-black hover:bg-secondary-50 hover:text-secondary-900'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <span className={masterExpanded || masterSubItems.some(item => location.pathname === item.path) ? 'text-primary-700' : 'text-black'}>
+                  <Settings size={20} />
+                </span>
+                Master
+              </div>
+              {masterExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+
+            {masterExpanded && (
+              <div className="ml-4 mt-1 space-y-1">
+                {masterSubItems.map((item) => {
+                  const isActive = location.pathname === item.path;
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      onClick={() => onClose()}
+                      className={`flex items-center gap-3 px-4 py-2.5 font-medium transition-colors duration-200 rounded-lg ${
+                        isActive
+                          ? 'bg-primary-50 text-primary-700'
+                          : 'text-black hover:bg-secondary-50 hover:text-secondary-900'
+                      }`}
+                    >
+                      <span className={isActive ? 'text-primary-700' : 'text-black'}>
+                        {item.icon}
+                      </span>
+                      {item.label}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </nav>
 
         {/* Footer */}

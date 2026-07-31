@@ -4,12 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { doc, setDoc, getDocs, collection, query, orderBy, updateDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '@/firebase/firebase';
 
-interface Device {
-  id: string;
-  location: string;
-  deviceId: string;
-}
-
 interface User {
   id: string;
   name: string;
@@ -56,20 +50,22 @@ export const UsersPage: React.FC = () => {
 
   useEffect(() => {
     fetchUsers();
-    fetchDevices();
+    fetchBranches();
   }, []);
 
-  const fetchDevices = async () => {
+  const fetchBranches = async () => {
     try {
-      const snapshot = await getDocs(collection(db, 'devices'));
-      const devicesData: Device[] = [];
+      const snapshot = await getDocs(collection(db, 'branches'));
+      const branchesData: string[] = [];
       snapshot.forEach((doc) => {
-        devicesData.push({ id: doc.id, ...doc.data() } as Device);
+        const branchName = doc.data().name;
+        if (branchName) {
+          branchesData.push(branchName);
+        }
       });
-      const locations = Array.from(new Set(devicesData.map((d) => d.location).filter(Boolean))).sort();
-      setBranchOptions(locations);
+      setBranchOptions(branchesData.sort());
     } catch (error) {
-      console.error('Error fetching devices:', error);
+      console.error('Error fetching branches:', error);
     }
   };
 
@@ -98,7 +94,8 @@ export const UsersPage: React.FC = () => {
     e.preventDefault();
     setAddUserError('');
 
-    if (!addUserForm.name || !addUserForm.email || !addUserForm.password || !addUserForm.designation || !addUserForm.branch) {
+    const isBranchManager = addUserForm.designation === 'Branch Manager';
+    if (!addUserForm.name || !addUserForm.email || !addUserForm.password || !addUserForm.designation || (!isBranchManager && !addUserForm.branch)) {
       setAddUserError('Please fill in all fields');
       return;
     }
@@ -112,7 +109,7 @@ export const UsersPage: React.FC = () => {
         name: addUserForm.name,
         email: addUserForm.email,
         designation: addUserForm.designation,
-        branch: addUserForm.branch,
+        branch: isBranchManager ? '' : addUserForm.branch,
         createdAt: new Date().toISOString(),
       });
 
@@ -136,7 +133,7 @@ export const UsersPage: React.FC = () => {
 
   const openEditUserModal = (user: User) => {
     setEditingUser(user);
-    setEditUserForm({ name: user.name, designation: user.designation, branch: user.branch });
+    setEditUserForm({ name: user.name, designation: user.designation, branch: user.designation === 'Branch Manager' ? '' : user.branch });
     setEditUserError('');
     setEditUserModalOpen(true);
   };
@@ -163,7 +160,8 @@ export const UsersPage: React.FC = () => {
     if (!editingUser) return;
     setEditUserError('');
 
-    if (!editUserForm.name || !editUserForm.designation || !editUserForm.branch) {
+    const isBranchManager = editUserForm.designation === 'Branch Manager';
+    if (!editUserForm.name || !editUserForm.designation || (!isBranchManager && !editUserForm.branch)) {
       setEditUserError('Please fill in all fields');
       return;
     }
@@ -173,7 +171,7 @@ export const UsersPage: React.FC = () => {
       await updateDoc(doc(db, 'users', editingUser.id), {
         name: editUserForm.name,
         designation: editUserForm.designation,
-        branch: editUserForm.branch,
+        branch: isBranchManager ? '' : editUserForm.branch,
       });
       closeEditUserModal();
       fetchUsers();
@@ -297,7 +295,14 @@ export const UsersPage: React.FC = () => {
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Designation</label>
                 <select
                   value={editUserForm.designation}
-                  onChange={(e) => setEditUserForm({ ...editUserForm, designation: e.target.value })}
+                  onChange={(e) => {
+                    const newDesignation = e.target.value;
+                    setEditUserForm({ 
+                      ...editUserForm, 
+                      designation: newDesignation,
+                      branch: newDesignation === 'Branch Manager' ? '' : editUserForm.branch
+                    });
+                  }}
                   className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 >
                   <option value="">Select designation</option>
@@ -309,19 +314,21 @@ export const UsersPage: React.FC = () => {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
-                <select
-                  value={editUserForm.branch}
-                  onChange={(e) => setEditUserForm({ ...editUserForm, branch: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
-                >
-                  <option value="">Select branch</option>
-                  {branchOptions.map((branch) => (
-                    <option key={branch} value={branch}>{branch}</option>
-                  ))}
-                </select>
-              </div>
+              {editUserForm.designation !== 'Branch Manager' && (
+                <div>
+                  <label className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
+                  <select
+                    value={editUserForm.branch}
+                    onChange={(e) => setEditUserForm({ ...editUserForm, branch: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
+                  >
+                    <option value="">Select branch</option>
+                    {branchOptions.map((branch) => (
+                      <option key={branch} value={branch}>{branch}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {editUserError && (
                 <p className="text-sm text-red-600">{editUserError}</p>
@@ -440,7 +447,14 @@ export const UsersPage: React.FC = () => {
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Designation</label>
                 <select
                   value={addUserForm.designation}
-                  onChange={(e) => setAddUserForm({ ...addUserForm, designation: e.target.value })}
+                  onChange={(e) => {
+                    const newDesignation = e.target.value;
+                    setAddUserForm({ 
+                      ...addUserForm, 
+                      designation: newDesignation,
+                      branch: newDesignation === 'Branch Manager' ? '' : addUserForm.branch
+                    });
+                  }}
                   className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
                 >
                   <option value="">Select designation</option>
@@ -452,19 +466,21 @@ export const UsersPage: React.FC = () => {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
-                <select
-                  value={addUserForm.branch}
-                  onChange={(e) => setAddUserForm({ ...addUserForm, branch: e.target.value })}
-                  className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
-                >
-                  <option value="">Select branch</option>
-                  {branchOptions.map((branch) => (
-                    <option key={branch} value={branch}>{branch}</option>
-                  ))}
-                </select>
-              </div>
+              {addUserForm.designation !== 'Branch Manager' && (
+                <div>
+                  <label className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
+                  <select
+                    value={addUserForm.branch}
+                    onChange={(e) => setAddUserForm({ ...addUserForm, branch: e.target.value })}
+                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-red-300"
+                  >
+                    <option value="">Select branch</option>
+                    {branchOptions.map((branch) => (
+                      <option key={branch} value={branch}>{branch}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {addUserError && (
                 <p className="text-sm text-red-600">{addUserError}</p>
