@@ -2881,9 +2881,14 @@ export const EmployeesPage: React.FC = () => {
         const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
 
         const isInRange = (day: number) => {
-          const d = new Date(wizardCalYear, wizardCalMonth, day);
-          if (fromDate && d < fromDate) return false;
-          if (toDate && d > toDate) return false;
+          // Use string comparison to avoid timezone issues
+          const currentDateStr = `${wizardCalYear}-${String(wizardCalMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          
+          const fromDateStr = fromDate ? (typeof fromDate === 'string' ? fromDate : fromDate.toISOString().split('T')[0]) : null;
+          const toDateStr = toDate ? (typeof toDate === 'string' ? toDate : toDate.toISOString().split('T')[0]) : null;
+          
+          if (fromDateStr && currentDateStr < fromDateStr) return false;
+          if (toDateStr && currentDateStr > toDateStr) return false;
           return true;
         };
 

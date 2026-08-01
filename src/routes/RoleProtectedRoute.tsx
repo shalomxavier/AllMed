@@ -84,7 +84,7 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
       return path === allowedPath || path.startsWith(allowedPath + '/');
     });
   } else if (designation === 'Branch Manager') {
-    // Branch Manager can only access specific attendance routes (employees, records, shifts, leaves, insights)
+    // Branch Manager can only access specific attendance routes (employees, records, shifts, leaves, insights, reports)
     const branchManagerAllowedPaths = [
       '/attendance',
       '/attendance/employees',
@@ -93,10 +93,13 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
       '/attendance/shifts',
       '/attendance/leaves',
       '/attendance/insights',
-    ];
-    // Also explicitly restrict reports, devices, and their sub-routes
-    const restrictedPaths = [
       '/attendance/reports',
+      '/attendance/reports/preview/monthly',
+      '/attendance/reports/preview/daily',
+      '/attendance/reports/preview/shifts',
+    ];
+    // Also explicitly restrict devices, branches, designations, and departments
+    const restrictedPaths = [
       '/attendance/devices',
       '/attendance/branches',
       '/attendance/designations',

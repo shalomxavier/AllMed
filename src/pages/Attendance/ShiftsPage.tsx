@@ -255,22 +255,32 @@ export const ShiftsPage: React.FC = () => {
     e.preventDefault();
     setIsAssigning(true);
     try {
-      // Validate time fields before conversion
-      if (!assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute) {
-        const missingFields = [];
-        if (!assignForm.startHour) missingFields.push('Start Hour');
-        if (!assignForm.startMinute) missingFields.push('Start Minute');
-        if (!assignForm.endHour) missingFields.push('End Hour');
-        if (!assignForm.endMinute) missingFields.push('End Minute');
-        alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
-        setIsAssigning(false);
-        return;
+      // Validate time fields before conversion (only for EDIT MODE and ADD SHIFT MODE)
+      // For ADD EMPLOYEES MODE, time comes from the existing slot
+      if (!addingToSlot) {
+        if (!assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute) {
+          const missingFields = [];
+          if (!assignForm.startHour) missingFields.push('Start Hour');
+          if (!assignForm.startMinute) missingFields.push('Start Minute');
+          if (!assignForm.endHour) missingFields.push('End Hour');
+          if (!assignForm.endMinute) missingFields.push('End Minute');
+          alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+          setIsAssigning(false);
+          return;
+        }
       }
-      
+
       let startTime, endTime;
       try {
-        startTime = to24Hour(assignForm.startHour, assignForm.startMinute, assignForm.startAmPm);
-        endTime = to24Hour(assignForm.endHour, assignForm.endMinute, assignForm.endAmPm);
+        if (addingToSlot) {
+          // Use existing slot's time for ADD EMPLOYEES MODE
+          startTime = addingToSlot.startTime;
+          endTime = addingToSlot.endTime;
+        } else {
+          // Convert form time for EDIT MODE and ADD SHIFT MODE
+          startTime = to24Hour(assignForm.startHour, assignForm.startMinute, assignForm.startAmPm);
+          endTime = to24Hour(assignForm.endHour, assignForm.endMinute, assignForm.endAmPm);
+        }
       } catch (error) {
         console.error('Invalid time format:', error);
         alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
@@ -617,8 +627,17 @@ export const ShiftsPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
+                    const parse12 = (t: string) => {
+                      const [hStr, mStr] = t.split(':');
+                      const h = parseInt(hStr, 10);
+                      const ampm = h >= 12 ? 'PM' : 'AM';
+                      const h12 = h % 12 === 0 ? 12 : h % 12;
+                      return { hour: h12.toString(), minute: mStr ?? '00', ampm };
+                    };
+                    const s = parse12(slot.startTime);
+                    const e = parse12(slot.endTime);
                     setAddingToSlot(slot);
-                    setAssignForm({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
+                    setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
                     setAssignSelectedIds(new Set());
                     setSelectedSlot(null);
                     setAssignOpen(true);
@@ -1175,8 +1194,17 @@ export const ShiftsPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  const parse12 = (t: string) => {
+                    const [hStr, mStr] = t.split(':');
+                    const h = parseInt(hStr, 10);
+                    const ampm = h >= 12 ? 'PM' : 'AM';
+                    const h12 = h % 12 === 0 ? 12 : h % 12;
+                    return { hour: h12.toString(), minute: mStr ?? '00', ampm };
+                  };
+                  const s = parse12(selectedSlot.startTime);
+                  const e = parse12(selectedSlot.endTime);
                   setAddingToSlot(selectedSlot);
-                  setAssignForm({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
+                  setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
                   setAssignSelectedIds(new Set());
                   setSelectedSlot(null);
                   setAssignOpen(true);
@@ -1316,9 +1344,14 @@ export const ShiftsPage: React.FC = () => {
         const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
 
         const isInRange = (day: number) => {
-          const d = new Date(wizardCalYear, wizardCalMonth, day);
-          if (fromDate && d < fromDate) return false;
-          if (toDate && d > toDate) return false;
+          // Use string comparison to avoid timezone issues
+          const currentDateStr = `${wizardCalYear}-${String(wizardCalMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          
+          const fromDateStr = fromDate ? (typeof fromDate === 'string' ? fromDate : fromDate.toISOString().split('T')[0]) : null;
+          const toDateStr = toDate ? (typeof toDate === 'string' ? toDate : toDate.toISOString().split('T')[0]) : null;
+          
+          if (fromDateStr && currentDateStr < fromDateStr) return false;
+          if (toDateStr && currentDateStr > toDateStr) return false;
           return true;
         };
 

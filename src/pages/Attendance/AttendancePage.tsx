@@ -35,14 +35,12 @@ export const AttendancePage: React.FC = () => {
           </div>
           <p className="text-base font-semibold text-secondary-900 text-center">Week Off / Leave</p>
         </div>
-        {!isBranchManager && (
-          <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/reports')}>
-            <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center mb-3">
-              <FileText className="w-9 h-9 text-pink-600" />
-            </div>
-            <p className="text-base font-semibold text-secondary-900 text-center">Reports</p>
+        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/reports')}>
+          <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center mb-3">
+            <FileText className="w-9 h-9 text-pink-600" />
           </div>
-        )}
+          <p className="text-base font-semibold text-secondary-900 text-center">Reports</p>
+        </div>
         {!isBranchManager && (
           <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/devices')}>
             <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-3">
