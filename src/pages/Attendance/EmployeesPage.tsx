@@ -784,15 +784,41 @@ export const EmployeesPage: React.FC = () => {
     return { bg: 'bg-purple-50', text: 'text-purple-600', badge: 'bg-purple-100' };
   };
 
-  const formatTime12 = (time24: string) => {
-    const [h, m] = time24.split(':').map(Number);
+  const formatTime12 = (time24: any) => {
+    if (!time24) return '—';
+    
+    // Handle Firebase Timestamp objects
+    if (time24 && typeof time24 === 'object' && 'toDate' in time24) {
+      const date = time24.toDate();
+      const h = date.getHours();
+      const m = date.getMinutes();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hour = h % 12 || 12;
+      return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+    
+    const [h, m] = String(time24).split(':').map(Number);
+    
+    // Check if hour is valid (not NaN and within 0-23 range)
+    if (isNaN(h) || h < 0 || h > 23) {
+      console.warn('Invalid time format:', time24);
+      return '—';
+    }
+    
     const ampm = h >= 12 ? 'PM' : 'AM';
     const hour = h % 12 || 12;
-    return `${hour}:${m.toString().padStart(2, '0')} ${ampm}`;
+    return `${hour}:${(m || 0).toString().padStart(2, '0')} ${ampm}`;
   };
 
   const to24Hour = (hour: string, minute: string, ampm: string) => {
     let h = parseInt(hour, 10);
+    
+    // Validate hour is a valid number
+    if (isNaN(h) || hour === '') {
+      console.error('Invalid hour value:', hour);
+      throw new Error('Invalid hour value');
+    }
+    
     if (ampm === 'PM' && h !== 12) h += 12;
     if (ampm === 'AM' && h === 12) h = 0;
     return `${h.toString().padStart(2, '0')}:${minute}`;
@@ -947,11 +973,30 @@ export const EmployeesPage: React.FC = () => {
     e.preventDefault();
     if (!selectedShift || !selectedEmployee) return;
 
+    // Validate time fields before conversion
+    if (!editShiftForm.startHour || !editShiftForm.startMinute || !editShiftForm.endHour || !editShiftForm.endMinute) {
+      const missingFields = [];
+      if (!editShiftForm.startHour) missingFields.push('Start Hour');
+      if (!editShiftForm.startMinute) missingFields.push('Start Minute');
+      if (!editShiftForm.endHour) missingFields.push('End Hour');
+      if (!editShiftForm.endMinute) missingFields.push('End Minute');
+      alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+      return;
+    }
+
     setIsSavingShift(true);
     try {
       const db = getFirestore();
-      const startTime24 = to24Hour(editShiftForm.startHour, editShiftForm.startMinute, editShiftForm.startAmPm);
-      const endTime24 = to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
+      let startTime24, endTime24;
+      try {
+        startTime24 = to24Hour(editShiftForm.startHour, editShiftForm.startMinute, editShiftForm.startAmPm);
+        endTime24 = to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
+      } catch (error) {
+        console.error('Invalid time format:', error);
+        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        setIsSavingShift(false);
+        return;
+      }
 
       const newShiftData = {
         fromDate: editShiftForm.fromDate,
@@ -977,6 +1022,11 @@ export const EmployeesPage: React.FC = () => {
         return;
       }
 
+      // Final validation before saving to database
+      if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+        throw new Error('Invalid time data detected before save');
+      }
+
       const shiftRef = doc(db, 'shifts', selectedShift.id);
       await updateDoc(shiftRef, {
         fromDate: editShiftForm.fromDate,
@@ -995,6 +1045,7 @@ export const EmployeesPage: React.FC = () => {
       setShowSuccessDialog(true);
     } catch (error) {
       console.error('Error updating shift:', error);
+      alert('An error occurred while updating the shift. Please check your time values and try again.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1004,15 +1055,34 @@ export const EmployeesPage: React.FC = () => {
     e.preventDefault();
     if (!selectedEmployee) return;
 
+    // Validate time fields before conversion (only when not using existing template)
+    if (shiftMode !== 'existing' && (!shiftForm.startHour || !shiftForm.startMinute || !shiftForm.endHour || !shiftForm.endMinute)) {
+      const missingFields = [];
+      if (!shiftForm.startHour) missingFields.push('Start Hour');
+      if (!shiftForm.startMinute) missingFields.push('Start Minute');
+      if (!shiftForm.endHour) missingFields.push('End Hour');
+      if (!shiftForm.endMinute) missingFields.push('End Minute');
+      alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+      return;
+    }
+
     setIsSavingShift(true);
     try {
       const db = getFirestore();
-      const startTime24 = shiftMode === 'existing' && selectedShiftTemplate
-        ? selectedShiftTemplate.startTime
-        : to24Hour(shiftForm.startHour, shiftForm.startMinute, shiftForm.startAmPm);
-      const endTime24 = shiftMode === 'existing' && selectedShiftTemplate
-        ? selectedShiftTemplate.endTime
-        : to24Hour(shiftForm.endHour, shiftForm.endMinute, shiftForm.endAmPm);
+      let startTime24, endTime24;
+      try {
+        startTime24 = shiftMode === 'existing' && selectedShiftTemplate
+          ? selectedShiftTemplate.startTime
+          : to24Hour(shiftForm.startHour, shiftForm.startMinute, shiftForm.startAmPm);
+        endTime24 = shiftMode === 'existing' && selectedShiftTemplate
+          ? selectedShiftTemplate.endTime
+          : to24Hour(shiftForm.endHour, shiftForm.endMinute, shiftForm.endAmPm);
+      } catch (error) {
+        console.error('Invalid time format:', error);
+        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        setIsSavingShift(false);
+        return;
+      }
       const newShift = { fromDate: shiftForm.fromDate, toDate: shiftForm.toDate, startTime: startTime24, endTime: endTime24 };
 
       const shiftsRef = collection(db, 'shifts');
@@ -1039,8 +1109,16 @@ export const EmployeesPage: React.FC = () => {
       ));
 
       if (!slotSnap.empty) {
+        // Final validation before saving to database
+        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+          throw new Error('Invalid time data detected. Please refresh the page and try again.');
+        }
         await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(empEntry) });
       } else {
+        // Final validation before saving to database
+        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+          throw new Error('Invalid time data detected. Please refresh the page and try again.');
+        }
         await addDoc(shiftsRef, { startTime: startTime24, endTime: endTime24, employees: [empEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
       }
 
@@ -1051,6 +1129,7 @@ export const EmployeesPage: React.FC = () => {
       setAskLeavesDialog(true);
     } catch (error) {
       console.error('Error saving shift:', error);
+      alert('An error occurred while saving the shift. Please check your time values and try again.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1138,15 +1217,34 @@ export const EmployeesPage: React.FC = () => {
     e.preventDefault();
     if (selectedEmployeeIds.size === 0) return;
 
+    // Validate time fields before conversion (only when not using existing template)
+    if (bulkShiftMode !== 'existing' && (!bulkShiftForm.startHour || !bulkShiftForm.startMinute || !bulkShiftForm.endHour || !bulkShiftForm.endMinute)) {
+      const missingFields = [];
+      if (!bulkShiftForm.startHour) missingFields.push('Start Hour');
+      if (!bulkShiftForm.startMinute) missingFields.push('Start Minute');
+      if (!bulkShiftForm.endHour) missingFields.push('End Hour');
+      if (!bulkShiftForm.endMinute) missingFields.push('End Minute');
+      alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+      return;
+    }
+
     setIsBulkAssigning(true);
     try {
       const db = getFirestore();
-      const startTime24 = bulkShiftMode === 'existing' && bulkSelectedTemplate
-        ? bulkSelectedTemplate.startTime
-        : to24Hour(bulkShiftForm.startHour, bulkShiftForm.startMinute, bulkShiftForm.startAmPm);
-      const endTime24 = bulkShiftMode === 'existing' && bulkSelectedTemplate
-        ? bulkSelectedTemplate.endTime
-        : to24Hour(bulkShiftForm.endHour, bulkShiftForm.endMinute, bulkShiftForm.endAmPm);
+      let startTime24, endTime24;
+      try {
+        startTime24 = bulkShiftMode === 'existing' && bulkSelectedTemplate
+          ? bulkSelectedTemplate.startTime
+          : to24Hour(bulkShiftForm.startHour, bulkShiftForm.startMinute, bulkShiftForm.startAmPm);
+        endTime24 = bulkShiftMode === 'existing' && bulkSelectedTemplate
+          ? bulkSelectedTemplate.endTime
+          : to24Hour(bulkShiftForm.endHour, bulkShiftForm.endMinute, bulkShiftForm.endAmPm);
+      } catch (error) {
+        console.error('Invalid time format:', error);
+        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        setIsBulkAssigning(false);
+        return;
+      }
       const newShift = { fromDate: bulkShiftForm.fromDate, toDate: bulkShiftForm.toDate, startTime: startTime24, endTime: endTime24 };
 
       const shiftsRef = collection(db, 'shifts');
@@ -1179,8 +1277,16 @@ export const EmployeesPage: React.FC = () => {
       ));
 
       if (!slotSnap.empty) {
+        // Final validation before saving to database
+        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+          throw new Error('Invalid time data detected. Please refresh the page and try again.');
+        }
         await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(...empEntries) });
       } else {
+        // Final validation before saving to database
+        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+          throw new Error('Invalid time data detected. Please refresh the page and try again.');
+        }
         await addDoc(shiftsRef, { startTime: startTime24, endTime: endTime24, employees: empEntries, createdAt: serverTimestamp(), createdBy: currentUser?.uid });
       }
 
@@ -1189,6 +1295,7 @@ export const EmployeesPage: React.FC = () => {
       closeBulkAssignModal();
     } catch (error) {
       console.error('Error bulk assigning shifts:', error);
+      alert('An error occurred while bulk assigning shifts. Please check your time values and try again.');
     } finally {
       setIsBulkAssigning(false);
     }

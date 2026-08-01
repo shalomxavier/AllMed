@@ -30,11 +30,50 @@ interface ShiftSlot {
   employees: ShiftEmployee[];
 }
 
-const formatTime12 = (time24: string): string => {
+const formatTime12 = (time24: any): string => {
+  console.log('formatTime12 called with:', time24, 'type:', typeof time24);
+  
   if (!time24) return '—';
-  const [hStr, mStr] = time24.split(':');
+  
+  // Handle Firebase Timestamp objects
+  if (time24 && typeof time24 === 'object' && 'toDate' in time24) {
+    console.log('Detected Firebase Timestamp object');
+    const date = time24.toDate();
+    const h = date.getHours();
+    const m = date.getMinutes();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+  }
+  
+  // Handle if time is a number (convert to string first)
+  const timeStr = String(time24);
+  
+  // Check if it's a timestamp (number)
+  if (!isNaN(Number(time24)) && timeStr.length > 5) {
+    console.log('Detected timestamp number');
+    const date = new Date(Number(time24));
+    if (!isNaN(date.getTime())) {
+      const h = date.getHours();
+      const m = date.getMinutes();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+  }
+  
+  const [hStr, mStr] = timeStr.split(':');
   const h = parseInt(hStr, 10);
   const m = mStr ?? '00';
+  
+  console.log('Parsed time values:', { hStr, mStr, h, m });
+  
+  // Check if hour is valid (not NaN and within 0-23 range)
+  if (isNaN(h) || h < 0 || h > 23) {
+    console.warn('Invalid time format:', time24, 'parsed as:', { hStr, mStr, h });
+    return '—';
+  }
+  
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${m} ${ampm}`;
@@ -48,6 +87,13 @@ const formatDate = (dateStr: string) => {
 };
 const to24Hour = (hour: string, minute: string, ampm: string) => {
   let h = parseInt(hour, 10);
+  
+  // Validate hour is a valid number
+  if (isNaN(h) || hour === '') {
+    console.error('Invalid hour value:', hour);
+    throw new Error('Invalid hour value');
+  }
+  
   if (ampm === 'PM' && h !== 12) h += 12;
   if (ampm === 'AM' && h === 12) h = 0;
   return `${h.toString().padStart(2, '0')}:${minute}`;
@@ -146,19 +192,27 @@ export const ShiftsPage: React.FC = () => {
     try {
       let allowedEmployeeIds: string[] | null = null;
       
+      console.log('Fetching employees for user:', userData?.designation, currentUser?.uid);
+      
       // If user is Branch Manager, fetch the branch(es) they manage
       if (userData?.designation === 'Branch Manager' && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
+          console.log('Branch query results:', branchSnapshot.size, 'branches found');
+          
           if (!branchSnapshot.empty) {
             const branchData = branchSnapshot.docs[0].data();
+            console.log('Branch data:', branchData);
             allowedEmployeeIds = branchData.employeeIds || [];
+            console.log('Allowed employee IDs:', allowedEmployeeIds);
           } else {
-            allowedEmployeeIds = [];
+            console.log('No branches found for this manager - showing no employees');
+            allowedEmployeeIds = []; // Explicitly empty to show no employees
           }
         } catch (err) {
           console.error('Error fetching branch employees:', err);
+          allowedEmployeeIds = []; // Safety: show no employees on error
         }
       }
 
@@ -167,13 +221,20 @@ export const ShiftsPage: React.FC = () => {
       snap.forEach((d) => data.push({ id: d.id, ...d.data() as Omit<Employee, 'id'> }));
       let filtered = data.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
       
+      console.log('Total employees before filtering:', filtered.length);
+      
       // Filter by branch if allowedEmployeeIds is set
-      if (allowedEmployeeIds) {
+      if (allowedEmployeeIds !== null) {
         filtered = filtered.filter((e) => allowedEmployeeIds.includes(e.id));
+        console.log('Employees after branch filtering:', filtered.length);
       }
       
       setAllEmployees(filtered);
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error('Error in fetchEmployees:', e);
+      // On error, set empty array to prevent showing all employees
+      setAllEmployees([]);
+    }
   };
 
   const closeAssignModal = () => {
@@ -194,8 +255,29 @@ export const ShiftsPage: React.FC = () => {
     e.preventDefault();
     setIsAssigning(true);
     try {
-      const startTime = to24Hour(assignForm.startHour, assignForm.startMinute, assignForm.startAmPm);
-      const endTime = to24Hour(assignForm.endHour, assignForm.endMinute, assignForm.endAmPm);
+      // Validate time fields before conversion
+      if (!assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute) {
+        const missingFields = [];
+        if (!assignForm.startHour) missingFields.push('Start Hour');
+        if (!assignForm.startMinute) missingFields.push('Start Minute');
+        if (!assignForm.endHour) missingFields.push('End Hour');
+        if (!assignForm.endMinute) missingFields.push('End Minute');
+        alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+        setIsAssigning(false);
+        return;
+      }
+      
+      let startTime, endTime;
+      try {
+        startTime = to24Hour(assignForm.startHour, assignForm.startMinute, assignForm.startAmPm);
+        endTime = to24Hour(assignForm.endHour, assignForm.endMinute, assignForm.endAmPm);
+      } catch (error) {
+        console.error('Invalid time format:', error);
+        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        setIsAssigning(false);
+        return;
+      }
+      
       const selectedEmps = Array.from(assignSelectedIds).map((id) => allEmployees.find((e) => e.id === id)).filter(Boolean) as Employee[];
 
       // EDIT MODE: update existing slot's startTime/endTime
@@ -213,6 +295,11 @@ export const ShiftsPage: React.FC = () => {
         }
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
 
+        // Final validation before saving to database
+        if (!startTime || !endTime || startTime.includes('NaN') || endTime.includes('NaN')) {
+          throw new Error('Invalid time data detected. Please refresh the page and try again.');
+        }
+        
         await updateDoc(doc(db, 'shifts', editingSlot.key), {
           startTime,
           endTime,
@@ -308,6 +395,11 @@ export const ShiftsPage: React.FC = () => {
           employees: arrayUnion(...empEntries),
         });
       } else {
+        // Final validation before saving to database
+        if (!startTime || !endTime || startTime.includes('NaN') || endTime.includes('NaN')) {
+          throw new Error('Invalid time data detected. Please refresh the page and try again.');
+        }
+        
         await addDoc(collection(db, 'shifts'), {
           startTime,
           endTime,
@@ -321,7 +413,10 @@ export const ShiftsPage: React.FC = () => {
       fetchShifts();
       closeAssignModal();
       if (empsForWizard.length > 0) setAskLeavesDialog(true);
-    } catch (err) { console.error(err); }
+    } catch (err) { 
+      console.error(err);
+      alert('An error occurred while saving the shift. Please check your time values and try again.');
+    }
     finally { setIsAssigning(false); }
   };
 
@@ -415,8 +510,11 @@ export const ShiftsPage: React.FC = () => {
 
   useEffect(() => {
     if (!currentUser) return;
-    fetchShifts();
-    fetchEmployees();
+    // Only fetch if we have user data to determine filtering
+    if (userData) {
+      fetchShifts();
+      fetchEmployees();
+    }
   }, [currentUser, userData]);
 
   return (
@@ -530,35 +628,39 @@ export const ShiftsPage: React.FC = () => {
                   <Plus size={16} />
                   Add Employees
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const parse12 = (t: string) => {
-                      const [hStr, mStr] = t.split(':');
-                      const h = parseInt(hStr, 10);
-                      const ampm = h >= 12 ? 'PM' : 'AM';
-                      const h12 = h % 12 === 0 ? 12 : h % 12;
-                      return { hour: h12.toString(), minute: mStr ?? '00', ampm };
-                    };
-                    const s = parse12(slot.startTime);
-                    const e = parse12(slot.endTime);
-                    setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
-                    setEditingSlot(slot);
-                    setAssignOpen(true);
-                  }}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
-                >
-                  <Pencil size={16} />
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDeleteSlot(slot)}
-                  className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
+                {userData?.designation !== 'Branch Manager' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const parse12 = (t: string) => {
+                          const [hStr, mStr] = t.split(':');
+                          const h = parseInt(hStr, 10);
+                          const ampm = h >= 12 ? 'PM' : 'AM';
+                          const h12 = h % 12 === 0 ? 12 : h % 12;
+                          return { hour: h12.toString(), minute: mStr ?? '00', ampm };
+                        };
+                        const s = parse12(slot.startTime);
+                        const e = parse12(slot.endTime);
+                        setAssignForm({ fromDate: '', toDate: '', startHour: s.hour, startMinute: s.minute, startAmPm: s.ampm, endHour: e.hour, endMinute: e.minute, endAmPm: e.ampm });
+                        setEditingSlot(slot);
+                        setAssignOpen(true);
+                      }}
+                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
+                    >
+                      <Pencil size={16} />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteSlot(slot)}
+                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                    >
+                      <Trash2 size={16} />
+                      Delete
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -574,7 +676,7 @@ export const ShiftsPage: React.FC = () => {
               <button onClick={closeAssignModal} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
             </div>
             <form onSubmit={handleAssignSubmit} className="flex-1 overflow-y-auto p-4 space-y-4">
-              {editingSlot && (
+              {editingSlot && userData?.designation !== 'Branch Manager' && (
                 <div className="flex justify-end">
                   <button
                     type="button"
@@ -601,6 +703,11 @@ export const ShiftsPage: React.FC = () => {
                   <div className="border border-secondary-300 rounded-lg p-3">
                     <label className="block text-sm font-medium text-secondary-700 mb-2">
                       Select Employees {assignSelectedIds.size > 0 && <span className="text-blue-600">({assignSelectedIds.size} selected)</span>}
+                      {userData?.designation === 'Branch Manager' && (
+                        <span className="ml-2 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                          Branch Filter Active
+                        </span>
+                      )}
                     </label>
                     <div className="relative mb-3">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
@@ -611,17 +718,28 @@ export const ShiftsPage: React.FC = () => {
                       {allEmployees.filter((e) => {
                         const search = addEmpSearch.toLowerCase();
                         return e.employeeName?.toLowerCase().includes(search) || e.employeeCode?.toLowerCase().includes(search);
-                      }).map((emp) => (
-                        <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
-                          <input type="checkbox" checked={assignSelectedIds.has(emp.id)}
-                            onChange={() => setAssignSelectedIds((prev) => { const n = new Set(prev); n.has(emp.id) ? n.delete(emp.id) : n.add(emp.id); return n; })}
-                            className="w-4 h-4 text-blue-600 rounded border-secondary-300 focus:ring-blue-500" />
-                          <div>
-                            <p className="text-sm font-medium text-blue-600">{emp.employeeName || 'Unnamed'}</p>
-                            <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
-                          </div>
-                        </label>
-                      ))}
+                      }).length === 0 ? (
+                        <div className="text-center py-4 text-sm text-secondary-500">
+                          {userData?.designation === 'Branch Manager' 
+                            ? 'No employees found in your branch. Please contact admin if this seems incorrect.'
+                            : 'No employees found matching your search.'}
+                        </div>
+                      ) : (
+                        allEmployees.filter((e) => {
+                          const search = addEmpSearch.toLowerCase();
+                          return e.employeeName?.toLowerCase().includes(search) || e.employeeCode?.toLowerCase().includes(search);
+                        }).map((emp) => (
+                          <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
+                            <input type="checkbox" checked={assignSelectedIds.has(emp.id)}
+                              onChange={() => setAssignSelectedIds((prev) => { const n = new Set(prev); n.has(emp.id) ? n.delete(emp.id) : n.add(emp.id); return n; })}
+                              className="w-4 h-4 text-blue-600 rounded border-secondary-300 focus:ring-blue-500" />
+                            <div>
+                              <p className="text-sm font-medium text-blue-600">{emp.employeeName || 'Unnamed'}</p>
+                              <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
+                            </div>
+                          </label>
+                        ))
+                      )}
                     </div>
                   </div>
 
@@ -707,7 +825,27 @@ export const ShiftsPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-secondary-200">
-              <h2 className="text-lg font-semibold text-secondary-900">Edit Employees</h2>
+              <div>
+                <h2 className="text-lg font-semibold text-secondary-900">Edit Employees</h2>
+                <p className="text-xs text-secondary-500 mt-0.5">
+                  {(() => {
+                    const visibleEmployees = editingSlot.employees.filter((emp) => {
+                      return allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                    });
+                    const totalEmployees = editingSlot.employees.length;
+                    return (
+                      <>
+                        {visibleEmployees.length} {visibleEmployees.length === 1 ? 'employee' : 'employees'}
+                        {userData?.designation === 'Branch Manager' && totalEmployees !== visibleEmployees.length && (
+                          <span className="ml-2 text-orange-600">
+                            (shift shared with other branches - {totalEmployees - visibleEmployees.length} hidden)
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
+                </p>
+              </div>
               <button onClick={() => setEditEmployeesOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
@@ -724,7 +862,17 @@ export const ShiftsPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {editingSlot.employees.map((emp, idx) => (
+                  {editingSlot.employees
+                    .filter((emp) => {
+                      // Safety filter: only show employees that are in the current allEmployees list
+                      // This ensures branch managers only see employees from their branch, even if multiple branches share the same shift
+                      const isAllowed = allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                      if (!isAllowed && userData?.designation === 'Branch Manager') {
+                        console.log('Filtering out employee from different branch:', emp.employeeName, emp.employeeCode);
+                      }
+                      return isAllowed;
+                    })
+                    .map((emp, idx) => (
                     <div key={`${emp.employeeCode}-${idx}`} className="flex items-center justify-between p-3 bg-secondary-50 rounded-lg">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-secondary-900 truncate">{emp.employeeName || '—'}</p>
@@ -901,11 +1049,28 @@ export const ShiftsPage: React.FC = () => {
                   <div className="mt-2">
                     <p className="text-xs text-red-600 font-medium mb-1">Employees to be removed:</p>
                     <div className="space-y-1">
-                      {deleteSlot.employees.slice(0, 3).map((emp, i) => (
+                      {deleteSlot.employees
+                        .filter((emp) => {
+                          // Safety filter: only show employees that are in the current allEmployees list
+                          // This ensures branch managers only see employees from their branch, even if multiple branches share the same shift
+                          const isAllowed = allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                          if (!isAllowed && userData?.designation === 'Branch Manager') {
+                            console.log('Filtering out employee from different branch:', emp.employeeName, emp.employeeCode);
+                          }
+                          return isAllowed;
+                        })
+                        .slice(0, 3)
+                        .map((emp, i) => (
                         <p key={i} className="text-xs text-red-600">• {emp.employeeName} ({emp.employeeCode})</p>
                       ))}
-                      {deleteSlot.employees.length > 3 && (
-                        <p className="text-xs text-red-600">• and {deleteSlot.employees.length - 3} more...</p>
+                      {deleteSlot.employees.filter((emp) => {
+                        const isAllowed = allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                        return isAllowed;
+                      }).length > 3 && (
+                        <p className="text-xs text-red-600">• and {deleteSlot.employees.filter((emp) => {
+                          const isAllowed = allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                          return isAllowed;
+                        }).length - 3} more...</p>
                       )}
                     </div>
                   </div>
@@ -947,14 +1112,41 @@ export const ShiftsPage: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-secondary-200">
               <div>
                 <h2 className="text-base font-semibold text-secondary-900">{formatTime12(selectedSlot.startTime)} — {formatTime12(selectedSlot.endTime)}</h2>
-                <p className="text-xs text-secondary-500 mt-0.5">{selectedSlot.count} {selectedSlot.count === 1 ? 'employee' : 'employees'}</p>
+                <p className="text-xs text-secondary-500 mt-0.5">
+                  {(() => {
+                    const visibleEmployees = selectedSlot.employees.filter((emp) => {
+                      return allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                    });
+                    const totalEmployees = selectedSlot.employees.length;
+                    return (
+                      <>
+                        {visibleEmployees.length} {visibleEmployees.length === 1 ? 'employee' : 'employees'}
+                        {userData?.designation === 'Branch Manager' && totalEmployees !== visibleEmployees.length && (
+                          <span className="ml-2 text-orange-600">
+                            (shift shared with other branches - {totalEmployees - visibleEmployees.length} hidden)
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
+                </p>
               </div>
               <button onClick={() => setSelectedSlot(null)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors">
                 <X size={18} />
               </button>
             </div>
             <div className="overflow-y-auto p-3 space-y-1">
-              {selectedSlot.employees.map((emp, i) => (
+              {selectedSlot.employees
+                .filter((emp) => {
+                  // Safety filter: only show employees that are in the current allEmployees list
+                  // This ensures branch managers only see employees from their branch, even if multiple branches share the same shift
+                  const isAllowed = allEmployees.some((e) => e.employeeCode === emp.employeeCode);
+                  if (!isAllowed && userData?.designation === 'Branch Manager') {
+                    console.log('Filtering out employee from different branch:', emp.employeeName, emp.employeeCode);
+                  }
+                  return isAllowed;
+                })
+                .map((emp, i) => (
                 <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-secondary-50">
                   <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
                     <Users size={14} className="text-orange-600" />

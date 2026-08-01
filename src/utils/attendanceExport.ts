@@ -840,12 +840,30 @@ export interface ShiftReportData {
   employees: ShiftMatrixEmployee[];
 }
 
-const formatTime12Compact = (time24: string): string => {
+const formatTime12Compact = (time24: any): string => {
   if (!time24) return '';
-  const [hStr, mStr] = time24.split(':');
+  
+  // Handle Firebase Timestamp objects
+  if (time24 && typeof time24 === 'object' && 'toDate' in time24) {
+    const date = time24.toDate();
+    const h = date.getHours();
+    const m = date.getMinutes();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    if (m === 0) return `${h12}${ampm}`;
+    return `${h12}:${String(m).padStart(2, '0')}${ampm}`;
+  }
+  
+  const [hStr, mStr] = String(time24).split(':');
   const h = parseInt(hStr, 10);
   const m = parseInt(mStr, 10) || 0;
-  if (isNaN(h)) return time24;
+  
+  // Check if hour is valid (not NaN and within 0-23 range)
+  if (isNaN(h) || h < 0 || h > 23) {
+    console.warn('Invalid time format:', time24);
+    return '';
+  }
+  
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   if (m === 0) return `${h12}${ampm}`;
