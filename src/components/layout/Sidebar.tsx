@@ -75,6 +75,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     if (userData?.designation === 'WhatsApp Messager') {
       return navItems.filter((item) => item.path === '/dms');
     }
+    if (userData?.designation === 'Branch Manager') {
+      return navItems.filter((item) => item.path === '/attendance');
+    }
     return navItems;
   })();
 
@@ -140,50 +143,52 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             );
           })}
 
-          {/* Master Section */}
-          <div className="mt-4">
-            <button
-              onClick={() => setMasterExpanded(!masterExpanded)}
-              className={`flex items-center justify-between w-full px-4 py-3 font-medium transition-colors duration-200 rounded-lg ${
-                masterExpanded || masterSubItems.some(item => location.pathname === item.path)
-                  ? 'bg-primary-50 text-primary-700'
-                  : 'text-black hover:bg-secondary-50 hover:text-secondary-900'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <span className={masterExpanded || masterSubItems.some(item => location.pathname === item.path) ? 'text-primary-700' : 'text-black'}>
-                  <Settings size={20} />
-                </span>
-                Master
-              </div>
-              {masterExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
+          {/* Master Section - Hidden for Branch Manager and HR */}
+          {userData?.designation !== 'Branch Manager' && userData?.designation !== 'HR' && (
+            <div className="mt-4">
+              <button
+                onClick={() => setMasterExpanded(!masterExpanded)}
+                className={`flex items-center justify-between w-full px-4 py-3 font-medium transition-colors duration-200 rounded-lg ${
+                  masterExpanded || masterSubItems.some(item => location.pathname === item.path)
+                    ? 'bg-primary-50 text-primary-700'
+                    : 'text-black hover:bg-secondary-50 hover:text-secondary-900'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className={masterExpanded || masterSubItems.some(item => location.pathname === item.path) ? 'text-primary-700' : 'text-black'}>
+                    <Settings size={20} />
+                  </span>
+                  Master
+                </div>
+                {masterExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
 
-            {masterExpanded && (
-              <div className="ml-4 mt-1 space-y-1">
-                {masterSubItems.map((item) => {
-                  const isActive = location.pathname === item.path;
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => onClose()}
-                      className={`flex items-center gap-3 px-4 py-2.5 font-medium transition-colors duration-200 rounded-lg ${
-                        isActive
-                          ? 'bg-primary-50 text-primary-700'
-                          : 'text-black hover:bg-secondary-50 hover:text-secondary-900'
-                      }`}
-                    >
-                      <span className={isActive ? 'text-primary-700' : 'text-black'}>
-                        {item.icon}
-                      </span>
-                      {item.label}
-                    </NavLink>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+              {masterExpanded && (
+                <div className="ml-4 mt-1 space-y-1">
+                  {masterSubItems.map((item) => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <NavLink
+                        key={item.path}
+                        to={item.path}
+                        onClick={() => onClose()}
+                        className={`flex items-center gap-3 px-4 py-2.5 font-medium transition-colors duration-200 rounded-lg ${
+                          isActive
+                            ? 'bg-primary-50 text-primary-700'
+                            : 'text-black hover:bg-secondary-50 hover:text-secondary-900'
+                        }`}
+                      >
+                        <span className={isActive ? 'text-primary-700' : 'text-black'}>
+                          {item.icon}
+                        </span>
+                        {item.label}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
 
         {/* Footer */}

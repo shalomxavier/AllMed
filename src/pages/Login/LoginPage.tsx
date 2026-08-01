@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, EyeOff, Activity, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Activity, AlertCircle, X, Mail, CheckCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
 interface LoginFormData {
@@ -8,7 +8,7 @@ interface LoginFormData {
 }
 
 export const LoginPage: React.FC = () => {
-  const { login, error, clearError } = useAuth();
+  const { login, error, clearError, resetPassword } = useAuth();
   const [formData, setFormData] = useState<LoginFormData>({
     email: '',
     password: '',
@@ -16,6 +16,11 @@ export const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [validationErrors, setValidationErrors] = useState<Partial<LoginFormData>>({});
+  const [isForgotPasswordModalOpen, setIsForgotPasswordModalOpen] = useState<boolean>(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState<string>('');
+  const [isResettingPassword, setIsResettingPassword] = useState<boolean>(false);
+  const [resetPasswordSuccess, setResetPasswordSuccess] = useState<boolean>(false);
+  const [resetPasswordError, setResetPasswordError] = useState<string>('');
 
   const validateForm = (): boolean => {
     const newErrors: Partial<LoginFormData> = {};
@@ -62,6 +67,46 @@ export const LoginPage: React.FC = () => {
     if (error) {
       clearError();
     }
+  };
+
+  const handleForgotPasswordClick = (): void => {
+    setForgotPasswordEmail(formData.email);
+    setResetPasswordSuccess(false);
+    setResetPasswordError('');
+    setIsForgotPasswordModalOpen(true);
+  };
+
+  const handleResetPassword = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    
+    if (!forgotPasswordEmail.trim()) {
+      setResetPasswordError('Email is required');
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgotPasswordEmail)) {
+      setResetPasswordError('Please enter a valid email');
+      return;
+    }
+
+    setIsResettingPassword(true);
+    setResetPasswordError('');
+
+    try {
+      await resetPassword(forgotPasswordEmail);
+      setResetPasswordSuccess(true);
+    } catch (err) {
+      setResetPasswordError((err as Error).message || 'Failed to send reset email. Please try again.');
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
+
+  const closeForgotPasswordModal = (): void => {
+    setIsForgotPasswordModalOpen(false);
+    setForgotPasswordEmail('');
+    setResetPasswordSuccess(false);
+    setResetPasswordError('');
   };
 
   return (
@@ -162,6 +207,7 @@ export const LoginPage: React.FC = () => {
               </label>
               <button
                 type="button"
+                onClick={handleForgotPasswordClick}
                 className="text-primary-600 hover:text-primary-700 font-medium transition-colors"
               >
                 Forgot password?
@@ -209,6 +255,118 @@ export const LoginPage: React.FC = () => {
           ALLMED Healthcare Management System v1.0.0
         </p>
       </div>
+
+      {/* Forgot Password Modal */}
+      {isForgotPasswordModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={closeForgotPasswordModal}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-secondary-900">Reset Password</h3>
+              <button
+                onClick={closeForgotPasswordModal}
+                className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {resetPasswordSuccess ? (
+              <div className="text-center py-6">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="w-8 h-8 text-green-600" />
+                </div>
+                <h4 className="text-lg font-medium text-secondary-900 mb-2">Check your email</h4>
+                <p className="text-sm text-secondary-600 mb-4">
+                  We've sent a password reset link to <strong>{forgotPasswordEmail}</strong>
+                </p>
+                <button
+                  onClick={closeForgotPasswordModal}
+                  className="w-full btn-primary py-2.5"
+                >
+                  Back to Sign In
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-secondary-600 mb-4">
+                  Enter your email address and we'll send you a link to reset your password.
+                </p>
+
+                {resetPasswordError && (
+                  <div className="mb-4 p-3 bg-primary-50 border border-primary-200 rounded-lg flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-primary-700">{resetPasswordError}</p>
+                  </div>
+                )}
+
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  <div>
+                    <label
+                      htmlFor="reset-email"
+                      className="block text-sm font-medium text-secondary-700 mb-1.5"
+                    >
+                      Email Address
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="email"
+                        id="reset-email"
+                        value={forgotPasswordEmail}
+                        onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                        placeholder="Enter your email"
+                        className="input pl-10"
+                        disabled={isResettingPassword}
+                        autoComplete="email"
+                      />
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" size={18} />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isResettingPassword}
+                    className="w-full btn-primary py-2.5 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isResettingPassword ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg
+                          className="animate-spin h-5 w-5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                          />
+                        </svg>
+                        Sending...
+                      </span>
+                    ) : (
+                      'Send Reset Link'
+                    )}
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

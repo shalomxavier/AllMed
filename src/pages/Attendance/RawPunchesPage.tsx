@@ -828,13 +828,15 @@ export const RawPunchesPage: React.FC = () => {
             <Download size={16} />
             Export
           </button>
-          <button
-            onClick={openAnalyzeModal}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
-          >
-            <Clock size={16} />
-            Analyze
-          </button>
+          {userData?.designation !== 'Branch Manager' && (
+            <button
+              onClick={openAnalyzeModal}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Clock size={16} />
+              Analyze
+            </button>
+          )}
           <button
             onClick={() => { setLastDoc(null); setHasMore(false); setCurrentPageIndex(0); fetchPage(fromDate, toDateFilter, locationFilter); }}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"

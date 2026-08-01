@@ -3,6 +3,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
@@ -22,6 +23,7 @@ export interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   error: string | null;
   clearError: () => void;
 }
@@ -58,6 +60,12 @@ const getAuthErrorMessage = (errorCode: string): string => {
       return 'Password is too weak. Please use a stronger password.';
     case 'auth/email-already-in-use':
       return 'An account with this email already exists.';
+    case 'auth/missing-email':
+      return 'Please enter your email address.';
+    case 'auth/invalid-continue-uri':
+      return 'Invalid continue URL. Please contact support.';
+    case 'auth/unauthorized-continue-uri':
+      return 'Unauthorized continue URL. Please contact support.';
     default:
       return 'An unexpected error occurred. Please try again.';
   }
@@ -117,6 +125,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
+  const resetPassword = useCallback(async (email: string): Promise<void> => {
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (error) {
+      const errorCode = (error as { code?: string }).code || 'auth/unknown';
+      const message = getAuthErrorMessage(errorCode);
+      setError(message);
+      throw new Error(message);
+    }
+  }, []);
+
   const clearError = useCallback((): void => {
     setError(null);
   }, []);
@@ -127,6 +147,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     login,
     logout,
+    resetPassword,
     error,
     clearError,
   };

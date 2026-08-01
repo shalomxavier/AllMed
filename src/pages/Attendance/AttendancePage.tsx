@@ -1,9 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import { Users, ClipboardList, Clock, Umbrella, Fingerprint, FileText, Lightbulb } from 'lucide-react';
 import { PageContainer } from '@/components/common';
+import { useAuthContext } from '@/contexts/AuthContext';
 
 export const AttendancePage: React.FC = () => {
   const navigate = useNavigate();
+  const { userData } = useAuthContext();
+  const isBranchManager = userData?.designation === 'Branch Manager';
+
   return (
     <PageContainer>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4 mt-4">
@@ -31,18 +35,22 @@ export const AttendancePage: React.FC = () => {
           </div>
           <p className="text-base font-semibold text-secondary-900 text-center">Week Off / Leave</p>
         </div>
-        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/reports')}>
-          <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center mb-3">
-            <FileText className="w-9 h-9 text-pink-600" />
+        {!isBranchManager && (
+          <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/reports')}>
+            <div className="w-16 h-16 rounded-full bg-pink-100 flex items-center justify-center mb-3">
+              <FileText className="w-9 h-9 text-pink-600" />
+            </div>
+            <p className="text-base font-semibold text-secondary-900 text-center">Reports</p>
           </div>
-          <p className="text-base font-semibold text-secondary-900 text-center">Reports</p>
-        </div>
-        <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/devices')}>
-          <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-3">
-            <Fingerprint className="w-9 h-9 text-red-600" />
+        )}
+        {!isBranchManager && (
+          <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/devices')}>
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-3">
+              <Fingerprint className="w-9 h-9 text-red-600" />
+            </div>
+            <p className="text-base font-semibold text-secondary-900 text-center">Devices</p>
           </div>
-          <p className="text-base font-semibold text-secondary-900 text-center">Devices</p>
-        </div>
+        )}
         <div className="card p-5 flex flex-col items-center justify-center aspect-square cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate('/attendance/insights')}>
           <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mb-3">
             <Lightbulb className="w-9 h-9 text-amber-600" />
