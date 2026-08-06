@@ -1332,7 +1332,7 @@ export const EmployeesPage: React.FC = () => {
                 placeholder="Search employees by name, code, or ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 bg-white/30 backdrop-blur-sm border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
             <div className="w-52">
@@ -1340,7 +1340,7 @@ export const EmployeesPage: React.FC = () => {
                 value={userData?.designation === 'Branch Manager' ? (managerBranchName ?? '') : branchFilter}
                 onChange={(e) => setBranchFilter(e.target.value)}
                 disabled={userData?.designation === 'Branch Manager'}
-                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                className="w-full px-3 py-2 bg-white/30 backdrop-blur-sm border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
               >
                 {userData?.designation === 'Branch Manager' ? (
                   <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -1358,7 +1358,7 @@ export const EmployeesPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setBulkLeaveModalOpen(true)}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600/90 backdrop-blur-sm rounded-xl hover:bg-purple-700 transition-colors"
             >
               <Umbrella size={16} />
               Add Leaves
@@ -1368,7 +1368,7 @@ export const EmployeesPage: React.FC = () => {
                 setBulkAssignModalOpen(true);
                 fetchShiftTemplates();
               }}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600/90 backdrop-blur-sm rounded-xl hover:bg-blue-700 transition-colors"
             >
               <Clock size={16} />
               Assign Shifts
@@ -1807,7 +1807,7 @@ export const EmployeesPage: React.FC = () => {
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-medium">
                               <span className="text-blue-600">{formatShiftDate(shift.fromDate)}</span>
-                              <span className="text-black"> to </span>
+                              <span className="text-black"> - </span>
                               <span className="text-blue-600">{formatShiftDate(shift.toDate)}</span>
                             </span>
                             <div className="flex items-center gap-2">
@@ -1826,8 +1826,7 @@ export const EmployeesPage: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-4 text-sm">
-                            <span className="text-green-600">Start: {formatTime12(shift.startTime)}</span>
-                            <span className="text-red-500">End: {formatTime12(shift.endTime)}</span>
+                            <span className="px-2.5 py-0.5 rounded-full bg-green-50 text-green-600 text-xs font-medium">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
                           </div>
                         </div>
                       ))}
@@ -2353,7 +2352,7 @@ export const EmployeesPage: React.FC = () => {
                     {shift.fromDate} to {shift.toDate}
                   </div>
                   <div className="text-sm text-secondary-600">
-                    Start: {formatTime12(shift.startTime)} · End: {formatTime12(shift.endTime)}
+                    {formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}
                   </div>
                 </div>
               ))}
@@ -2413,12 +2412,10 @@ export const EmployeesPage: React.FC = () => {
                     {overlaps.map((shift) => (
                       <div key={shift.id} className="text-sm text-secondary-600">
                         <span className="text-blue-600">{formatShiftDate(shift.fromDate)}</span>
-                        <span className="text-black"> to </span>
+                        <span className="text-black"> - </span>
                         <span className="text-blue-600">{formatShiftDate(shift.toDate)}</span>
                         <span className="text-secondary-400"> · </span>
-                        <span className="text-green-600">Start: {formatTime12(shift.startTime)}</span>
-                        <span className="text-secondary-400"> · </span>
-                        <span className="text-red-500">End: {formatTime12(shift.endTime)}</span>
+                        <span className="text-green-600">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
                       </div>
                     ))}
                   </div>

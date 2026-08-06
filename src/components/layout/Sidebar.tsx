@@ -99,13 +99,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         }`}
       >
         {/* Company Branding */}
-        <div className="relative flex items-center justify-center h-16 px-6 border-b border-secondary-200">
+        <div className="relative flex items-center justify-center h-24 px-6 border-b border-secondary-200">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center">
+            <div className="w-12 h-12 rounded-lg overflow-hidden flex items-center justify-center">
               <img src="/allmed_logo.png" alt="AllMed Logo" className="w-full h-full object-contain" />
             </div>
             <div>
-              <span className="text-lg font-bold text-primary-600 block leading-tight">ALLMED-ALLRISE</span>
+              <span className="text-xl font-bold text-primary-600 block leading-tight">ALLMED-ALLRISE</span>
             </div>
           </div>
           <button
