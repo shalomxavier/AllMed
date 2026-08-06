@@ -3,6 +3,7 @@ import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, 
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { RedSpinner } from '@/components/common';
 
 interface LeaveRecord {
   id: string;
@@ -474,9 +475,9 @@ export const LeavesPage: React.FC = () => {
       .values()
   ).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
   return (
-    <div className="flex flex-col h-full bg-secondary-50">
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-secondary-200">
+      <div className="flex items-center gap-3 px-4 py-3">
         <button onClick={() => navigate('/attendance')} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
           <ArrowLeft size={20} className="text-secondary-600" />
         </button>
@@ -485,7 +486,7 @@ export const LeavesPage: React.FC = () => {
           <p className="text-xs text-secondary-500">All employee leaves and week-off schedules</p>
         </div>
         <button onClick={fetchData} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-          <RefreshCw size={18} className={`text-secondary-500 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? <RedSpinner size="sm" /> : <RefreshCw size={18} className="text-secondary-500" />}
         </button>
       </div>
 
@@ -556,7 +557,7 @@ export const LeavesPage: React.FC = () => {
               Add Leaves
             </button>
             <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shrink-0 disabled:opacity-70">
-              {checkingAbsences ? <RefreshCw size={16} className="animate-spin" /> : <AlertTriangle size={16} />}
+              {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={16} />}
               Check Unauthorized Absence
             </button>
           </div>
@@ -567,7 +568,7 @@ export const LeavesPage: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3 content-start">
         {loading ? (
           <div className="w-full flex items-center justify-center py-16">
-            <div className="w-7 h-7 border-2 border-secondary-300 border-t-purple-600 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : filtered.length === 0 ? (
           <div className="w-full flex flex-col items-center justify-center py-16 text-center">
@@ -585,7 +586,7 @@ export const LeavesPage: React.FC = () => {
             const empCode = group.employeeCode;
 
             return (
-              <div key={empCode} className="bg-white border border-purple-700/30 rounded-xl overflow-hidden cursor-pointer shadow-[0_2px_8px_rgba(126,34,206,0.15)] hover:shadow-[0_4px_16px_rgba(126,34,206,0.35)] transition-shadow h-auto min-h-[200px]" onClick={() => {
+              <div key={empCode} className="bg-white/80 backdrop-blur-sm rounded-xl overflow-hidden cursor-pointer shadow-lg hover:shadow-xl transition-shadow h-auto min-h-[200px]" onClick={() => {
                 const leaveDetails = leaves
                   .filter((l) => l.employeeCode === empCode)
                   .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))

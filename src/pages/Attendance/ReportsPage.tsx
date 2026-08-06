@@ -132,7 +132,7 @@ export const ReportsPage: React.FC = () => {
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-secondary-200 bg-white">
+      <div className="flex items-center gap-3 px-6 py-4">
         <button
           onClick={() => navigate('/attendance')}
           className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
@@ -145,10 +145,10 @@ export const ReportsPage: React.FC = () => {
           <p className="text-sm text-secondary-500">Attendance reports</p>
         </div>
       </div>
-      <div className="bg-secondary-50 p-6 flex-1">
+      <div className="p-6 flex-1">
         <div className="max-w-2xl space-y-6">
           {/* Monthly Work Duration */}
-          <div className="bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Monthly Work Duration</h2>
             <p className="text-sm text-secondary-500 mb-4">Generate monthly work duration report.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -215,7 +215,7 @@ export const ReportsPage: React.FC = () => {
           </div>
 
           {/* Daily Attendance */}
-          <div className="bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Daily Attendance</h2>
             <p className="text-sm text-secondary-500 mb-4">Export daily attendance records.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -282,7 +282,7 @@ export const ReportsPage: React.FC = () => {
           </div>
 
           {/* Shifts */}
-          <div className="bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Shifts</h2>
             <p className="text-sm text-secondary-500 mb-4">Export shift assignment report.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">

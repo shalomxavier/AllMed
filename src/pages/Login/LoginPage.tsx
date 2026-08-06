@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Eye, EyeOff, Activity, AlertCircle, X, Mail, CheckCircle } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, X, Mail, CheckCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { RedSpinner } from '@/components/common';
 
 interface LoginFormData {
   email: string;
@@ -110,15 +111,23 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-secondary-50 to-secondary-100 px-4">
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{
+        backgroundImage: 'url(/bg.jpg)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
+      }}
+    >
       <div className="w-full max-w-md">
         {/* Logo and Branding */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary-600 mb-4 shadow-lg">
-            <Activity className="w-8 h-8 text-white" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl overflow-hidden mb-4 shadow-lg">
+            <img src="/allmed_logo.png" alt="AllMed Logo" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-3xl font-bold text-secondary-900">ALLMED</h1>
-          <p className="text-secondary-600 mt-1">Healthcare Management System</p>
+          <h1 className="text-3xl font-bold text-secondary-900">ALLMED-ALLRISE</h1>
+          <p className="text-secondary-600 mt-1">Healthcare Enterprise Management Dashboard</p>
         </div>
 
         {/* Login Card */}
@@ -150,7 +159,6 @@ export const LoginPage: React.FC = () => {
                 name="email"
                 value={formData.email}
                 onChange={handleInputChange}
-                placeholder="admin@allmed.com"
                 className={`input ${validationErrors.email ? 'border-primary-500 focus:ring-primary-500' : ''}`}
                 disabled={isLoading}
                 autoComplete="email"
@@ -175,7 +183,6 @@ export const LoginPage: React.FC = () => {
                   name="password"
                   value={formData.password}
                   onChange={handleInputChange}
-                  placeholder="Enter your password"
                   className={`input pr-10 ${validationErrors.password ? 'border-primary-500 focus:ring-primary-500' : ''}`}
                   disabled={isLoading}
                   autoComplete="current-password"
@@ -222,25 +229,7 @@ export const LoginPage: React.FC = () => {
             >
               {isLoading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <svg
-                    className="animate-spin h-5 w-5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
+                  <RedSpinner size="sm" />
                   Signing in...
                 </span>
               ) : (
@@ -250,10 +239,7 @@ export const LoginPage: React.FC = () => {
           </form>
         </div>
 
-        {/* Footer */}
-        <p className="text-center text-sm text-secondary-500 mt-6">
-          ALLMED Healthcare Management System v1.0.0
-        </p>
+
       </div>
 
       {/* Forgot Password Modal */}
@@ -336,25 +322,7 @@ export const LoginPage: React.FC = () => {
                   >
                     {isResettingPassword ? (
                       <span className="flex items-center justify-center gap-2">
-                        <svg
-                          className="animate-spin h-5 w-5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
+                        <RedSpinner size="sm" />
                         Sending...
                       </span>
                     ) : (

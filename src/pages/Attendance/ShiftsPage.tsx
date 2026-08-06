@@ -5,6 +5,7 @@ import { format, parseISO } from 'date-fns';
 import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, arrayUnion, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { RedSpinner } from '@/components/common';
 
 interface Employee {
   id: string;
@@ -530,7 +531,7 @@ export const ShiftsPage: React.FC = () => {
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -588,7 +589,7 @@ export const ShiftsPage: React.FC = () => {
         </div>
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 border-2 border-secondary-300 border-t-orange-500 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : filteredSlots.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">

@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { PageSkeleton } from '@/components/common';
+import { RedSpinner } from '@/components/common';
 
 interface RoleProtectedRouteProps {
   children: React.ReactNode;
@@ -12,8 +12,8 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
 
   if (loading || !userData) {
     return (
-      <div className="min-h-screen bg-secondary-50 p-4 lg:p-6">
-        <PageSkeleton />
+      <div className="min-h-screen bg-secondary-50 flex items-center justify-center">
+        <RedSpinner />
       </div>
     );
   }

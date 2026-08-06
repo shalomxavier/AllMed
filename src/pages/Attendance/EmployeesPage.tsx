@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Search, RefreshCw, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
+import { ArrowLeft, Search, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion } from 'firebase/firestore';
 
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { RedSpinner } from '@/components/common';
 
 interface RawPunch {
   id: string;
@@ -1304,7 +1305,7 @@ export const EmployeesPage: React.FC = () => {
   return (
     <div className="flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -1315,24 +1316,12 @@ export const EmployeesPage: React.FC = () => {
           </button>
           <div>
             <h1 className="text-xl font-semibold text-secondary-900">Employees</h1>
-            <p className="text-sm text-secondary-500">
-              View and manage employee records
-            </p>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={fetchEmployees}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </button>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="bg-secondary-50 p-6">
+      <div className="p-6">
         {/* Search Bar */}
         <div className="mb-6 flex items-center justify-between gap-4">
           <div className="relative z-50 flex items-center gap-3 flex-1 max-w-3xl">
@@ -1390,7 +1379,7 @@ export const EmployeesPage: React.FC = () => {
         {/* Employees Grid */}
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 border-2 border-secondary-300 border-t-blue-600 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : filteredEmployees.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -1410,7 +1399,7 @@ export const EmployeesPage: React.FC = () => {
           <div className="space-y-6">
             {activeEmployees.length > 0 && renderEmployeeGrid(activeEmployees)}
             {inactiveEmployees.length > 0 && (
-              <details className="rounded-lg border border-secondary-200 bg-white">
+              <details className="rounded-xl bg-white/80 backdrop-blur-sm shadow-lg">
                 <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-secondary-700">
                   Inactive Employees ({inactiveEmployees.length})
                 </summary>
@@ -1484,7 +1473,7 @@ export const EmployeesPage: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-4">
               {attendanceLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="w-7 h-7 border-2 border-secondary-300 border-t-green-600 rounded-full animate-spin" />
+                  <RedSpinner />
                 </div>
               ) : groupedAttendance().length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -1782,10 +1771,7 @@ export const EmployeesPage: React.FC = () => {
                     >
                       {isSavingShift ? (
                         <>
-                          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
+                          <RedSpinner size="sm" />
                           Saving...
                         </>
                       ) : (
@@ -1807,7 +1793,7 @@ export const EmployeesPage: React.FC = () => {
                   </div>
                   {shiftsLoading ? (
                     <div className="text-center py-8">
-                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                      <RedSpinner />
                       <p className="text-sm text-secondary-500 mt-2">Loading shifts...</p>
                     </div>
                   ) : employeeShifts.length === 0 ? (
@@ -1973,10 +1959,7 @@ export const EmployeesPage: React.FC = () => {
                     >
                       {isSavingShift ? (
                         <>
-                          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
+                          <RedSpinner size="sm" />
                           Updating...
                         </>
                       ) : (
@@ -2330,10 +2313,7 @@ export const EmployeesPage: React.FC = () => {
                 >
                   {isBulkAssigning ? (
                     <>
-                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
+                      <RedSpinner size="sm" />
                       Assigning...
                     </>
                   ) : (
@@ -2502,7 +2482,7 @@ export const EmployeesPage: React.FC = () => {
                   <>
                     {leavesLoading ? (
                       <div className="flex items-center justify-center py-8">
-                        <div className="w-6 h-6 border-2 border-secondary-300 border-t-purple-600 rounded-full animate-spin" />
+                        <RedSpinner size="sm" />
                       </div>
                     ) : list.length === 0 && !showAddLeaveForm ? (
                       <p className="text-sm text-secondary-500 text-center py-6">

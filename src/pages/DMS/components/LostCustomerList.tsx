@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
 import type { LostCustomer } from '../lostCustomerTypes';
+import { RedSpinner } from '@/components/common';
 
 interface LostCustomerListProps {
   lostCustomers: LostCustomer[];
@@ -67,7 +68,8 @@ export const LostCustomerList: React.FC<LostCustomerListProps> = ({
       {/* Customer List */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="p-8 text-center text-secondary-500">
+          <div className="p-8 text-center text-secondary-500 flex flex-col items-center gap-2">
+            <RedSpinner />
             <p className="text-sm">Loading lost customers...</p>
           </div>
         ) : filteredCustomers.length === 0 ? (

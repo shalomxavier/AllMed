@@ -30,7 +30,7 @@
   }
 
   .card {
-    @apply bg-white rounded-lg border border-secondary-200 shadow-sm;
+    @apply bg-white/30 backdrop-blur-sm rounded-xl shadow-lg;
   }
 
   .input {

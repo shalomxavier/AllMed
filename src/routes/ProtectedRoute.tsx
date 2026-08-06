@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { PageSkeleton } from '@/components/common';
+import { RedSpinner } from '@/components/common';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -12,8 +12,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-secondary-50 p-4 lg:p-6">
-        <PageSkeleton />
+      <div className="min-h-screen bg-secondary-50 flex items-center justify-center">
+        <RedSpinner />
       </div>
     );
   }

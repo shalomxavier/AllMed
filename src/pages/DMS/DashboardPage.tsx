@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { PageContainer } from '@/components/common';
+import { PageContainer, RedSpinner } from '@/components/common';
 import { SummaryCards } from './dashboard/SummaryCards';
 import { FilterBar } from './dashboard/FilterBar';
 import { DashboardCharts } from './dashboard/DashboardCharts';
@@ -45,7 +45,7 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-white border-b border-secondary-200">
+      <div className="mt-4 flex items-center gap-3 px-4 py-3">
         <button
           onClick={() => navigate('/dms')}
           className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
@@ -71,7 +71,10 @@ export const DashboardPage: React.FC = () => {
       {/* Summary Cards */}
       <div className="mt-6">
         {loading ? (
-          <div className="text-center py-8 text-secondary-500">Loading dashboard statistics...</div>
+          <div className="text-center py-8 text-secondary-500 flex flex-col items-center gap-2">
+            <RedSpinner />
+            <span>Loading dashboard statistics...</span>
+          </div>
         ) : (
           <SummaryCards stats={stats} />
         )}
@@ -80,7 +83,10 @@ export const DashboardPage: React.FC = () => {
       {/* Charts */}
       <div className="mt-6">
         {loading ? (
-          <div className="text-center py-8 text-secondary-500">Loading charts...</div>
+          <div className="text-center py-8 text-secondary-500 flex flex-col items-center gap-2">
+            <RedSpinner />
+            <span>Loading charts...</span>
+          </div>
         ) : (
           <DashboardCharts stats={stats} />
         )}

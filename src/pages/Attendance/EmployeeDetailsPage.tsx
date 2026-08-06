@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, X, Edit } from 'lucide-react';
 import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { RedSpinner } from '@/components/common';
 
 interface Employee {
   id: string;
@@ -228,7 +229,7 @@ export const EmployeeDetailsPage: React.FC = () => {
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance/employees')}
@@ -257,10 +258,10 @@ export const EmployeeDetailsPage: React.FC = () => {
         )}
       </div>
 
-      <div className="bg-secondary-50 p-6">
+      <div className="p-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 border-2 border-secondary-300 border-t-blue-600 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : unauthorized ? (
           <div className="text-center py-12 text-secondary-600">
@@ -271,7 +272,7 @@ export const EmployeeDetailsPage: React.FC = () => {
             Employee not found.
           </div>
         ) : isEditing ? (
-          <form onSubmit={handleSave} className="max-w-2xl bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
+          <form onSubmit={handleSave} className="max-w-2xl bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Employee Name</label>
@@ -375,7 +376,7 @@ export const EmployeeDetailsPage: React.FC = () => {
             </div>
           </form>
         ) : (
-          <div className="max-w-2xl bg-white rounded-xl border border-secondary-200 p-6 shadow-sm">
+          <div className="max-w-2xl bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <p className="text-sm font-medium text-secondary-500 mb-1">Employee Name</p>

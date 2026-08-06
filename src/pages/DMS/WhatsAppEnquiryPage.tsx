@@ -5,6 +5,7 @@ import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
 import { format } from 'date-fns';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { RedSpinner } from '@/components/common';
 
 export const WhatsAppEnquiryPage: React.FC = () => {
   const navigate = useNavigate();
@@ -272,7 +273,7 @@ export const WhatsAppEnquiryPage: React.FC = () => {
                 {loading && (
                   <div className="flex justify-center py-4">
                     <div className="flex items-center gap-2 text-sm text-secondary-500">
-                      <div className="w-4 h-4 border-2 border-secondary-300 border-t-green-600 rounded-full animate-spin" />
+                      <RedSpinner size="sm" />
                       Sending...
                     </div>
                   </div>

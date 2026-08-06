@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getMonthlyReportData, MonthlyReportData, MonthlyEmployeeReport } from '@/utils/attendanceExport';
+import { RedSpinner } from '@/components/common';
 
 export const MonthlyReportPreviewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -29,7 +30,7 @@ export const MonthlyReportPreviewPage: React.FC = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
-        <p className="text-gray-600">Loading preview...</p>
+        <RedSpinner />
       </div>
     );
   }

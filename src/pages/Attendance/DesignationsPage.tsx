@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Briefcase, Eye, Pencil, Trash2 } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { RedSpinner } from '@/components/common';
 
 export const DesignationsPage: React.FC = () => {
   const { currentUser } = useAuthContext();
@@ -127,8 +128,8 @@ export const DesignationsPage: React.FC = () => {
   }, [currentUser]);
 
   return (
-    <div className="flex flex-col h-full bg-secondary-50">
-      <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-secondary-200">
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-secondary-900">Designations</h1>
         </div>
@@ -140,10 +141,10 @@ export const DesignationsPage: React.FC = () => {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 bg-white">
+      <div className="flex-1 overflow-y-auto p-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <div className="w-8 h-8 border-2 border-secondary-300 border-t-teal-600 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : designations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">

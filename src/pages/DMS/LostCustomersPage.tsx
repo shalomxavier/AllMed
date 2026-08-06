@@ -107,7 +107,7 @@ export const LostCustomersPage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-white border-b border-secondary-200">
+      <div className="mt-4 flex items-center gap-3 px-4 py-3">
         <button
           onClick={() => navigate('/dms')}
           className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"

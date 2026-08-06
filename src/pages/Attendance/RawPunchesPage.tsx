@@ -6,6 +6,7 @@ import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestam
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/pages/DMS/components/Toast';
+import { RedSpinner } from '@/components/common';
 
 interface RawPunch {
   id: string;
@@ -806,7 +807,7 @@ export const RawPunchesPage: React.FC = () => {
     <div className="h-[calc(100vh-80px)] flex flex-col">
       <ToastContainer />
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -848,9 +849,9 @@ export const RawPunchesPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
+      <div className="flex-1 overflow-y-auto p-6">
         {/* Search */}
-        <div className="mb-4 flex gap-3 flex-wrap items-end">
+        <div className="mb-4 flex gap-3 flex-wrap items-end bg-white/80 backdrop-blur-sm shadow-lg rounded-xl p-4">
           <div className="relative max-w-md flex-1 min-w-[200px]">
             <label className="block text-xs font-medium text-secondary-600 mb-1">Search</label>
             <div className="relative">
@@ -907,7 +908,7 @@ export const RawPunchesPage: React.FC = () => {
         {/* Table */}
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <div className="w-8 h-8 border-2 border-secondary-300 border-t-green-600 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : filteredRecords.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -918,7 +919,7 @@ export const RawPunchesPage: React.FC = () => {
             <p className="text-sm text-secondary-500">Try adjusting your search or refresh the page.</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-secondary-200 overflow-hidden">
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -992,7 +993,7 @@ export const RawPunchesPage: React.FC = () => {
                 disabled={currentPageIndex >= totalPages - 1 && !hasMore || loadingMore}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-secondary-200 bg-white hover:bg-secondary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                {loadingMore ? <div className="w-4 h-4 border-2 border-secondary-300 border-t-green-600 rounded-full animate-spin" /> : <ChevronRight size={16} />}
+                {loadingMore ? <RedSpinner size="sm" /> : <ChevronRight size={16} />}
                 Next
               </button>
             </div>

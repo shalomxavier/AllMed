@@ -3,6 +3,7 @@ import { ArrowLeft, RefreshCw, UserPlus, User, Search, X, Pencil, Eye } from 'lu
 import { useNavigate } from 'react-router-dom';
 import { doc, setDoc, getDocs, collection, query, orderBy, updateDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '@/firebase/firebase';
+import { RedSpinner } from '@/components/common';
 
 interface User {
   id: string;
@@ -184,18 +185,17 @@ export const UsersPage: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-secondary-50">
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-secondary-200">
+      <div className="flex items-center gap-3 px-4 py-3">
         <button onClick={() => navigate('/attendance')} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
           <ArrowLeft size={20} className="text-secondary-600" />
         </button>
         <div className="flex-1">
           <h1 className="text-base font-semibold text-secondary-900">Users</h1>
-          <p className="text-xs text-secondary-500">Manage application users</p>
         </div>
         <button onClick={fetchUsers} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-          <RefreshCw size={18} className={`text-secondary-500 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? <RedSpinner size="sm" /> : <RefreshCw size={18} className="text-secondary-500" />}
         </button>
       </div>
 
@@ -223,7 +223,7 @@ export const UsersPage: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4 content-start">
         {loading ? (
           <div className="w-full flex items-center justify-center py-16">
-            <div className="w-7 h-7 border-2 border-secondary-300 border-t-red-600 rounded-full animate-spin" />
+            <RedSpinner />
           </div>
         ) : users.length === 0 ? (
           <div className="w-full flex flex-col items-center justify-center py-16 text-center">
@@ -234,7 +234,7 @@ export const UsersPage: React.FC = () => {
           </div>
         ) : (
           users.map((user) => (
-            <div key={user.id} className="bg-white border border-secondary-200 rounded-lg p-5 hover:shadow-sm transition-shadow flex flex-col">
+            <div key={user.id} className="bg-white/30 backdrop-blur-sm rounded-xl p-5 shadow-lg hover:shadow-xl transition-shadow flex flex-col">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
                   <User className="w-6 h-6 text-red-600" />

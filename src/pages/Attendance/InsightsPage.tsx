@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lightbulb, X, ArrowLeft } from 'lucide-react';
 import { Timestamp, collection, getDocs, getFirestore, orderBy, query, where } from 'firebase/firestore';
-import { PageContainer } from '@/components/common';
+import { PageContainer, RedSpinner } from '@/components/common';
 import { PieChart } from '@/pages/DMS/dashboard/PieChart';
 import { useAuthContext } from '@/contexts/AuthContext';
 
@@ -217,7 +217,7 @@ export const InsightsPage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-4 flex items-center gap-3 px-4 py-3 bg-white border-b border-secondary-200">
+      <div className="mt-4 flex items-center gap-3 px-4 py-3">
         <button
           onClick={() => navigate('/attendance')}
           className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
@@ -283,7 +283,10 @@ export const InsightsPage: React.FC = () => {
 
         <div className="mt-6">
           {attendanceLoading ? (
-            <div className="text-center py-8 text-secondary-500">Loading attendance insights...</div>
+            <div className="text-center py-8 text-secondary-500 flex flex-col items-center gap-2">
+              <RedSpinner />
+              <span>Loading attendance insights...</span>
+            </div>
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
               {managerCharts.map((chart) => (

@@ -94,18 +94,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-secondary-200 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-hidden ${
+        className={`fixed top-0 left-0 z-50 h-full w-64 bg-white/30 backdrop-blur-sm border-r border-white/30 shadow-xl rounded-r-2xl transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:overflow-hidden ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         {/* Company Branding */}
         <div className="relative flex items-center justify-center h-16 px-6 border-b border-secondary-200">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-primary-600 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">A</span>
+            <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center">
+              <img src="/allmed_logo.png" alt="AllMed Logo" className="w-full h-full object-contain" />
             </div>
             <div>
-              <span className="text-lg font-bold text-primary-600 block leading-tight">ALLMED</span>
+              <span className="text-lg font-bold text-primary-600 block leading-tight">ALLMED-ALLRISE</span>
             </div>
           </div>
           <button
@@ -195,7 +195,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div className="absolute bottom-0 left-0 right-0 p-2 border-t border-secondary-200">
           <button
             onClick={logout}
-            className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-secondary-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <LogOut size={16} />
             Logout
