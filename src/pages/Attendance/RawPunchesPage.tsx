@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeft, Search, RefreshCw, Calendar, ChevronLeft, ChevronRight, Download, Clock, X } from 'lucide-react';
+import { ArrowLeft, Search, Calendar, ChevronLeft, ChevronRight, Download, Clock, X, Filter } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc } from 'firebase/firestore';
@@ -31,14 +31,14 @@ const toDate = (logDate: any): Date | null => {
 };
 
 const formatTimeHHMM = (date: Date | null): string => {
-  if (!date) return '—';
+  if (!date) return '';
   const hours = String(date.getUTCHours()).padStart(2, '0');
   const minutes = String(date.getUTCMinutes()).padStart(2, '0');
   return `${hours}:${minutes}`;
 };
 
 const formatMinutes = (minutes: number): string => {
-  if (!isFinite(minutes) || minutes <= 0) return '—';
+  if (!isFinite(minutes) || minutes <= 0) return '';
   const h = Math.floor(minutes / 60);
   const m = Math.round(minutes % 60);
   if (h === 0) return `${m}m`;
@@ -124,6 +124,29 @@ export const RawPunchesPage: React.FC = () => {
   const [analyzeSearchQuery, setAnalyzeSearchQuery] = useState('');
   const [isFixing, setIsFixing] = useState(false);
   const [expandedTimeCells, setExpandedTimeCells] = useState<Set<string>>(new Set());
+  const [columnFilter, setColumnFilter] = useState<'late' | 'early' | null>(null);
+  const [showTooltip, setShowTooltip] = useState<'late' | 'early' | null>(null);
+
+  useEffect(() => {
+    if (!loading) {
+      setShowTooltip('late');
+      const timer1 = setTimeout(() => {
+        setShowTooltip('early');
+      }, 3000);
+      const timer2 = setTimeout(() => {
+        setShowTooltip(null);
+      }, 6000);
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+      };
+    }
+  }, [loading]);
+
+  const handleColumnFilter = (filter: 'late' | 'early' | null) => {
+    setColumnFilter(filter);
+    setCurrentPageIndex(0);
+  };
 
   const toggleTimeCell = (recordId: string, type: 'in' | 'out') => {
     const key = `${recordId}-${type}`;
@@ -139,7 +162,7 @@ export const RawPunchesPage: React.FC = () => {
     const times = type === 'in' ? record.inTimes : record.outTimes;
     const key = `${record.id}-${type}`;
     const expanded = expandedTimeCells.has(key);
-    if (times.length === 0) return <span>—</span>;
+    if (times.length === 0) return <span></span>;
     if (times.length === 1) return <span>{formatTimeHHMM(times[0])}</span>;
     return (
       <div className="flex flex-col gap-0.5">
@@ -619,18 +642,18 @@ export const RawPunchesPage: React.FC = () => {
 
   const exportRecordsToExcel = (records: DailyRecord[], from: string, to: string) => {
     const headers = [
-      'Employee ID',
-      'Employee Name',
+      'ID',
+      'Name',
       'Department',
       'Branch',
       'Shift',
       'Date',
-      'In Time',
-      'Out Time',
-      'Working Duration',
-      'Late Minutes',
-      'Early Minutes',
-      'Overtime Minutes',
+      'In',
+      'Out',
+      'Duration',
+      'Late In',
+      'Early Out',
+      'Overtime',
     ];
     const rows = records.map((record) => [
       record.userId,
@@ -638,7 +661,6 @@ export const RawPunchesPage: React.FC = () => {
       record.department,
       record.location,
       record.shift ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}` : '',
-      record.date ? formatLocalDate(record.date) : '',
       record.inTimes.length > 0 ? record.inTimes.map(formatTimeHHMM).join(', ') : '',
       record.outTimes.length > 0 ? record.outTimes.map(formatTimeHHMM).join(', ') : '',
       record.workingDurationMinutes > 0 ? formatMinutes(record.workingDurationMinutes) : '',
@@ -744,8 +766,8 @@ export const RawPunchesPage: React.FC = () => {
         id: `${key}_${date ? formatLocalDate(date) : firstPunch.id}`,
         userId,
         employeeName: employeeMap[key] ?? '',
-        department: departmentMap[key] ?? '—',
-        location: workLocationMap[key] || '—',
+        department: departmentMap[key] ?? '',
+        location: workLocationMap[key] || '',
         shift,
         date,
         inTime: inDate,
@@ -797,6 +819,12 @@ export const RawPunchesPage: React.FC = () => {
         record.location.toLowerCase().includes(q)
       );
     }
+    if (columnFilter === 'late') {
+      return record.lateMinutes > 0;
+    }
+    if (columnFilter === 'early') {
+      return record.earlyMinutes > 0;
+    }
     return true;
   });
 
@@ -817,8 +845,7 @@ export const RawPunchesPage: React.FC = () => {
             <ArrowLeft size={20} />
           </button>
           <div>
-            <h1 className="text-xl font-semibold text-secondary-900">Attendances</h1>
-            <p className="text-sm text-secondary-500">Device attendance logs</p>
+            <h1 className="text-xl font-semibold text-secondary-900">Attendance Log</h1>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -838,13 +865,6 @@ export const RawPunchesPage: React.FC = () => {
               Analyze
             </button>
           )}
-          <button
-            onClick={() => { setLastDoc(null); setHasMore(false); setCurrentPageIndex(0); fetchPage(fromDate, toDateFilter, locationFilter); }}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -924,18 +944,53 @@ export const RawPunchesPage: React.FC = () => {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-secondary-50 border-b border-secondary-200">
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Employee ID</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Employee Name</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">ID</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Name</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Department</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Branch</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Date</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Shift</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">In Time</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Out Time</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Working Duration</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Late Minutes</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Early Minutes</th>
-                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Overtime Minutes</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">In</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Out</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Duration</th>
+                    <th className="relative">
+                      <div 
+                        className={`text-left px-4 py-3 font-semibold whitespace-nowrap cursor-pointer hover:bg-secondary-100 transition-colors ${columnFilter === 'late' ? 'text-red-600' : 'text-secondary-700'}`}
+                        onClick={() => handleColumnFilter(columnFilter === 'late' ? null : 'late')}
+                      >
+                        <div className="flex items-center gap-2">
+                          Late In
+                          <Filter size={14} className={columnFilter === 'late' ? 'text-red-600' : 'text-secondary-400'} />
+                        </div>
+                      </div>
+                      {showTooltip === 'late' && (
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 z-50">
+                          <div className="relative bg-green-100/90 backdrop-blur-sm text-green-800 px-4 py-2 rounded-lg shadow-xl whitespace-nowrap animate-fade-in border border-green-200">
+                            <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-b-8 border-transparent border-b-green-100/90"></div>
+                            <span className="text-sm font-medium">Click to filter late ins</span>
+                          </div>
+                        </div>
+                      )}
+                    </th>
+                    <th className="relative">
+                      <div 
+                        className={`text-left px-4 py-3 font-semibold whitespace-nowrap cursor-pointer hover:bg-secondary-100 transition-colors ${columnFilter === 'early' ? 'text-red-600' : 'text-secondary-700'}`}
+                        onClick={() => handleColumnFilter(columnFilter === 'early' ? null : 'early')}
+                      >
+                        <div className="flex items-center gap-2">
+                          Early Out
+                          <Filter size={14} className={columnFilter === 'early' ? 'text-red-600' : 'text-secondary-400'} />
+                        </div>
+                      </div>
+                      {showTooltip === 'early' && (
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 z-50">
+                          <div className="relative bg-green-100/90 backdrop-blur-sm text-green-800 px-4 py-2 rounded-lg shadow-xl whitespace-nowrap animate-fade-in border border-green-200">
+                            <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-b-8 border-transparent border-b-green-100/90"></div>
+                            <span className="text-sm font-medium">Click to filter early outs</span>
+                          </div>
+                        </div>
+                      )}
+                    </th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Overtime</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -944,15 +999,14 @@ export const RawPunchesPage: React.FC = () => {
                       key={record.id}
                       className={`border-b border-secondary-100 hover:bg-secondary-50 transition-colors ${idx % 2 === 0 ? '' : 'bg-secondary-50/50'}`}
                     >
-                      <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{record.userId || '—'}</td>
+                      <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{record.userId || ''}</td>
                       <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{record.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.department}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.location}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.date ? formatLocalDate(record.date) : '—'}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
                         {record.shift
                           ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}`
-                          : '—'}
+                          : ''}
                       </td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
                         {renderTimeCell(record, 'in')}
@@ -961,8 +1015,8 @@ export const RawPunchesPage: React.FC = () => {
                         {renderTimeCell(record, 'out')}
                       </td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.workingDurationMinutes)}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.lateMinutes)}</td>
-                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.earlyMinutes)}</td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">{record.lateMinutes > 0 ? <span className="text-red-600 font-medium">{formatMinutes(record.lateMinutes)}</span> : formatMinutes(record.lateMinutes)}</td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">{record.earlyMinutes > 0 ? <span className="text-red-600 font-medium">{formatMinutes(record.earlyMinutes)}</span> : formatMinutes(record.earlyMinutes)}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatMinutes(record.overtimeMinutes)}</td>
                     </tr>
                   ))}
@@ -1143,8 +1197,8 @@ export const RawPunchesPage: React.FC = () => {
                 <table className="w-full text-sm">
                   <thead className="bg-secondary-50 sticky top-0">
                     <tr className="border-b border-secondary-200">
-                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee ID</th>
-                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Employee Name</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">ID</th>
+                      <th className="text-left px-4 py-3 font-semibold text-secondary-700">Name</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Branch</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Date</th>
                       <th className="text-left px-4 py-3 font-semibold text-secondary-700">Type</th>
@@ -1159,7 +1213,7 @@ export const RawPunchesPage: React.FC = () => {
                         <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{result.userId}</td>
                         <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{result.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.location}</td>
-                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.date ? formatLocalDate(result.date) : '—'}</td>
+                        <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{result.date ? formatLocalDate(result.date) : ''}</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${result.type === 'in' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
                             {result.type === 'in' ? 'In' : 'Out'}

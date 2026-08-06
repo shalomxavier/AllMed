@@ -123,8 +123,8 @@ export const LoginPage: React.FC = () => {
       <div className="w-full max-w-md">
         {/* Logo and Branding */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl overflow-hidden mb-4 shadow-lg">
-            <img src="/allmed_logo.png" alt="AllMed Logo" className="w-full h-full object-contain" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-none overflow-hidden mb-4 shadow-lg">
+            <img src="/allmed_logo.png" alt="AllMed Logo" className="w-full h-full object-contain border-2 border-gray-300" />
           </div>
           <h1 className="text-3xl font-bold text-secondary-900">ALLMED-ALLRISE</h1>
           <p className="text-secondary-600 mt-1">Healthcare Enterprise Management Dashboard</p>
