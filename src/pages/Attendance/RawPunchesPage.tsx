@@ -79,6 +79,7 @@ interface AnalyzeResult {
   employeeName: string;
   location: string;
   date: Date | null;
+  shift: any | null;
   shiftTime: string;
   actualTime: Date;
   deviationMinutes: number;
@@ -476,6 +477,7 @@ export const RawPunchesPage: React.FC = () => {
         employeeName: record.employeeName,
         location: record.location,
         date: record.date,
+        shift: record.shift,
         shiftTime,
         actualTime,
         deviationMinutes: diffMin,
@@ -524,10 +526,12 @@ export const RawPunchesPage: React.FC = () => {
   }, [analyzeResults, analyzeLocationFilter, analyzeSearchQuery]);
 
   const findPunchToFixInArray = (result: AnalyzeResult, punches: RawPunch[]): RawPunch | null => {
-    if (!result.date) return null;
+    if (!result.date || !result.actualTime) return null;
     const targetDateStr = formatLocalDate(result.date);
     const targetUserId = result.userId.trim().toLowerCase();
     const targetTime = result.actualTime.getTime();
+    const targetTimeStr = formatTimeHHMM(result.actualTime);
+    const originalDirection = result.type;
 
     return (
       punches.find((p) => {
@@ -535,46 +539,29 @@ export const RawPunchesPage: React.FC = () => {
         const d = toDate(p.logDate);
         if (!d) return false;
         const dateStr = formatLocalDate(d);
-        return (
-          p.userId.trim().toLowerCase() === targetUserId &&
-          dateStr === targetDateStr &&
-          d.getTime() === targetTime
-        );
+        const sameUser = p.userId.trim().toLowerCase() === targetUserId;
+        const sameDate = dateStr === targetDateStr;
+        const sameDirection = (p.direction || '').toLowerCase() === originalDirection;
+        const sameTime = d.getTime() === targetTime || formatTimeHHMM(d) === targetTimeStr;
+        return sameUser && sameDate && sameDirection && sameTime;
       }) ?? null
     );
   };
 
-  const testDirectionSwapInArray = (punches: RawPunch[], result: AnalyzeResult): boolean => {
-    const testDailyRecords = computeDailyRecords(punches);
-    const testRecord = testDailyRecords.find((r) => {
-      if (!r.date || !result.date) return false;
-      const sameUser = r.userId.trim().toLowerCase() === result.userId.trim().toLowerCase();
-      const sameDate = formatLocalDate(r.date) === formatLocalDate(result.date);
-      return sameUser && sameDate;
-    });
+  const testDirectionSwapInArray = (result: AnalyzeResult): boolean => {
+    if (!result.shift) return false;
 
-    if (!testRecord || !testRecord.shift || !testRecord.shift.startTime || !testRecord.shift.endTime) return false;
-
-    const targetTime = result.actualTime.getTime();
-    const [sh, sm] = testRecord.shift.startTime.split(':').map(Number);
-    const shiftStartMin = sh * 60 + sm;
-    const [eh, em] = testRecord.shift.endTime.split(':').map(Number);
-    const shiftEndMin = eh * 60 + em;
-
-    const isWithinThreshold = (time: Date, type: 'in' | 'out') => {
-      const actualMin = time.getUTCHours() * 60 + time.getUTCMinutes();
-      const shiftMin = type === 'in' ? shiftStartMin : shiftEndMin;
-      const diffMin = actualMin - shiftMin;
-      return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
+    const parseTime = (time: string) => {
+      const [h, m] = time.split(':').map(Number);
+      return h * 60 + m;
     };
 
-    if (result.type === 'in') {
-      const swappedOut = testRecord.outTimes.find((t) => t.getTime() === targetTime);
-      return swappedOut ? isWithinThreshold(swappedOut, 'out') : false;
-    } else {
-      const swappedIn = testRecord.inTimes.find((t) => t.getTime() === targetTime);
-      return swappedIn ? isWithinThreshold(swappedIn, 'in') : false;
-    }
+    const actualMin = result.actualTime.getUTCHours() * 60 + result.actualTime.getUTCMinutes();
+    const shiftTimeStr = result.type === 'in' ? result.shift.endTime : result.shift.startTime;
+    if (!shiftTimeStr) return false;
+    const shiftMin = parseTime(shiftTimeStr);
+    const diffMin = actualMin - shiftMin;
+    return Math.abs(diffMin) <= ANALYSIS_THRESHOLD_MINUTES;
   };
 
   const handleFixAnomalies = async () => {
@@ -592,14 +579,13 @@ export const RawPunchesPage: React.FC = () => {
         if (!punchToFix) continue;
 
         const newDirection = punchToFix.direction === 'in' ? 'out' : 'in';
-        const testPunches = workingPunches.map((p) =>
-          p.id === punchToFix.id ? { ...p, direction: newDirection } : p
-        );
-        const isResolved = testDirectionSwapInArray(testPunches, result);
+        const isResolved = testDirectionSwapInArray(result);
         if (!isResolved) continue;
 
         plannedFixes.push({ id: punchToFix.id, newDirection });
-        workingPunches = testPunches;
+        workingPunches = workingPunches.map((p) =>
+          p.id === punchToFix.id ? { ...p, direction: newDirection } : p
+        );
         fixedCount++;
       }
 
@@ -612,7 +598,11 @@ export const RawPunchesPage: React.FC = () => {
       }
 
       setIsAnalyzeModalOpen(false);
-      showToast('success', `Fixed ${fixedCount} of ${resultsToFix.length} anomalies.`);
+      const toastMessage =
+        fixedCount === 0
+          ? `No anomalies could be auto-fixed: the swapped direction did not fall within the allowed shift window.`
+          : `Fixed ${fixedCount} of ${resultsToFix.length} anomalies.`;
+      showToast('success', toastMessage);
     } catch (error) {
       console.error('Error fixing anomalies:', error);
       showToast('error', 'Error fixing anomalies. Please try again.');
