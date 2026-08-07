@@ -63,7 +63,7 @@ export const DesignationsPage: React.FC = () => {
   const openAddModal = () => {
     setEditingDesignation(null);
     setDesignation('');
-    setSubDesignations(['']);
+    setSubDesignations(['Trainee', 'Probation', 'Permanent', 'Part time']);
     setModalOpen(true);
   };
 

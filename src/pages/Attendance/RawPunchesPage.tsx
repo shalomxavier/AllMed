@@ -948,6 +948,7 @@ export const RawPunchesPage: React.FC = () => {
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Name</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Department</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Branch</th>
+                    <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Date</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Shift</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">In</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Out</th>
@@ -1003,6 +1004,7 @@ export const RawPunchesPage: React.FC = () => {
                       <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{record.employeeName || <span className="text-secondary-400 text-xs">Unknown</span>}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.department}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.location}</td>
+                      <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatLocalDate(record.date)}</td>
                       <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
                         {record.shift
                           ? record.shift.name || `${record.shift.startTime} - ${record.shift.endTime}`
