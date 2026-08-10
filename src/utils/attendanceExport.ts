@@ -1,4 +1,4 @@
-import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, where, startAfter, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import ExcelJS from 'exceljs';
 
@@ -116,11 +116,11 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   if (employeeCodes.length > 0) {
     const constraints: any[] = [orderBy('logDate', 'desc')];
     if (fromDate) {
-      const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00'));
+      const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00Z'));
       constraints.push(where('logDate', '>=', fromTs));
     }
     if (exportToDate) {
-      const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59'));
+      const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59Z'));
       constraints.push(where('logDate', '<=', toTs));
     }
     if (employeeCodes.length > 0) {
@@ -153,8 +153,8 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
       const from = data.fromDate;
       const to = data.toDate;
       if (from && to) {
-        const leaveStart = new Date(from);
-        const leaveEnd = new Date(to);
+        const leaveStart = new Date(from + 'T00:00:00Z');
+        const leaveEnd = new Date(to + 'T00:00:00Z');
         for (let d = new Date(leaveStart); d <= leaveEnd; d.setDate(d.getDate() + 1)) {
           leaveDates.add(d.toISOString().split('T')[0]);
         }
@@ -200,8 +200,8 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   });
 
   // Generate date range
-  const startDate = new Date(fromDate);
-  const endDate = new Date(exportToDate);
+  const startDate = new Date(fromDate + 'T00:00:00Z');
+  const endDate = new Date(exportToDate + 'T00:00:00Z');
   const dateRange: string[] = [];
   const dateLabels: string[] = [];
 
@@ -215,8 +215,8 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   }
 
   const locationLabel = (location || 'All Locations').toUpperCase();
-  const formattedFromDate = new Date(fromDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  const formattedToDate = new Date(exportToDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const formattedFromDate = new Date(fromDate + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const formattedToDate = new Date(exportToDate + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
   const employeeReports: MonthlyEmployeeReport[] = [];
 
@@ -496,53 +496,110 @@ export interface DailyReportData {
   rows: DailyReportRecord[];
 }
 
+const fetchRawPunchesForEmployees = async (
+  fromDate: string,
+  exportToDate: string,
+  employeeUserIds: string[]
+): Promise<RawPunch[]> => {
+  if (employeeUserIds.length === 0) return [];
+
+  const baseConstraints: any[] = [orderBy('logDate', 'desc')];
+  if (fromDate) {
+    const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00Z'));
+    baseConstraints.push(where('logDate', '>=', fromTs));
+  }
+  if (exportToDate) {
+    const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59Z'));
+    baseConstraints.push(where('logDate', '<=', toTs));
+  }
+
+  const seen = new Set<string>();
+  const userIds: string[] = [];
+  employeeUserIds.forEach((id) => {
+    const trimmed = id.trim();
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    userIds.push(trimmed);
+  });
+
+  const allPunches: RawPunch[] = [];
+  for (let i = 0; i < userIds.length; i += 30) {
+    const chunk = userIds.slice(i, i + 30);
+    if (chunk.length === 0) continue;
+    let lastDoc: any = null;
+    while (true) {
+      const constraints = [...baseConstraints, where('userId', 'in', chunk), limit(SEARCH_LIMIT)];
+      if (lastDoc) constraints.push(startAfter(lastDoc));
+      const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+      allPunches.push(...snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+      if (snapshot.docs.length < SEARCH_LIMIT) break;
+      lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    }
+  }
+
+  return allPunches;
+};
+
 export const getDailyReportData = async (fromDate: string, exportToDate: string, location: string): Promise<DailyReportData | null> => {
   if (!fromDate || !exportToDate) return null;
 
-  // Fetch all employees and build workLocationMap
+  // Fetch all employees and build lookup maps
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
   const employeeMap: Record<string, string> = {};
   const departmentMap: Record<string, string> = {};
   const workLocationMap: Record<string, string> = {};
   const employees: any[] = [];
-  
+
   employeesSnapshot.forEach((doc) => {
     const data = doc.data();
-    const key = (data.employeeCodeInDevice ?? '').toString().trim().toLowerCase();
-    const empCode = data.employeeCode;
-    if (key) {
-      employeeMap[key] = data.employeeName ?? '';
-      departmentMap[key] = data.department ?? '';
-    }
-    if (empCode && data.workLocation) {
-      workLocationMap[empCode] = data.workLocation;
-    }
-    employees.push({
+    const employee = {
       employeeCode: data.employeeCode,
       employeeCodeInDevice: data.employeeCodeInDevice,
       employeeName: data.employeeName,
       department: data.department,
       workLocation: data.workLocation,
+    };
+    employees.push(employee);
+
+    const codes: string[] = [];
+    if (employee.employeeCode) codes.push(employee.employeeCode.toString().trim());
+    if (employee.employeeCodeInDevice) codes.push(employee.employeeCodeInDevice.toString().trim());
+    codes.forEach((code) => {
+      const key = code.toLowerCase();
+      employeeMap[key] = employee.employeeName ?? '';
+      departmentMap[key] = employee.department ?? '';
+      workLocationMap[key] = employee.workLocation ?? '';
     });
   });
 
   // Filter employees by branch if location is specified
-  const filteredEmployees = location 
+  const filteredEmployees = location
     ? employees.filter((e) => e.workLocation === location)
     : employees;
 
-  // Get employee codes for filtering punches
-  const employeeCodes = filteredEmployees
-    .map((e) => e.employeeCodeInDevice ?? e.employeeCode)
-    .filter((code) => code)
-    .map((code) => code.toString());
+  // Build the set of userIds to query (employeeCode and/or employeeCodeInDevice)
+  const seenUserIds = new Set<string>();
+  const employeeUserIds: string[] = [];
+  filteredEmployees.forEach((e) => {
+    [e.employeeCode, e.employeeCodeInDevice].forEach((code) => {
+      if (!code) return;
+      const id = code.toString().trim();
+      const key = id.toLowerCase();
+      if (seenUserIds.has(key)) return;
+      seenUserIds.add(key);
+      employeeUserIds.push(id);
+    });
+  });
 
   const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
   const shiftsMap: Record<string, any[]> = {};
+  const deviceToEmployeeCode: Record<string, string> = {};
+
   shiftsSnapshot.forEach((doc) => {
     const data = doc.data();
-    const employees: any[] = data.employees ?? [];
-    employees.forEach((emp) => {
+    const shiftEmployees: any[] = data.employees ?? [];
+    shiftEmployees.forEach((emp) => {
       const code = (emp.employeeCode ?? '').toString().trim().toLowerCase();
       if (code) {
         if (!shiftsMap[code]) shiftsMap[code] = [];
@@ -557,10 +614,17 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     });
   });
 
+  employees.forEach((e) => {
+    if (e.employeeCode && e.employeeCodeInDevice) {
+      deviceToEmployeeCode[e.employeeCodeInDevice.toString().trim().toLowerCase()] =
+        e.employeeCode.toString().trim().toLowerCase();
+    }
+  });
+
   const getShiftForPunch = (userId: string | undefined, logDate: any): any | null => {
     if (!userId) return null;
     const key = userId.trim().toLowerCase();
-    const shifts = shiftsMap[key];
+    const shifts = shiftsMap[key] ?? shiftsMap[deviceToEmployeeCode[key]];
     if (!shifts || shifts.length === 0) return null;
     const d = toDate(logDate);
     if (!d) return null;
@@ -568,26 +632,7 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
   };
 
-  // Fetch all punches in date range, filtered by employee codes if branch is specified
-  const allPunches: RawPunch[] = [];
-  if (employeeCodes.length > 0) {
-    const constraints: any[] = [orderBy('logDate', 'desc')];
-    if (fromDate) {
-      const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00'));
-      constraints.push(where('logDate', '>=', fromTs));
-    }
-    if (exportToDate) {
-      const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59'));
-      constraints.push(where('logDate', '<=', toTs));
-    }
-    if (employeeCodes.length > 0) {
-      constraints.push(where('userId', 'in', employeeCodes.slice(0, 30)));
-    }
-    constraints.push(limit(SEARCH_LIMIT));
-    
-    const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-    allPunches.push(...snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-  }
+  const allPunches = await fetchRawPunchesForEmployees(fromDate, exportToDate, employeeUserIds);
 
   const groups: Record<string, RawPunch[]> = {};
   allPunches.forEach((punch) => {
@@ -651,7 +696,7 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
       userId,
       employeeName: employeeMap[key] ?? '',
       department: departmentMap[key] ?? '',
-      location: location || '',
+      location: workLocationMap[key] ?? '',
       shift,
       date,
       inTime: inDate,
@@ -876,8 +921,8 @@ const formatShiftTime = (startTime: string, endTime: string): string => {
 };
 
 const generateDateRange = (fromDate: string, toDate: string): string[] => {
-  const start = new Date(fromDate);
-  const end = new Date(toDate);
+  const start = new Date(fromDate + 'T00:00:00Z');
+  const end = new Date(toDate + 'T00:00:00Z');
   const dates: string[] = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     dates.push(d.toISOString().split('T')[0]);
@@ -952,8 +997,8 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
     if (dates.length > 0) {
       dates.forEach((d) => leaveDates.add(d));
     } else if (from && to) {
-      const leaveStart = new Date(from);
-      const leaveEnd = new Date(to);
+      const leaveStart = new Date(from + 'T00:00:00Z');
+      const leaveEnd = new Date(to + 'T00:00:00Z');
       for (let d = new Date(leaveStart); d <= leaveEnd; d.setDate(d.getDate() + 1)) {
         leaveDates.add(d.toISOString().split('T')[0]);
       }
