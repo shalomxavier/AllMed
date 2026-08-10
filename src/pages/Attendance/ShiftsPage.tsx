@@ -557,7 +557,7 @@ export const ShiftsPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto bg-secondary-50 p-6">
+      <div className="flex-1 overflow-y-auto bg-transparent p-6">
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <div className="w-56">
             <label className="block text-xs font-medium text-secondary-600 mb-1">Branch</label>
