@@ -100,11 +100,12 @@ const to24Hour = (hour: string, minute: string, ampm: string) => {
   return `${h.toString().padStart(2, '0')}:${minute}`;
 };
 const rangesOverlap = (s1: number, e1: number, s2: number, e2: number) => s1 < e2 && s2 < e1;
-const findOverlappingShifts = (newShift: any, existingShifts: any[]) => {
+const findOverlappingShifts = (newShift: any, existingShifts: any[], employeeCode?: string) => {
   const newFrom = new Date(newShift.fromDate);
   const newTo = new Date(newShift.toDate);
   const newStart = timeToMinutes(newShift.startTime);
   const newEnd = timeToMinutes(newShift.endTime);
+  const targetCode = employeeCode?.trim().toLowerCase();
 
   return existingShifts.filter((shift) => {
     const existingStart = timeToMinutes(shift.startTime);
@@ -112,6 +113,7 @@ const findOverlappingShifts = (newShift: any, existingShifts: any[]) => {
     if (!rangesOverlap(newStart, newEnd, existingStart, existingEnd)) return false;
     const employees: any[] = shift.employees ?? [];
     return employees.some((em) => {
+      if (targetCode && (em.employeeCode ?? '').trim().toLowerCase() !== targetCode) return false;
       if (!em.fromDate || !em.toDate) return true;
       const existingFrom = new Date(em.fromDate);
       const existingTo = new Date(em.toDate);
@@ -136,7 +138,7 @@ export const ShiftsPage: React.FC = () => {
   const [assignSelectedIds, setAssignSelectedIds] = useState<Set<string>>(new Set());
   const [assignForm, setAssignForm] = useState({ fromDate: '', toDate: '', startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' });
   const [isAssigning, setIsAssigning] = useState(false);
-  const [assignOverlaps, setAssignOverlaps] = useState<{ name: string; overlaps: any[] }[]>([]);
+  const [assignOverlaps, setAssignOverlaps] = useState<{ name: string; employeeCode: string; overlaps: any[] }[]>([]);
   const [showOverlapDialog, setShowOverlapDialog] = useState(false);
   const [duplicateAssignments, setDuplicateAssignments] = useState<{ name: string; existing: ShiftEmployee[] }[]>([]);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
@@ -297,12 +299,12 @@ export const ShiftsPage: React.FC = () => {
         const allShiftDocs: any[] = [];
         allShiftSnap.forEach((d) => { if (d.id !== editingSlot.key) allShiftDocs.push({ id: d.id, ...d.data() }); });
 
-        const overlapResults: { name: string; overlaps: any[] }[] = [];
+        const overlapResults: { name: string; employeeCode: string; overlaps: any[] }[] = [];
         for (const emp of editingSlot.employees) {
           if (!emp.employeeCode) continue;
           const docsWithEmp = allShiftDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === emp.employeeCode));
-          const overlaps = findOverlappingShifts({ fromDate: emp.fromDate, toDate: emp.toDate, startTime, endTime }, docsWithEmp);
-          if (overlaps.length > 0) overlapResults.push({ name: emp.employeeName ?? emp.employeeCode ?? '', overlaps });
+          const overlaps = findOverlappingShifts({ fromDate: emp.fromDate, toDate: emp.toDate, startTime, endTime }, docsWithEmp, emp.employeeCode);
+          if (overlaps.length > 0) overlapResults.push({ name: emp.employeeName ?? emp.employeeCode ?? '', employeeCode: emp.employeeCode ?? '', overlaps });
         }
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
 
@@ -352,12 +354,12 @@ export const ShiftsPage: React.FC = () => {
         const allShiftDocs: any[] = [];
         allShiftSnap.forEach((d) => { if (d.id !== addingToSlot.key) allShiftDocs.push({ id: d.id, ...d.data() }); });
 
-        const overlapResults: { name: string; overlaps: any[] }[] = [];
+        const overlapResults: { name: string; employeeCode: string; overlaps: any[] }[] = [];
         for (const emp of selectedEmps) {
           if (!emp.employeeCode) continue;
           const docsWithEmp = allShiftDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === emp.employeeCode));
-          const overlaps = findOverlappingShifts({ fromDate: assignForm.fromDate, toDate: assignForm.toDate, startTime: addingToSlot.startTime, endTime: addingToSlot.endTime }, docsWithEmp);
-          if (overlaps.length > 0) overlapResults.push({ name: emp.employeeName ?? emp.employeeCode ?? '', overlaps });
+          const overlaps = findOverlappingShifts({ fromDate: assignForm.fromDate, toDate: assignForm.toDate, startTime: addingToSlot.startTime, endTime: addingToSlot.endTime }, docsWithEmp, emp.employeeCode);
+          if (overlaps.length > 0) overlapResults.push({ name: emp.employeeName ?? emp.employeeCode ?? '', employeeCode: emp.employeeCode ?? '', overlaps });
         }
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
 
@@ -377,12 +379,12 @@ export const ShiftsPage: React.FC = () => {
         const allShiftSnap = await getDocs(query(collection(db, 'shifts')));
         const allShiftDocs: any[] = [];
         allShiftSnap.forEach((d) => allShiftDocs.push({ id: d.id, ...d.data() }));
-        const overlapResults: { name: string; overlaps: any[] }[] = [];
+        const overlapResults: { name: string; employeeCode: string; overlaps: any[] }[] = [];
         for (const emp of selectedEmps) {
           if (!emp.employeeCode) continue;
           const docsWithEmp = allShiftDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === emp.employeeCode));
-          const overlaps = findOverlappingShifts({ fromDate: assignForm.fromDate, toDate: assignForm.toDate, startTime, endTime }, docsWithEmp);
-          if (overlaps.length > 0) overlapResults.push({ name: emp.employeeName ?? emp.employeeCode ?? '', overlaps });
+          const overlaps = findOverlappingShifts({ fromDate: assignForm.fromDate, toDate: assignForm.toDate, startTime, endTime }, docsWithEmp, emp.employeeCode);
+          if (overlaps.length > 0) overlapResults.push({ name: emp.employeeName ?? emp.employeeCode ?? '', employeeCode: emp.employeeCode ?? '', overlaps });
         }
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
       }
@@ -1030,9 +1032,14 @@ export const ShiftsPage: React.FC = () => {
               {assignOverlaps.map((r, i) => (
                 <div key={i} className="border border-red-200 rounded-lg p-3 bg-red-50">
                   <p className="text-sm font-medium text-secondary-900 mb-1">{r.name}</p>
-                  {r.overlaps.map((s: any) => (
-                    <p key={s.id} className="text-xs text-secondary-600">{s.fromDate} → {s.toDate} · {formatTime12(s.startTime)} – {formatTime12(s.endTime)}</p>
-                  ))}
+                  {r.overlaps.map((s: any) => {
+                    const matchingEntry = (s.employees ?? []).find((em: any) => (em.employeeCode ?? '').trim().toLowerCase() === r.employeeCode.trim().toLowerCase());
+                    const fromDate = matchingEntry?.fromDate ?? s.fromDate ?? '—';
+                    const toDate = matchingEntry?.toDate ?? s.toDate ?? '—';
+                    return (
+                      <p key={s.id} className="text-xs text-secondary-600">{fromDate} → {toDate} · {formatTime12(s.startTime)} – {formatTime12(s.endTime)}</p>
+                    );
+                  })}
                 </div>
               ))}
             </div>

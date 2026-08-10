@@ -833,13 +833,13 @@ export const EmployeesPage: React.FC = () => {
     return { hour: hour.toString(), minute: m, ampm };
   };
 
-  const findOverlappingShifts = (newShift: any, existingShifts: any[]) => {
+  const findOverlappingShifts = (newShift: any, existingShifts: any[], employeeCode?: string) => {
     const newFrom = new Date(newShift.fromDate);
     const newTo = new Date(newShift.toDate);
     const newStart = timeToMinutes(newShift.startTime);
     const newEnd = timeToMinutes(newShift.endTime);
 
-    const empCode = (selectedEmployee?.employeeCode ?? '').trim().toLowerCase();
+    const empCode = (employeeCode ?? selectedEmployee?.employeeCode ?? '').trim().toLowerCase();
     return existingShifts.filter((shift) => {
       const existingStart = timeToMinutes(shift.startTime);
       const existingEnd = timeToMinutes(shift.endTime);
@@ -1015,7 +1015,7 @@ export const EmployeesPage: React.FC = () => {
       });
       const existingShifts = allDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === selectedEmployee.employeeCode));
 
-      const overlaps = findOverlappingShifts(newShiftData, existingShifts);
+      const overlaps = findOverlappingShifts(newShiftData, existingShifts, selectedEmployee.employeeCode);
       if (overlaps.length > 0) {
         setOverlappingShifts(overlaps);
         setShowOverlapDialog(true);
@@ -1093,7 +1093,7 @@ export const EmployeesPage: React.FC = () => {
       const allDocs: any[] = [];
       allSnap.forEach((d) => allDocs.push({ id: d.id, ...d.data() }));
       const docsWithEmp = allDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === selectedEmployee.employeeCode));
-      const overlaps = findOverlappingShifts(newShift, docsWithEmp);
+      const overlaps = findOverlappingShifts(newShift, docsWithEmp, selectedEmployee.employeeCode);
       if (overlaps.length > 0) {
         setOverlappingShifts(overlaps);
         setShowOverlapDialog(true);
@@ -1259,7 +1259,7 @@ export const EmployeesPage: React.FC = () => {
       for (const emp of selectedEmps) {
         if (!emp.employeeCode) continue;
         const docsWithEmp = allShiftDocs.filter((s) => (s.employees ?? []).some((em: any) => em.employeeCode === emp.employeeCode));
-        const overlaps = findOverlappingShifts(newShift, docsWithEmp);
+        const overlaps = findOverlappingShifts(newShift, docsWithEmp, emp.employeeCode);
         if (overlaps.length > 0) overlapResults.push({ employee: emp, overlaps });
       }
       if (overlapResults.length > 0) {
@@ -2346,16 +2346,22 @@ export const EmployeesPage: React.FC = () => {
               This shift overlaps with the following existing shift(s):
             </p>
             <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
-              {overlappingShifts.map((shift) => (
-                <div key={shift.id} className="border border-red-200 rounded-lg p-3 bg-red-50">
-                  <div className="text-sm font-medium text-secondary-900 mb-1">
-                    {shift.fromDate} to {shift.toDate}
+              {overlappingShifts.map((shift) => {
+                const empCode = (selectedEmployee?.employeeCode ?? '').trim().toLowerCase();
+                const matchingEntry = (shift.employees ?? []).find((em: any) => (em.employeeCode ?? '').trim().toLowerCase() === empCode);
+                const fromDate = matchingEntry?.fromDate ?? shift.fromDate ?? '—';
+                const toDate = matchingEntry?.toDate ?? shift.toDate ?? '—';
+                return (
+                  <div key={shift.id} className="border border-red-200 rounded-lg p-3 bg-red-50">
+                    <div className="text-sm font-medium text-secondary-900 mb-1">
+                      {fromDate} to {toDate}
+                    </div>
+                    <div className="text-sm text-secondary-600">
+                      {formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}
+                    </div>
                   </div>
-                  <div className="text-sm text-secondary-600">
-                    {formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <p className="text-sm text-secondary-700 mb-6">
               Please edit or delete the overlapping shift(s) to assign this shift.
@@ -2409,15 +2415,21 @@ export const EmployeesPage: React.FC = () => {
                 <div key={employee.id} className="border border-red-200 rounded-lg p-3 bg-red-50">
                   <p className="text-sm font-medium text-secondary-900 mb-2">{employee.employeeName}</p>
                   <div className="space-y-1">
-                    {overlaps.map((shift) => (
-                      <div key={shift.id} className="text-sm text-secondary-600">
-                        <span className="text-blue-600">{formatShiftDate(shift.fromDate)}</span>
-                        <span className="text-black"> - </span>
-                        <span className="text-blue-600">{formatShiftDate(shift.toDate)}</span>
-                        <span className="text-secondary-400"> · </span>
-                        <span className="text-green-600">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
-                      </div>
-                    ))}
+                    {overlaps.map((shift) => {
+                      const empCode = (employee?.employeeCode ?? '').trim().toLowerCase();
+                      const matchingEntry = (shift.employees ?? []).find((em: any) => (em.employeeCode ?? '').trim().toLowerCase() === empCode);
+                      const fromDate = matchingEntry?.fromDate ?? shift.fromDate ?? '';
+                      const toDate = matchingEntry?.toDate ?? shift.toDate ?? '';
+                      return (
+                        <div key={shift.id} className="text-sm text-secondary-600">
+                          <span className="text-blue-600">{formatShiftDate(fromDate)}</span>
+                          <span className="text-black"> - </span>
+                          <span className="text-blue-600">{formatShiftDate(toDate)}</span>
+                          <span className="text-secondary-400"> · </span>
+                          <span className="text-green-600">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
