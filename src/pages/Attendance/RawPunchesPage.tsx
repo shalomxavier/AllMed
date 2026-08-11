@@ -195,10 +195,10 @@ export const RawPunchesPage: React.FC = () => {
     const expanded = expandedTimeCells.has(key);
     const hasMultiple = punches.length > 1;
     if (punches.length === 0) return (
-      <div className="group/empty flex items-center">
+      <div className="flex items-center justify-center w-[42px]">
         <button
           onClick={(e) => { e.stopPropagation(); setAddingPunch({ record, direction: type }); setAddTimeValue(''); }}
-          className="p-0.5 rounded text-green-500 hover:text-green-700 hover:bg-green-50 transition-colors opacity-0 group-hover/empty:opacity-100"
+          className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
           title={`Add ${type} time`}
         >
           <Plus size={14} />
@@ -236,35 +236,42 @@ export const RawPunchesPage: React.FC = () => {
       <div className="flex flex-col gap-0.5">
         <div className="group/punch flex items-center gap-1">
           <span className={punches[0].isEdited ? 'text-amber-700 font-medium' : ''}>{formatTimeHHMM(punches[0].time)}</span>
-          <button
-            onClick={() => toggleTimeCell(record.id, type)}
-            className="text-secondary-500 hover:text-secondary-700 focus:outline-none"
-            aria-label={expanded ? 'Collapse' : 'Expand'}
-          >
-            {expanded ? (
-              <ChevronRight size={14} className="rotate-90" />
-            ) : (
-              <ChevronRight size={14} />
-            )}
-          </button>
-          <div className="flex items-center gap-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
+          {!expanded && (
             <button
-              onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
-              className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-              title="Edit time"
+              onClick={() => toggleTimeCell(record.id, type)}
+              className="text-secondary-500 hover:text-secondary-700 focus:outline-none"
+              aria-label="Expand"
             >
-              <Pencil size={12} />
+              <ChevronRight size={14} />
             </button>
-            {hasMultiple && (
+          )}
+          {expanded && (
+            <>
+              <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
+                <button
+                  onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
+                  className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                  title="Edit time"
+                >
+                  <Pencil size={12} />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
+                  className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                  title="Delete punch"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
               <button
-                onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
-                className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-                title="Delete punch"
+                onClick={() => toggleTimeCell(record.id, type)}
+                className="text-secondary-500 hover:text-secondary-700 focus:outline-none"
+                aria-label="Collapse"
               >
-                <Trash2 size={12} />
+                <ChevronRight size={14} className="rotate-90" />
               </button>
-            )}
-          </div>
+            </>
+          )}
         </div>
         {expanded && punches.slice(1).map((punch) => renderPunchItem(punch, true))}
       </div>
