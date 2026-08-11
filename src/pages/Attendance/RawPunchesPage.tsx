@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeft, Search, Calendar, ChevronLeft, ChevronRight, Download, Clock, X, Filter } from 'lucide-react';
+import { ArrowLeft, Search, Calendar, ChevronLeft, ChevronRight, Clock, X, Filter, Pencil, Trash2, History } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useToast } from '@/pages/DMS/components/Toast';
@@ -55,6 +55,13 @@ const formatLocalDate = (date: Date | null): string => {
   return `${year}-${month}-${day}`;
 };
 
+interface PunchRef {
+  id: string;
+  time: Date;
+  direction: 'in' | 'out';
+  isEdited?: boolean;
+}
+
 interface DailyRecord {
   id: string;
   userId: string;
@@ -67,6 +74,8 @@ interface DailyRecord {
   outTime: Date | null;
   inTimes: Date[];
   outTimes: Date[];
+  inPunches: PunchRef[];
+  outPunches: PunchRef[];
   workingDurationMinutes: number;
   lateMinutes: number;
   earlyMinutes: number;
@@ -127,6 +136,25 @@ export const RawPunchesPage: React.FC = () => {
   const [expandedTimeCells, setExpandedTimeCells] = useState<Set<string>>(new Set());
   const [columnFilter, setColumnFilter] = useState<'late' | 'early' | null>(null);
   const [showTooltip, setShowTooltip] = useState<'late' | 'early' | null>(null);
+  const [editingPunch, setEditingPunch] = useState<{ punch: PunchRef; record: DailyRecord } | null>(null);
+  const [editTimeValue, setEditTimeValue] = useState('');
+  const [deletingPunch, setDeletingPunch] = useState<{ punch: PunchRef; record: DailyRecord } | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editedPunchIds, setEditedPunchIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const fetchEditedIds = async () => {
+      try {
+        const snapshot = await getDocs(query(collection(db, 'punchAuditLog'), where('action', '==', 'edit')));
+        const ids = new Set<string>(snapshot.docs.map((doc) => doc.data().punchId as string));
+        setEditedPunchIds(ids);
+      } catch (error) {
+        console.error('Error fetching edited punch IDs:', error);
+      }
+    };
+    fetchEditedIds();
+  }, [currentUser]);
 
   useEffect(() => {
     if (!loading) {
@@ -160,15 +188,42 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const renderTimeCell = (record: DailyRecord, type: 'in' | 'out') => {
-    const times = type === 'in' ? record.inTimes : record.outTimes;
+    const punches = type === 'in' ? record.inPunches : record.outPunches;
     const key = `${record.id}-${type}`;
     const expanded = expandedTimeCells.has(key);
-    if (times.length === 0) return <span></span>;
-    if (times.length === 1) return <span>{formatTimeHHMM(times[0])}</span>;
+    const hasMultiple = punches.length > 1;
+    if (punches.length === 0) return <span></span>;
+
+    const renderPunchItem = (punch: PunchRef, isSecondary: boolean = false) => (
+      <div key={punch.id} className="group/punch flex items-center gap-1">
+        <span className={`${isSecondary ? 'text-secondary-500' : ''} ${punch.isEdited ? 'text-amber-700 font-medium' : ''}`}>{formatTimeHHMM(punch.time)}</span>
+        <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); openEditPunch(punch, record); }}
+            className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+            title="Edit time"
+          >
+            <Pencil size={12} />
+          </button>
+          {hasMultiple && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch, record }); }}
+              className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+              title="Delete punch"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+
+    if (punches.length === 1) return renderPunchItem(punches[0]);
+
     return (
       <div className="flex flex-col gap-0.5">
-        <div className="flex items-center gap-1">
-          <span>{formatTimeHHMM(times[0])}</span>
+        <div className="group/punch flex items-center gap-1">
+          <span className={punches[0].isEdited ? 'text-amber-700 font-medium' : ''}>{formatTimeHHMM(punches[0].time)}</span>
           <button
             onClick={() => toggleTimeCell(record.id, type)}
             className="text-secondary-500 hover:text-secondary-700 focus:outline-none"
@@ -180,12 +235,117 @@ export const RawPunchesPage: React.FC = () => {
               <ChevronRight size={14} />
             )}
           </button>
+          <div className="flex items-center gap-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
+              className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+              title="Edit time"
+            >
+              <Pencil size={12} />
+            </button>
+            {hasMultiple && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
+                className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                title="Delete punch"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
         </div>
-        {expanded && times.slice(1).map((t, i) => (
-          <span key={i} className="text-secondary-500">{formatTimeHHMM(t)}</span>
-        ))}
+        {expanded && punches.slice(1).map((punch) => renderPunchItem(punch, true))}
       </div>
     );
+  };
+
+  const openEditPunch = (punch: PunchRef, record: DailyRecord) => {
+    const hours = String(punch.time.getUTCHours()).padStart(2, '0');
+    const minutes = String(punch.time.getUTCMinutes()).padStart(2, '0');
+    setEditTimeValue(`${hours}:${minutes}`);
+    setEditingPunch({ punch, record });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingPunch || !editTimeValue || !currentUser) return;
+    setIsSavingEdit(true);
+    try {
+      const { punch, record } = editingPunch;
+      const [hours, minutes] = editTimeValue.split(':').map(Number);
+      const originalDate = punch.time;
+      const newDate = new Date(Date.UTC(
+        originalDate.getUTCFullYear(),
+        originalDate.getUTCMonth(),
+        originalDate.getUTCDate(),
+        hours,
+        minutes,
+        0,
+        0
+      ));
+      const newTimestamp = Timestamp.fromDate(newDate);
+
+      // Write audit log
+      await addDoc(collection(db, 'punchAuditLog'), {
+        punchId: punch.id,
+        action: 'edit',
+        userId: record.userId,
+        employeeName: record.employeeName,
+        previousLogDate: Timestamp.fromDate(originalDate),
+        newLogDate: newTimestamp,
+        direction: punch.direction,
+        editedBy: currentUser.uid,
+        editedByName: userData?.name ?? '',
+        editedAt: serverTimestamp(),
+      });
+
+      // Update the punch
+      await updateDoc(doc(db, 'rawPunches', punch.id), { logDate: newTimestamp });
+
+      // Update local state
+      setAllPunches((prev) => prev.map((p) => p.id === punch.id ? { ...p, logDate: newTimestamp } : p));
+      setEditedPunchIds((prev) => new Set([...prev, punch.id]));
+      setEditingPunch(null);
+      showToast('success', 'Punch time updated successfully');
+    } catch (error) {
+      console.error('Error editing punch:', error);
+      showToast('error', 'Failed to update punch time');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingPunch || !currentUser) return;
+    setIsSavingEdit(true);
+    try {
+      const { punch, record } = deletingPunch;
+
+      // Write audit log BEFORE deleting
+      await addDoc(collection(db, 'punchAuditLog'), {
+        punchId: punch.id,
+        action: 'delete',
+        userId: record.userId,
+        employeeName: record.employeeName,
+        deletedLogDate: Timestamp.fromDate(punch.time),
+        direction: punch.direction,
+        editedBy: currentUser.uid,
+        editedByName: userData?.name ?? '',
+        editedAt: serverTimestamp(),
+      });
+
+      // Hard-delete the punch
+      await deleteDoc(doc(db, 'rawPunches', punch.id));
+
+      // Update local state
+      setAllPunches((prev) => prev.filter((p) => p.id !== punch.id));
+      setDeletingPunch(null);
+      showToast('success', 'Punch deleted successfully');
+    } catch (error) {
+      console.error('Error deleting punch:', error);
+      showToast('error', 'Failed to delete punch');
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   useEffect(() => {
@@ -434,12 +594,6 @@ export const RawPunchesPage: React.FC = () => {
     if (currentPageIndex > 0) {
       setCurrentPageIndex(currentPageIndex - 1);
     }
-  };
-
-  const handleExport = () => {
-    setExportFromDate(fromDate);
-    setExportToDate(toDateFilter);
-    setIsExportModalOpen(true);
   };
 
   const openAnalyzeModal = () => {
@@ -705,6 +859,12 @@ export const RawPunchesPage: React.FC = () => {
         .filter((p) => p.direction === 'out')
         .map((p) => toDate(p.logDate))
         .filter((d): d is Date => d !== null);
+      const inPunches: PunchRef[] = sorted
+        .filter((p) => p.direction === 'in' && toDate(p.logDate))
+        .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'in' as const, isEdited: editedPunchIds.has(p.id) }));
+      const outPunches: PunchRef[] = sorted
+        .filter((p) => p.direction === 'out' && toDate(p.logDate))
+        .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'out' as const, isEdited: editedPunchIds.has(p.id) }));
 
       const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
       let lateMinutes = 0;
@@ -764,6 +924,8 @@ export const RawPunchesPage: React.FC = () => {
         outTime: outDate,
         inTimes,
         outTimes,
+        inPunches,
+        outPunches,
         workingDurationMinutes,
         lateMinutes,
         earlyMinutes,
@@ -797,7 +959,7 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
-  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, workLocationMap, shiftsMap]);
+  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, workLocationMap, shiftsMap, editedPunchIds]);
 
   const filteredRecords = dailyRecords.filter((record) => {
     if (debouncedSearch.trim()) {
@@ -839,13 +1001,15 @@ export const RawPunchesPage: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors"
-          >
-            <Download size={16} />
-            Export
-          </button>
+          {userData?.designation !== 'Branch Manager' && (
+            <button
+              onClick={() => navigate('/attendance/change-tracker')}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-600 rounded-lg hover:bg-slate-700 transition-colors"
+            >
+              <History size={16} />
+              Alterations
+            </button>
+          )}
           {userData?.designation !== 'Branch Manager' && (
             <button
               onClick={openAnalyzeModal}
@@ -1089,6 +1253,81 @@ export const RawPunchesPage: React.FC = () => {
                 className="px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Punch Modal */}
+      {editingPunch && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setEditingPunch(null)}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-secondary-900 mb-1">Edit Punch Time</h2>
+            <p className="text-sm text-secondary-500 mb-4">
+              {editingPunch.record.employeeName} &middot; {editingPunch.punch.direction.toUpperCase()} &middot; {formatLocalDate(editingPunch.record.date)}
+            </p>
+            <div className="mb-6">
+              <label className="block text-xs font-medium text-secondary-600 mb-1">New Time</label>
+              <input
+                type="time"
+                value={editTimeValue}
+                onChange={(e) => setEditTimeValue(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setEditingPunch(null)}
+                className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={!editTimeValue || isSavingEdit}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSavingEdit ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Punch Confirmation */}
+      {deletingPunch && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setDeletingPunch(null)}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-secondary-900 mb-1">Delete Punch</h2>
+            <p className="text-sm text-secondary-500 mb-4">
+              Are you sure you want to delete this punch?
+            </p>
+            <div className="bg-secondary-50 rounded-lg p-3 mb-6 text-sm">
+              <p><span className="font-medium">Employee:</span> {deletingPunch.record.employeeName}</p>
+              <p><span className="font-medium">Direction:</span> {deletingPunch.punch.direction.toUpperCase()}</p>
+              <p><span className="font-medium">Time:</span> {formatTimeHHMM(deletingPunch.punch.time)}</p>
+              <p><span className="font-medium">Date:</span> {formatLocalDate(deletingPunch.record.date)}</p>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDeletingPunch(null)}
+                className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={isSavingEdit}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSavingEdit ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

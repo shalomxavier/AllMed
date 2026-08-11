@@ -55,6 +55,7 @@ export const AttendancePage: React.FC = () => {
           </div>
           <p className="text-base font-semibold text-secondary-900 text-center">Insights</p>
         </div>
+
       </div>
     </PageContainer>
   );

@@ -39,6 +39,7 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
     '/attendance/departments',
     '/attendance/reports',
     '/attendance/insights',
+    '/attendance/change-tracker',
     '/attendance/reports/preview/monthly',
     '/attendance/reports/preview/daily',
     '/attendance/reports/preview/shifts',

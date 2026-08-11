@@ -13,6 +13,7 @@ import { DepartmentsPage } from '@pages/Attendance/DepartmentsPage';
 import { BranchesPage } from '@pages/Attendance/BranchesPage';
 import { ReportsPage } from '@pages/Attendance/ReportsPage';
 import { InsightsPage } from '@pages/Attendance/InsightsPage';
+import { ChangeTrackerPage } from '@pages/Attendance/ChangeTrackerPage';
 import { MonthlyReportPreviewPage } from '@pages/Attendance/MonthlyReportPreviewPage';
 import { DailyReportPreviewPage } from '@pages/Attendance/DailyReportPreviewPage';
 import { ShiftReportPreviewPage } from '@pages/Attendance/ShiftReportPreviewPage';
@@ -67,6 +68,7 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/attendance/branches" element={<BranchesPage />} />
         <Route path="/attendance/reports" element={<ReportsPage />} />
         <Route path="/attendance/insights" element={<InsightsPage />} />
+        <Route path="/attendance/change-tracker" element={<ChangeTrackerPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/dms" element={<DMSPage />} />
         <Route path="/dms/workspace" element={<WorkspacePage />} />
