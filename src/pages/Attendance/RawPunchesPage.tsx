@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { ArrowLeft, Search, Calendar, ChevronLeft, ChevronRight, Clock, X, Filter, Pencil, Trash2, History } from 'lucide-react';
+import { ArrowLeft, Search, Calendar, ChevronLeft, ChevronRight, Clock, X, Filter, Pencil, Trash2, History, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -141,6 +141,8 @@ export const RawPunchesPage: React.FC = () => {
   const [deletingPunch, setDeletingPunch] = useState<{ punch: PunchRef; record: DailyRecord } | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editedPunchIds, setEditedPunchIds] = useState<Set<string>>(new Set());
+  const [addingPunch, setAddingPunch] = useState<{ record: DailyRecord; direction: 'in' | 'out' } | null>(null);
+  const [addTimeValue, setAddTimeValue] = useState('');
 
   useEffect(() => {
     if (!currentUser) return;
@@ -192,7 +194,17 @@ export const RawPunchesPage: React.FC = () => {
     const key = `${record.id}-${type}`;
     const expanded = expandedTimeCells.has(key);
     const hasMultiple = punches.length > 1;
-    if (punches.length === 0) return <span></span>;
+    if (punches.length === 0) return (
+      <div className="group/empty flex items-center">
+        <button
+          onClick={(e) => { e.stopPropagation(); setAddingPunch({ record, direction: type }); setAddTimeValue(''); }}
+          className="p-0.5 rounded text-green-500 hover:text-green-700 hover:bg-green-50 transition-colors opacity-0 group-hover/empty:opacity-100"
+          title={`Add ${type} time`}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    );
 
     const renderPunchItem = (punch: PunchRef, isSecondary: boolean = false) => (
       <div key={punch.id} className="group/punch flex items-center gap-1">
@@ -343,6 +355,60 @@ export const RawPunchesPage: React.FC = () => {
     } catch (error) {
       console.error('Error deleting punch:', error);
       showToast('error', 'Failed to delete punch');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleAddPunch = async () => {
+    if (!addingPunch || !addTimeValue || !currentUser) return;
+    setIsSavingEdit(true);
+    try {
+      const { record, direction } = addingPunch;
+      const recordDate = record.date!;
+      const [hours, minutes] = addTimeValue.split(':').map(Number);
+      const punchDate = new Date(Date.UTC(
+        recordDate.getUTCFullYear(),
+        recordDate.getUTCMonth(),
+        recordDate.getUTCDate(),
+        hours,
+        minutes,
+        0,
+        0
+      ));
+      const logDate = Timestamp.fromDate(punchDate);
+
+      // Create the new punch document
+      const newPunchDoc = await addDoc(collection(db, 'rawPunches'), {
+        userId: record.userId,
+        direction,
+        logDate,
+        month: recordDate.getUTCMonth() + 1,
+        year: recordDate.getUTCFullYear(),
+        sourceTable: 'manual',
+      });
+
+      // Write audit log
+      await addDoc(collection(db, 'punchAuditLog'), {
+        punchId: newPunchDoc.id,
+        action: 'add',
+        userId: record.userId,
+        employeeName: record.employeeName,
+        newLogDate: logDate,
+        direction,
+        editedBy: currentUser.uid,
+        editedByName: userData?.name ?? '',
+        editedAt: serverTimestamp(),
+      });
+
+      // Update local state
+      setAllPunches((prev) => [...prev, { id: newPunchDoc.id, userId: record.userId, direction, logDate, month: recordDate.getUTCMonth() + 1, year: recordDate.getUTCFullYear(), sourceTable: 'manual' }]);
+      setEditedPunchIds((prev) => new Set([...prev, newPunchDoc.id]));
+      setAddingPunch(null);
+      showToast('success', `${direction === 'in' ? 'In' : 'Out'} time added successfully`);
+    } catch (error) {
+      console.error('Error adding punch:', error);
+      showToast('error', 'Failed to add punch');
     } finally {
       setIsSavingEdit(false);
     }
@@ -1253,6 +1319,45 @@ export const RawPunchesPage: React.FC = () => {
                 className="px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Punch Modal */}
+      {addingPunch && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setAddingPunch(null)}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-secondary-900 mb-1">Add {addingPunch.direction === 'in' ? 'In' : 'Out'} Time</h2>
+            <p className="text-sm text-secondary-500 mb-4">
+              {addingPunch.record.employeeName} &middot; {formatLocalDate(addingPunch.record.date)}
+            </p>
+            <div className="mb-6">
+              <label className="block text-xs font-medium text-secondary-600 mb-1">Time</label>
+              <input
+                type="time"
+                value={addTimeValue}
+                onChange={(e) => setAddTimeValue(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setAddingPunch(null)}
+                className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddPunch}
+                disabled={!addTimeValue || isSavingEdit}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isSavingEdit ? 'Adding...' : 'Add'}
               </button>
             </div>
           </div>
