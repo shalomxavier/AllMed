@@ -16,6 +16,8 @@ interface AuditRecord {
   newLogDate?: any;
   deletedLogDate?: any;
   direction: string;
+  previousDirection?: string;
+  newDirection?: string;
   editedBy: string;
   editedByName: string;
   editedAt?: any;
@@ -271,6 +273,9 @@ export const ChangeTrackerPage: React.FC = () => {
                     const isEdit = record.action === 'edit';
                     const originalTime = isEdit ? record.previousLogDate : record.deletedLogDate;
                     const punchDate = isEdit ? record.previousLogDate : record.deletedLogDate;
+                    const previousDirection = record.previousDirection ?? record.direction;
+                    const newDirection = record.newDirection ?? record.direction;
+                    const directionChanged = isEdit && !!record.previousDirection && !!record.newDirection && previousDirection !== newDirection;
 
                     return (
                       <tr
@@ -288,9 +293,21 @@ export const ChangeTrackerPage: React.FC = () => {
                         <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{record.userId || '—'}</td>
                         <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{record.employeeName || '—'}</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${record.direction === 'in' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-                            {(record.direction ?? '').toUpperCase()}
-                          </span>
+                          {directionChanged ? (
+                            <span className="inline-flex items-center gap-1">
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${previousDirection === 'in' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                {(previousDirection ?? '').toUpperCase()}
+                              </span>
+                              <span className="text-secondary-400 text-xs">→</span>
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${newDirection === 'in' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                {(newDirection ?? '').toUpperCase()}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${(record.direction ?? '') === 'in' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                              {(record.direction ?? '').toUpperCase()}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatDateOnly(punchDate)}</td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(originalTime)}</td>

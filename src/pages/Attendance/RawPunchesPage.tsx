@@ -138,6 +138,7 @@ export const RawPunchesPage: React.FC = () => {
   const [showTooltip, setShowTooltip] = useState<'late' | 'early' | null>(null);
   const [editingPunch, setEditingPunch] = useState<{ punch: PunchRef; record: DailyRecord } | null>(null);
   const [editTimeValue, setEditTimeValue] = useState('');
+  const [editDirectionValue, setEditDirectionValue] = useState<'in' | 'out'>('in');
   const [deletingPunch, setDeletingPunch] = useState<{ punch: PunchRef; record: DailyRecord } | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editedPunchIds, setEditedPunchIds] = useState<Set<string>>(new Set());
@@ -282,6 +283,7 @@ export const RawPunchesPage: React.FC = () => {
     const hours = String(punch.time.getUTCHours()).padStart(2, '0');
     const minutes = String(punch.time.getUTCMinutes()).padStart(2, '0');
     setEditTimeValue(`${hours}:${minutes}`);
+    setEditDirectionValue(punch.direction);
     setEditingPunch({ punch, record });
   };
 
@@ -292,6 +294,7 @@ export const RawPunchesPage: React.FC = () => {
       const { punch, record } = editingPunch;
       const [hours, minutes] = editTimeValue.split(':').map(Number);
       const originalDate = punch.time;
+      const originalDirection = punch.direction;
       const newDate = new Date(Date.UTC(
         originalDate.getUTCFullYear(),
         originalDate.getUTCMonth(),
@@ -302,6 +305,7 @@ export const RawPunchesPage: React.FC = () => {
         0
       ));
       const newTimestamp = Timestamp.fromDate(newDate);
+      const newDirection = editDirectionValue;
 
       // Write audit log
       await addDoc(collection(db, 'punchAuditLog'), {
@@ -311,20 +315,22 @@ export const RawPunchesPage: React.FC = () => {
         employeeName: record.employeeName,
         previousLogDate: Timestamp.fromDate(originalDate),
         newLogDate: newTimestamp,
-        direction: punch.direction,
+        previousDirection: originalDirection,
+        newDirection,
+        direction: newDirection,
         editedBy: currentUser.uid,
         editedByName: userData?.name ?? '',
         editedAt: serverTimestamp(),
       });
 
       // Update the punch
-      await updateDoc(doc(db, 'rawPunches', punch.id), { logDate: newTimestamp });
+      await updateDoc(doc(db, 'rawPunches', punch.id), { logDate: newTimestamp, direction: newDirection });
 
       // Update local state
-      setAllPunches((prev) => prev.map((p) => p.id === punch.id ? { ...p, logDate: newTimestamp } : p));
+      setAllPunches((prev) => prev.map((p) => p.id === punch.id ? { ...p, logDate: newTimestamp, direction: newDirection } : p));
       setEditedPunchIds((prev) => new Set([...prev, punch.id]));
       setEditingPunch(null);
-      showToast('success', 'Punch time updated successfully');
+      showToast('success', 'Punch updated successfully');
     } catch (error) {
       console.error('Error editing punch:', error);
       showToast('error', 'Failed to update punch time');
@@ -1378,11 +1384,11 @@ export const RawPunchesPage: React.FC = () => {
           onClick={() => setEditingPunch(null)}
         >
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold text-secondary-900 mb-1">Edit Punch Time</h2>
+            <h2 className="text-lg font-semibold text-secondary-900 mb-1">Edit Punch</h2>
             <p className="text-sm text-secondary-500 mb-4">
-              {editingPunch.record.employeeName} &middot; {editingPunch.punch.direction.toUpperCase()} &middot; {formatLocalDate(editingPunch.record.date)}
+              {editingPunch.record.employeeName} &middot; {formatLocalDate(editingPunch.record.date)}
             </p>
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="block text-xs font-medium text-secondary-600 mb-1">New Time</label>
               <input
                 type="time"
@@ -1390,6 +1396,33 @@ export const RawPunchesPage: React.FC = () => {
                 onChange={(e) => setEditTimeValue(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+            </div>
+            <div className="mb-6">
+              <label className="block text-xs font-medium text-secondary-600 mb-1">Direction</label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditDirectionValue('in')}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                    editDirectionValue === 'in'
+                      ? 'bg-green-50 border-green-500 text-green-700'
+                      : 'bg-white border-secondary-200 text-secondary-600 hover:bg-secondary-50'
+                  }`}
+                >
+                  IN
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditDirectionValue('out')}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                    editDirectionValue === 'out'
+                      ? 'bg-red-50 border-red-500 text-red-700'
+                      : 'bg-white border-secondary-200 text-secondary-600 hover:bg-secondary-50'
+                  }`}
+                >
+                  OUT
+                </button>
+              </div>
             </div>
             <div className="flex items-center justify-end gap-2">
               <button
