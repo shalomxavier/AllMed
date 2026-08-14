@@ -25,6 +25,12 @@ service cloud.firestore {
       allow write: if request.auth != null;
     }
 
+    // Allow authenticated users to read and write the punch audit log (change tracker)
+    match /punchAuditLog/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
     // Allow authenticated users to read and write shifts
     match /shifts/{shiftId} {
       allow read: if request.auth != null;
