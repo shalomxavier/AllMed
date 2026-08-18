@@ -9,7 +9,7 @@ import { RedSpinner } from '@/components/common';
 interface AuditRecord {
   id: string;
   punchId: string;
-  action: 'edit' | 'delete';
+  action: 'edit' | 'delete' | 'add';
   userId: string;
   employeeName?: string;
   previousLogDate?: any;
@@ -271,11 +271,18 @@ export const ChangeTrackerPage: React.FC = () => {
                 <tbody>
                   {paginatedRecords.map((record, idx) => {
                     const isEdit = record.action === 'edit';
-                    const originalTime = isEdit ? record.previousLogDate : record.deletedLogDate;
-                    const punchDate = isEdit ? record.previousLogDate : record.deletedLogDate;
+                    const isAdd = record.action === 'add';
+                    const isDelete = record.action === 'delete';
+                    const originalTime = isEdit ? record.previousLogDate : (isDelete ? record.deletedLogDate : null);
+                    const punchDate = isEdit ? record.previousLogDate : (isDelete ? record.deletedLogDate : record.newLogDate);
                     const previousDirection = record.previousDirection ?? record.direction;
                     const newDirection = record.newDirection ?? record.direction;
                     const directionChanged = isEdit && !!record.previousDirection && !!record.newDirection && previousDirection !== newDirection;
+                    const actionBadge = isEdit
+                      ? { label: 'Edit', className: 'bg-blue-100 text-blue-700' }
+                      : isAdd
+                      ? { label: 'Add', className: 'bg-green-100 text-green-700' }
+                      : { label: 'Delete', className: 'bg-red-100 text-red-700' };
 
                     return (
                       <tr
@@ -284,11 +291,9 @@ export const ChangeTrackerPage: React.FC = () => {
                       >
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatDateTime(record.editedAt)}</td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          {isEdit ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">Edit</span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Delete</span>
-                          )}
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${actionBadge.className}`}>
+                            {actionBadge.label}
+                          </span>
                         </td>
                         <td className="px-4 py-2.5 font-medium text-secondary-900 whitespace-nowrap">{record.userId || '—'}</td>
                         <td className="px-4 py-2.5 text-secondary-800 whitespace-nowrap">{record.employeeName || '—'}</td>
@@ -312,7 +317,7 @@ export const ChangeTrackerPage: React.FC = () => {
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatDateOnly(punchDate)}</td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{formatTimeHHMM(originalTime)}</td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">
-                          {isEdit ? formatTimeHHMM(record.newLogDate) : <span className="text-secondary-400">—</span>}
+                          {isDelete ? <span className="text-secondary-400">—</span> : formatTimeHHMM(record.newLogDate)}
                         </td>
                         <td className="px-4 py-2.5 text-secondary-700 whitespace-nowrap">{record.editedByName || '—'}</td>
                       </tr>
