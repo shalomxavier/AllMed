@@ -13,6 +13,7 @@ interface Employee {
   designation?: string;
   subDesignation?: string;
   workLocation?: string;
+  department?: string;
 }
 
 interface RawPunch {
@@ -41,8 +42,10 @@ interface ChartEmployee {
 interface ManagerChart {
   key: string;
   title: string;
-  data: Array<{ label: string; value: number; color: string }>;
+  data: Array<{ label: string; value: number; color: string; total?: number }>;
   employeesByDesignation: Record<string, ChartEmployee[]>;
+  employeesByDepartment?: Record<string, ChartEmployee[]>;
+  departmentData?: Array<{ label: string; value: number; color: string; total?: number }>;
   emptyText: string;
 }
 
@@ -133,11 +136,33 @@ export const InsightsPage: React.FC = () => {
         });
 
         const attendanceByDesignation = new Map<string, Set<string>>();
+        const totalEmployeesByDesignation = new Map<string, Set<string>>();
+        const attendanceByDepartment = new Map<string, Set<string>>();
+        const totalEmployeesByDepartment = new Map<string, Set<string>>();
+        
         const addEmployeeToAttendance = (employee: Employee, employeeCode: string) => {
           const designation = employee.designation?.trim() || 'Unassigned Designation';
           if (!attendanceByDesignation.has(designation)) attendanceByDesignation.set(designation, new Set());
           attendanceByDesignation.get(designation)!.add(employeeCode);
+          
+          const department = employee.department?.trim() || 'Unassigned Department';
+          if (!attendanceByDepartment.has(department)) attendanceByDepartment.set(department, new Set());
+          attendanceByDepartment.get(department)!.add(employeeCode);
         };
+        
+        // Track total employees per designation and department
+        employees.forEach((employee) => {
+          const employeeCode = employee.employeeCode?.trim().toLowerCase() || employee.employeeCodeInDevice?.trim().toLowerCase();
+          if (!employeeCode) return;
+          
+          const designation = employee.designation?.trim() || 'Unassigned Designation';
+          if (!totalEmployeesByDesignation.has(designation)) totalEmployeesByDesignation.set(designation, new Set());
+          totalEmployeesByDesignation.get(designation)!.add(employeeCode);
+          
+          const department = employee.department?.trim() || 'Unassigned Department';
+          if (!totalEmployeesByDepartment.has(department)) totalEmployeesByDepartment.set(department, new Set());
+          totalEmployeesByDepartment.get(department)!.add(employeeCode);
+        });
 
         if (selectedDate > getToday()) {
           shiftsSnapshot.docs.forEach((shiftDocument) => {
@@ -168,13 +193,30 @@ export const InsightsPage: React.FC = () => {
             .sort()
             .map((designation, index) => [designation, CHART_COLORS[index % CHART_COLORS.length]]),
         );
-        const data = Array.from(attendanceByDesignation.entries())
+        const departmentColors = new Map(
+          Array.from(attendanceByDepartment.keys())
+            .sort()
+            .map((department, index) => [department, CHART_COLORS[index % CHART_COLORS.length]]),
+        );
+        
+        const designationData = Array.from(attendanceByDesignation.entries())
           .map(([label, employeesPresent]) => ({
             label,
             value: employeesPresent.size,
+            total: totalEmployeesByDesignation.get(label)?.size || employeesPresent.size,
             color: designationColors.get(label) || CHART_COLORS[0],
           }))
           .sort((first, second) => second.value - first.value);
+          
+        const departmentChartData = Array.from(attendanceByDepartment.entries())
+          .map(([label, employeesPresent]) => ({
+            label,
+            value: employeesPresent.size,
+            total: totalEmployeesByDepartment.get(label)?.size || employeesPresent.size,
+            color: departmentColors.get(label) || CHART_COLORS[0],
+          }))
+          .sort((first, second) => second.value - first.value);
+        
         const employeesByDesignation = Object.fromEntries(
           Array.from(attendanceByDesignation.entries()).map(([designation, employeeCodes]) => [
             designation,
@@ -189,14 +231,32 @@ export const InsightsPage: React.FC = () => {
             }).sort((first, second) => first.name.localeCompare(second.name)),
           ]),
         );
+        
+        const employeesByDepartment = Object.fromEntries(
+          Array.from(attendanceByDepartment.entries()).map(([department, employeeCodes]) => [
+            department,
+            Array.from(employeeCodes).map((employeeCode) => {
+              const employee = employeeByCode.get(employeeCode);
+              return {
+                name: employee?.employeeName || employeeCode,
+                employeeCode: employee?.employeeCode || employeeCode,
+                subDesignation: employee?.subDesignation || '—',
+                shiftTime: shiftTimesByEmployee.get(employeeCode) || 'No shift assigned',
+              };
+            }).sort((first, second) => first.name.localeCompare(second.name)),
+          ]),
+        );
         const emptyText = selectedDate > getToday()
           ? 'No data. Please assign shifts to the employees.'
           : 'No data. No punches yet for this date.';
+        
         setManagerCharts([{
           key: ALL_EMPLOYEES_KEY,
           title: 'All Employees',
-          data,
+          data: designationData,
           employeesByDesignation,
+          employeesByDepartment,
+          departmentData: departmentChartData,
           emptyText,
         }]);
       } catch (error) {
@@ -213,6 +273,11 @@ export const InsightsPage: React.FC = () => {
   const handleDesignationClick = (chart: ManagerChart, designation: string) => {
     const employees = chart.employeesByDesignation[designation] ?? [];
     if (employees.length > 0) setSelectedDesignation({ chartTitle: chart.title, designation, employees });
+  };
+
+  const handleDepartmentClick = (chart: ManagerChart, department: string) => {
+    const employees = chart.employeesByDepartment?.[department] ?? [];
+    if (employees.length > 0) setSelectedDesignation({ chartTitle: chart.title, designation: department, employees });
   };
 
   return (
@@ -288,7 +353,7 @@ export const InsightsPage: React.FC = () => {
               <span>Loading attendance insights...</span>
             </div>
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
               {managerCharts.map((chart) => (
                 <PieChart
                   key={chart.key}
@@ -296,6 +361,9 @@ export const InsightsPage: React.FC = () => {
                   data={chart.data}
                   emptyText={chart.emptyText}
                   onLabelClick={(designation) => handleDesignationClick(chart, designation)}
+                  departmentData={chart.departmentData}
+                  onDepartmentLabelClick={(department) => handleDepartmentClick(chart, department)}
+                  className="xl:col-span-2"
                 />
               ))}
             </div>
