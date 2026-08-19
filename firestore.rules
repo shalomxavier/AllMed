@@ -1,6 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Only Director (admin) and HR designations may add/edit/delete punch records
+    function canManagePunches() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    }
+
     // Allow authenticated users to read conversations
     match /whatsapp_conversations/{conversationId} {
       allow read: if request.auth != null;
@@ -19,16 +25,16 @@ service cloud.firestore {
       allow write: if request.auth != null;
     }
 
-    // Allow authenticated users to read raw punches
+    // Allow authenticated users to read raw punches; only Director/HR can add, edit or delete
     match /rawPunches/{docId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow write: if canManagePunches();
     }
 
-    // Allow authenticated users to read and write the punch audit log (change tracker)
+    // Allow authenticated users to read the punch audit log (change tracker); only Director/HR can write
     match /punchAuditLog/{docId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow write: if canManagePunches();
     }
 
     // Allow authenticated users to read and write shifts

@@ -102,6 +102,8 @@ export const RawPunchesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
   const { showToast, ToastContainer } = useToast();
+  // Only Director (admin) and HR are allowed to add, edit, or delete punch records.
+  const canManagePunches = userData?.designation === 'Director' || userData?.designation === 'HR';
 
   const [allPunches, setAllPunches] = useState<RawPunch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -197,37 +199,41 @@ export const RawPunchesPage: React.FC = () => {
     const hasMultiple = punches.length > 1;
     if (punches.length === 0) return (
       <div className="flex items-center justify-center w-[42px]">
-        <button
-          onClick={(e) => { e.stopPropagation(); setAddingPunch({ record, direction: type }); setAddTimeValue(''); }}
-          className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-          title={`Add ${type} time`}
-        >
-          <Plus size={14} />
-        </button>
+        {canManagePunches && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setAddingPunch({ record, direction: type }); setAddTimeValue(''); }}
+            className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+            title={`Add ${type} time`}
+          >
+            <Plus size={14} />
+          </button>
+        )}
       </div>
     );
 
     const renderPunchItem = (punch: PunchRef, isSecondary: boolean = false) => (
       <div key={punch.id} className="group/punch flex items-center gap-1">
         <span className={`${isSecondary ? 'text-secondary-500' : ''} ${punch.isEdited ? 'text-amber-700 font-medium' : ''}`}>{formatTimeHHMM(punch.time)}</span>
-        <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => { e.stopPropagation(); openEditPunch(punch, record); }}
-            className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-            title="Edit time"
-          >
-            <Pencil size={12} />
-          </button>
-          {hasMultiple && (
+        {canManagePunches && (
+          <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
             <button
-              onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch, record }); }}
-              className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-              title="Delete punch"
+              onClick={(e) => { e.stopPropagation(); openEditPunch(punch, record); }}
+              className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+              title="Edit time"
             >
-              <Trash2 size={12} />
+              <Pencil size={12} />
             </button>
-          )}
-        </div>
+            {hasMultiple && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch, record }); }}
+                className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                title="Delete punch"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     );
 
@@ -248,22 +254,24 @@ export const RawPunchesPage: React.FC = () => {
           )}
           {expanded && (
             <>
-              <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
-                <button
-                  onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
-                  className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
-                  title="Edit time"
-                >
-                  <Pencil size={12} />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
-                  className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-                  title="Delete punch"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
+              {canManagePunches && (
+                <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
+                    className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                    title="Edit time"
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
+                    className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                    title="Delete punch"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              )}
               <button
                 onClick={() => toggleTimeCell(record.id, type)}
                 className="text-secondary-500 hover:text-secondary-700 focus:outline-none"
@@ -288,7 +296,7 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleSaveEdit = async () => {
-    if (!editingPunch || !editTimeValue || !currentUser) return;
+    if (!editingPunch || !editTimeValue || !currentUser || !canManagePunches) return;
     setIsSavingEdit(true);
     try {
       const { punch, record } = editingPunch;
@@ -340,7 +348,7 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleConfirmDelete = async () => {
-    if (!deletingPunch || !currentUser) return;
+    if (!deletingPunch || !currentUser || !canManagePunches) return;
     setIsSavingEdit(true);
     try {
       const { punch, record } = deletingPunch;
@@ -374,7 +382,7 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleAddPunch = async () => {
-    if (!addingPunch || !addTimeValue || !currentUser) return;
+    if (!addingPunch || !addTimeValue || !currentUser || !canManagePunches) return;
     setIsSavingEdit(true);
     try {
       const { record, direction } = addingPunch;
