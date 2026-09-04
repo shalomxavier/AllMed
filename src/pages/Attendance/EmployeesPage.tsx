@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion, writeBatch } from 'firebase/firestore';
 
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -3255,16 +3255,22 @@ export const EmployeesPage: React.FC = () => {
                                 updatedEmployees.push({ employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: fmt(dayAfter), toDate: foundEmpEntry.toDate });
                               }
 
-                              await updateDoc(doc(db, 'shifts', foundDocId), { employees: updatedEmployees, updatedAt: serverTimestamp() });
+                              const batch = writeBatch(db);
+
+                              // Update the old shift doc
+                              batch.update(doc(db, 'shifts', foundDocId), { employees: updatedEmployees, updatedAt: serverTimestamp() });
 
                               // Now add the employee to the NEW shift doc (matching the chosen time slot)
                               const newEmpEntry = { employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: changeShiftDate, toDate: changeShiftDate };
                               const slotSnap = await getDocs(query(shiftsRef, where('startTime', '==', t.startTime), where('endTime', '==', t.endTime)));
                               if (!slotSnap.empty) {
-                                await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(newEmpEntry) });
+                                batch.update(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(newEmpEntry) });
                               } else {
-                                await addDoc(shiftsRef, { startTime: t.startTime, endTime: t.endTime, employees: [newEmpEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
+                                const newShiftRef = doc(shiftsRef);
+                                batch.set(newShiftRef, { startTime: t.startTime, endTime: t.endTime, employees: [newEmpEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
                               }
+
+                              await batch.commit();
                             }
 
                             setShiftChangedDates(prev => [...prev, { date: changeShiftDate, startTime: t.startTime, endTime: t.endTime }]);
