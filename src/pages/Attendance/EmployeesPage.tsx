@@ -1863,6 +1863,7 @@ export const EmployeesPage: React.FC = () => {
                               <span className="text-black"> - </span>
                               <span className="text-blue-600">{formatShiftDate(shift.toDate)}</span>
                             </span>
+                            {userData?.designation !== 'Branch Manager' && (
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => handleEditShift(shift)}
@@ -1877,6 +1878,7 @@ export const EmployeesPage: React.FC = () => {
                                 <Trash2 size={16} />
                               </button>
                             </div>
+                            )}
                           </div>
                           <div className="flex items-center gap-4 text-sm">
                             <span className="px-2.5 py-0.5 rounded-full bg-green-50 text-green-600 text-xs font-medium">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
@@ -2034,6 +2036,7 @@ export const EmployeesPage: React.FC = () => {
                     <p className="text-sm text-secondary-500">View existing shift records</p>
                   </div>
                 </button>
+                {userData?.designation !== 'Branch Manager' && (
                 <button
                   onClick={() => handleShiftAction('add')}
                   className="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg border border-secondary-200 hover:bg-secondary-50 transition-colors"
@@ -2046,6 +2049,8 @@ export const EmployeesPage: React.FC = () => {
                     <p className="text-sm text-secondary-500">Create a new shift assignment</p>
                   </div>
                 </button>
+                )}
+                {userData?.designation !== 'Branch Manager' && (
                 <button
                   onClick={() => handleShiftAction('edit')}
                   className="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg border border-secondary-200 hover:bg-secondary-50 transition-colors"
@@ -2058,6 +2063,7 @@ export const EmployeesPage: React.FC = () => {
                     <p className="text-sm text-secondary-500">Modify existing shift details</p>
                   </div>
                 </button>
+                )}
               </div>
               )}
             </div>

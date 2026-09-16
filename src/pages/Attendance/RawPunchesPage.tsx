@@ -515,6 +515,43 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
+  // When searching, in-memory filtering must run against every matching record in the
+  // date range, not just the first SEARCH_LIMIT batch — otherwise results outside the
+  // initially-loaded page silently disappear from the search. Loop through all pages.
+  const fetchAllForSearch = async (from = fromDate, to = toDateFilter, loc = locationFilter) => {
+    if (!currentUser) return;
+    activeFilters.current = { fromDate: from, toDateFilter: to, locationFilter: loc };
+    setLoading(true);
+    try {
+      const userIds = getUserIdsForBranch(loc);
+      if (userIds !== null && userIds.length === 0) {
+        setAllPunches([]);
+        setLastDoc(null);
+        setHasMore(false);
+        setCurrentPageIndex(0);
+        return;
+      }
+      const all: RawPunch[] = [];
+      let cursor: QueryDocumentSnapshot<DocumentData> | undefined = undefined;
+      while (true) {
+        const constraints = buildQueryConstraints(from, to, userIds, cursor);
+        const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
+        const data: RawPunch[] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        all.push(...data);
+        if (snapshot.docs.length < SEARCH_LIMIT) break;
+        cursor = snapshot.docs[snapshot.docs.length - 1];
+      }
+      setAllPunches(all);
+      setLastDoc(null);
+      setHasMore(false);
+      setCurrentPageIndex(0);
+    } catch (error) {
+      console.error('Error fetching all rawPunches for search:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchMorePunches = async () => {
     if (!currentUser || !lastDoc || loadingMore) return;
     const { fromDate: from, toDateFilter: to, locationFilter: loc } = activeFilters.current;
@@ -570,15 +607,23 @@ export const RawPunchesPage: React.FC = () => {
 
   useEffect(() => {
     if (!currentUser || !employeesLoaded) return;
-    fetchPage(fromDate, toDateFilter, locationFilter);
+    if (debouncedSearch.trim()) {
+      fetchAllForSearch(fromDate, toDateFilter, locationFilter);
+    } else {
+      fetchPage(fromDate, toDateFilter, locationFilter);
+    }
   }, [currentUser, employeesLoaded]);
 
   useEffect(() => {
     if (!currentUser || !employeesLoaded) return;
     setLastDoc(null);
     setHasMore(false);
-    fetchPage(fromDate, toDateFilter, locationFilter);
-  }, [fromDate, toDateFilter, locationFilter]);
+    if (debouncedSearch.trim()) {
+      fetchAllForSearch(fromDate, toDateFilter, locationFilter);
+    } else {
+      fetchPage(fromDate, toDateFilter, locationFilter);
+    }
+  }, [fromDate, toDateFilter, locationFilter, debouncedSearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 500);
