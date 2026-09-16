@@ -1399,7 +1399,8 @@ export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMast
   const records: EmployeeMasterRecord[] = employees
     .filter((employee) => {
       const deviceCode = (employee.employeeCodeInDevice ?? '').toString().trim();
-      return !deviceCode.toLowerCase().startsWith('del');
+      const status = (employee.employmentStatus ?? '').toString().trim().toLowerCase();
+      return !deviceCode.toLowerCase().startsWith('del') && status !== 'inactive';
     })
     .map((employee) => ({
       employeeCode: (employee.employeeCode ?? '').toString().toUpperCase(),
