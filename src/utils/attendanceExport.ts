@@ -1371,20 +1371,12 @@ export interface EmployeeMasterRecord {
   probationPeriod: string;
   confirmationDate: string;
   employmentStatus: string;
-  lastSynced: string;
 }
 
 export interface EmployeeMasterData {
   locationLabel: string;
   employees: EmployeeMasterRecord[];
 }
-
-const formatSyncedAt = (syncedAt: any): string => {
-  if (!syncedAt) return '';
-  if (syncedAt.toDate) return syncedAt.toDate().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-  if (syncedAt instanceof Date) return syncedAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-  return String(syncedAt);
-};
 
 export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMasterData | null> => {
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
@@ -1422,7 +1414,6 @@ export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMast
       probationPeriod: (employee.probationPeriod ?? '').toString().toUpperCase(),
       confirmationDate: (employee.confirmationDate ?? '').toString(),
       employmentStatus: (employee.employmentStatus ?? '').toString().toUpperCase(),
-      lastSynced: formatSyncedAt(employee.syncedAt),
     }))
     .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 
@@ -1458,7 +1449,6 @@ export const exportEmployeeMaster = async (location = ''): Promise<void> => {
       'Probation Period',
       'Confirmation Date',
       'Employment Status',
-      'Last Synced',
     ];
 
     const workbook = new ExcelJS.Workbook();
@@ -1524,7 +1514,6 @@ export const exportEmployeeMaster = async (location = ''): Promise<void> => {
         emp.probationPeriod,
         emp.confirmationDate,
         emp.employmentStatus,
-        emp.lastSynced,
       ];
       values.forEach((value, index) => {
         const cell = row.getCell(index + 1);
@@ -1554,7 +1543,6 @@ export const exportEmployeeMaster = async (location = ''): Promise<void> => {
     worksheet.getColumn(17).width = 18;
     worksheet.getColumn(18).width = 18;
     worksheet.getColumn(19).width = 18;
-    worksheet.getColumn(20).width = 22;
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

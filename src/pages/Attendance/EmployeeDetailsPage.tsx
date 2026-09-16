@@ -220,13 +220,6 @@ export const EmployeeDetailsPage: React.FC = () => {
     if (employee) setEmploymentDetails(employee);
   };
 
-  const formatDate = (value: any) => {
-    if (!value) return '—';
-    if (value.toDate) return value.toDate().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    if (value instanceof Date) return value.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-    return String(value);
-  };
-
   return (
     <div className="flex flex-col">
       <div className="flex items-center justify-between px-6 py-4">
@@ -396,10 +389,6 @@ export const EmployeeDetailsPage: React.FC = () => {
                   <p className="text-base text-secondary-900">{employee[key] || '—'}</p>
                 </div>
               ))}
-              <div>
-                <p className="text-sm font-medium text-secondary-500 mb-1">Last Synced</p>
-                <p className="text-base text-secondary-900">{formatDate(employee.syncedAt)}</p>
-              </div>
             </div>
           </div>
         )}
