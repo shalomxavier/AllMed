@@ -43,7 +43,7 @@ export const MonthlyReportPreviewPage: React.FC = () => {
     );
   }
 
-  const totalColumn = 2 + data.dateLabels.length;
+  const totalColumn = 5 + data.dateLabels.length;
 
   const headerStyle = {
     backgroundColor: '#E7F3FF',
@@ -195,6 +195,9 @@ export const MonthlyReportPreviewPage: React.FC = () => {
               <col key={i} />
             ))}
             <col />
+            <col />
+            <col />
+            <col />
           </colgroup>
           <tbody>
             <tr>
@@ -231,6 +234,9 @@ export const MonthlyReportPreviewPage: React.FC = () => {
                     </td>
                   ))}
                   <td style={totalStyle}>TOTAL</td>
+                  <td style={totalStyle}>OT</td>
+                  <td style={totalStyle}>LATE</td>
+                  <td style={totalStyle}>EARLY OUT</td>
                 </tr>
                 <tr>
                   <td style={rowLabelStyle}>IN</td>
@@ -239,6 +245,9 @@ export const MonthlyReportPreviewPage: React.FC = () => {
                       {value}
                     </td>
                   ))}
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
                   <td style={cellStyle}></td>
                 </tr>
                 <tr>
@@ -249,6 +258,9 @@ export const MonthlyReportPreviewPage: React.FC = () => {
                     </td>
                   ))}
                   <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
                 </tr>
                 <tr>
                   <td style={rowLabelStyle}>DURATION</td>
@@ -258,6 +270,9 @@ export const MonthlyReportPreviewPage: React.FC = () => {
                     </td>
                   ))}
                   <td style={totalStyle}>{emp.totalDuration}</td>
+                  <td style={totalStyle}>{emp.overtimeDuration}</td>
+                  <td style={totalStyle}>{emp.lateDuration}</td>
+                  <td style={totalStyle}>{emp.earlyOutDuration}</td>
                 </tr>
                 {empIndex < data.employeeReports.length - 1 && (
                   <tr>

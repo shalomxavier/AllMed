@@ -44,6 +44,9 @@ export interface MonthlyEmployeeReport {
   outTimes: string[];
   durations: string[];
   totalDuration: string;
+  overtimeDuration: string;
+  lateDuration: string;
+  earlyOutDuration: string;
 }
 
 export interface MonthlyReportData {
@@ -66,6 +69,12 @@ const formatTimeHHMM = (date: Date): string => {
   const hours = String(date.getUTCHours()).padStart(2, '0');
   const minutes = String(date.getUTCMinutes()).padStart(2, '0');
   return `${hours}:${minutes}`;
+};
+
+const formatDurationMinutes = (totalMinutes: number): string => {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 };
 
 const getLeaveCode = (type: string, reason: string): string => {
@@ -97,6 +106,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
       employeeName: data.employeeName,
       designation: data.designation,
       workLocation: data.workLocation,
+      employmentStatus: data.employmentStatus,
     });
   });
 
@@ -106,31 +116,13 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     : employees;
 
   // Get employee codes for filtering punches
-  const employeeCodes = branchFilteredEmployees
-    .map((e) => e.employeeCodeInDevice ?? e.employeeCode)
-    .filter((code) => code)
-    .map((code) => code.toString());
+  const employeeCodes = branchFilteredEmployees.flatMap((employee) =>
+    [employee.employeeCode, employee.employeeCodeInDevice]
+      .filter(Boolean)
+      .map((code) => code.toString())
+  );
 
-  // Fetch all punches in date range, filtered by employee codes if branch is specified
-  let punches: RawPunch[] = [];
-  if (employeeCodes.length > 0) {
-    const constraints: any[] = [orderBy('logDate', 'desc')];
-    if (fromDate) {
-      const fromTs = Timestamp.fromDate(new Date(fromDate + 'T00:00:00Z'));
-      constraints.push(where('logDate', '>=', fromTs));
-    }
-    if (exportToDate) {
-      const toTs = Timestamp.fromDate(new Date(exportToDate + 'T23:59:59Z'));
-      constraints.push(where('logDate', '<=', toTs));
-    }
-    if (employeeCodes.length > 0) {
-      constraints.push(where('userId', 'in', employeeCodes.slice(0, 30)));
-    }
-    constraints.push(limit(SEARCH_LIMIT));
-    
-    const snapshot = await getDocs(query(collection(db, 'rawPunches'), ...constraints));
-    punches = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-  }
+  const punches = await fetchRawPunchesForEmployees(fromDate, exportToDate, employeeCodes);
 
   // Fetch leaves (including week offs) and build a per-employee, per-date abbreviation map
   const leavesSnapshot = await getDocs(collection(db, 'leaves'));
@@ -171,7 +163,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
 
   // Fetch shifts for employee filtering
   const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
-  const shiftsByCode: Record<string, { fromDate: string; toDate: string }[]> = {};
+  const shiftsByCode: Record<string, { fromDate: string; toDate: string; startTime: string; endTime: string }[]> = {};
   shiftsSnapshot.forEach((doc) => {
     const data = doc.data();
     const shiftEmployees: any[] = data.employees ?? [];
@@ -182,6 +174,8 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
         shiftsByCode[code].push({
           fromDate: emp.fromDate ?? '',
           toDate: emp.toDate ?? '',
+          startTime: data.startTime ?? '',
+          endTime: data.endTime ?? '',
         });
       }
     });
@@ -192,10 +186,15 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
     if (!empCode) return false;
 
-    const hasPunch = punches.some((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
+    const recordCodes = [employee.employeeCode, employee.employeeCodeInDevice]
+      .filter(Boolean)
+      .map((code) => code.toString().trim().toLowerCase());
+    const hasPunch = punches.some((p) => recordCodes.includes((p.userId ?? '').trim().toLowerCase()));
     if (hasPunch) return true;
+    if ((employee.employmentStatus ?? '').toString().trim().toLowerCase() === 'inactive') return false;
 
-    const shifts = shiftsByCode[empCode] ?? [];
+    const shiftCode = (employee.employeeCode ?? empCode).toString().trim().toLowerCase();
+    const shifts = shiftsByCode[shiftCode] ?? [];
     return shifts.some((s) => s.fromDate && s.toDate && s.fromDate <= exportToDate && s.toDate >= fromDate);
   });
 
@@ -224,8 +223,12 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     const empCode = (employee.employeeCodeInDevice ?? employee.employeeCode ?? '').toString().trim().toLowerCase();
     if (!empCode) continue;
 
-    const empPunches = punches.filter((p) => (p.userId ?? '').trim().toLowerCase() === empCode);
-    const empLeaveMap = leaveMap[empCode] ?? {};
+    const recordCodes = [employee.employeeCode, employee.employeeCodeInDevice]
+      .filter(Boolean)
+      .map((code) => code.toString().trim().toLowerCase());
+    const empPunches = punches.filter((p) => recordCodes.includes((p.userId ?? '').trim().toLowerCase()));
+    const leaveCode = (employee.employeeCode ?? empCode).toString().trim().toLowerCase();
+    const empLeaveMap = leaveMap[leaveCode] ?? {};
 
     const code = (employee.employeeCode ?? employee.employeeCodeInDevice ?? '').toString().toUpperCase();
     const name = (employee.employeeName ?? '').toString().toUpperCase();
@@ -234,6 +237,11 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     const outTimes: string[] = [];
     const durations: string[] = [];
     let totalDurationMinutes = 0;
+    let overtimeMinutes = 0;
+    let lateMinutes = 0;
+    let earlyOutMinutes = 0;
+    const shiftCode = (employee.employeeCode ?? empCode).toString().trim().toLowerCase();
+    const employeeShifts = shiftsByCode[shiftCode] ?? [];
 
     dateRange.forEach((dateStr) => {
       const dayPunches = empPunches.filter((p) => {
@@ -249,9 +257,9 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
         outTimes.push(leaveCode);
         durations.push(leaveCode);
       } else if (dayPunches.length === 0) {
-        inTimes.push('00:00');
-        outTimes.push('00:00');
-        durations.push('00:00');
+        inTimes.push('');
+        outTimes.push('');
+        durations.push('');
       } else {
         const sortedPunches = dayPunches.sort((a, b) => {
           const dA = toDate(a.logDate);
@@ -265,8 +273,8 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
         const inDate = toDate(firstIn);
         const outDate = toDate(lastOut);
 
-        inTimes.push(inDate ? formatTimeHHMM(inDate) : '00:00');
-        outTimes.push(outDate ? formatTimeHHMM(outDate) : '00:00');
+        inTimes.push(inDate ? formatTimeHHMM(inDate) : '');
+        outTimes.push(outDate ? formatTimeHHMM(outDate) : '');
 
         if (inDate && outDate) {
           const duration = calculateDuration(inDate, outDate);
@@ -274,14 +282,34 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
           const [hours, minutes] = duration.split(':').map(Number);
           totalDurationMinutes += hours * 60 + minutes;
         } else {
-          durations.push('00:00');
+          durations.push('');
+        }
+
+        const shift = employeeShifts.find((item) => dateStr >= item.fromDate && dateStr <= item.toDate);
+        if (shift && inDate) {
+          const [startHour, startMinute] = shift.startTime.split(':').map(Number);
+          const shiftStartMinutes = startHour * 60 + startMinute;
+          const actualInMinutes = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
+          if (Number.isFinite(shiftStartMinutes) && actualInMinutes > shiftStartMinutes) {
+            lateMinutes += actualInMinutes - shiftStartMinutes;
+          }
+        }
+        if (shift && outDate) {
+          const [endHour, endMinute] = shift.endTime.split(':').map(Number);
+          const shiftEndMinutes = endHour * 60 + endMinute;
+          const actualOutMinutes = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
+          if (Number.isFinite(shiftEndMinutes)) {
+            if (actualOutMinutes < shiftEndMinutes) {
+              earlyOutMinutes += shiftEndMinutes - actualOutMinutes;
+            } else if (actualOutMinutes > shiftEndMinutes) {
+              overtimeMinutes += actualOutMinutes - shiftEndMinutes;
+            }
+          }
         }
       }
     });
 
-    const totalHours = Math.floor(totalDurationMinutes / 60);
-    const totalMins = totalDurationMinutes % 60;
-    const totalDuration = `${String(totalHours).padStart(2, '0')}:${String(totalMins).padStart(2, '0')}`;
+    const totalDuration = formatDurationMinutes(totalDurationMinutes);
 
     employeeReports.push({
       employee,
@@ -292,6 +320,9 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
       outTimes,
       durations,
       totalDuration,
+      overtimeDuration: formatDurationMinutes(overtimeMinutes),
+      lateDuration: formatDurationMinutes(lateMinutes),
+      earlyOutDuration: formatDurationMinutes(earlyOutMinutes),
     });
   }
 
@@ -322,9 +353,10 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
     for (let i = 2; i <= 1 + dateLabels.length; i++) {
       worksheet.getColumn(i).width = 10; // Date columns
     }
-    worksheet.getColumn(2 + dateLabels.length).width = 15; // Total column
-    // Hide any unused columns between dates and TOTAL
-    for (let i = 2 + dateLabels.length + 1; i <= 34; i++) {
+    for (let i = 2 + dateLabels.length; i <= 5 + dateLabels.length; i++) {
+      worksheet.getColumn(i).width = 15;
+    }
+    for (let i = 6 + dateLabels.length; i <= 34; i++) {
       worksheet.getColumn(i).hidden = true;
     }
 
@@ -365,6 +397,9 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
 
     // Process each employee
     const totalColumn = 2 + dateLabels.length;
+    const overtimeColumn = totalColumn + 1;
+    const lateColumn = totalColumn + 2;
+    const earlyOutColumn = totalColumn + 3;
     for (const empReport of employeeReports) {
       // Row 1: Metadata (Employee Code and Name - merged cells with reduced width)
       worksheet.mergeCells(`A${currentRow}:E${currentRow}`);
@@ -390,10 +425,18 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
         dateRow.getCell(i + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
         dateRow.getCell(i + 2).alignment = { horizontal: 'center', vertical: 'middle' };
       });
-      dateRow.getCell(totalColumn).value = 'TOTAL';
-      dateRow.getCell(totalColumn).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
-      dateRow.getCell(totalColumn).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-      dateRow.getCell(totalColumn).alignment = { horizontal: 'center', vertical: 'middle' };
+      const summaryHeaders = [
+        [totalColumn, 'TOTAL'],
+        [overtimeColumn, 'OT'],
+        [lateColumn, 'LATE'],
+        [earlyOutColumn, 'EARLY OUT'],
+      ] as const;
+      summaryHeaders.forEach(([column, label]) => {
+        dateRow.getCell(column).value = label;
+        dateRow.getCell(column).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+        dateRow.getCell(column).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+        dateRow.getCell(column).alignment = { horizontal: 'center', vertical: 'middle' };
+      });
       dateRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } };
       currentRow++;
 
@@ -433,11 +476,18 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
         durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
       });
 
-      // Total duration
-      durationRow.getCell(totalColumn).value = empReport.totalDuration;
-      durationRow.getCell(totalColumn).font = { bold: true, size: 11, color: { argb: 'FF333333' } };
-      durationRow.getCell(totalColumn).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
-      durationRow.getCell(totalColumn).alignment = { horizontal: 'center', vertical: 'middle' };
+      const summaryValues = [
+        [totalColumn, empReport.totalDuration],
+        [overtimeColumn, empReport.overtimeDuration],
+        [lateColumn, empReport.lateDuration],
+        [earlyOutColumn, empReport.earlyOutDuration],
+      ] as const;
+      summaryValues.forEach(([column, value]) => {
+        durationRow.getCell(column).value = value;
+        durationRow.getCell(column).font = { bold: true, size: 11, color: { argb: 'FF333333' } };
+        durationRow.getCell(column).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0F8' } };
+        durationRow.getCell(column).alignment = { horizontal: 'center', vertical: 'middle' };
+      });
 
       currentRow += 3;
 
@@ -937,7 +987,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
-  const employeeMap: Record<string, { name: string; designation: string; department: string }> = {};
+  const employeeMap: Record<string, { name: string; designation: string; department: string; employmentStatus: string; recordCodes: string[] }> = {};
   employeesSnapshot.forEach((doc) => {
     const data = doc.data();
     if (location && data.workLocation !== location) return;
@@ -947,9 +997,20 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
         name: data.employeeName ?? '',
         designation: data.designation ?? '',
         department: data.department ?? '',
+        employmentStatus: data.employmentStatus ?? '',
+        recordCodes: [data.employeeCode, data.employeeCodeInDevice]
+          .filter(Boolean)
+          .map((value) => value.toString().trim().toLowerCase()),
       };
     }
   });
+
+  const reportPunches = await fetchRawPunchesForEmployees(
+    fromDate,
+    exportToDate,
+    Object.values(employeeMap).flatMap((employee) => employee.recordCodes)
+  );
+  const codesWithRecords = new Set(reportPunches.map((punch) => (punch.userId ?? '').trim().toLowerCase()));
 
   const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
   const shiftAssignments: Record<string, Record<string, string>> = {};
@@ -1014,10 +1075,12 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
   });
 
   const employees: ShiftMatrixEmployee[] = Object.entries(employeeMap)
-    .filter(([code]) => {
+    .filter(([code, info]) => {
       const hasShift = Object.keys(shiftAssignments[code] ?? {}).length > 0;
       const hasLeave = Object.keys(leaveMap[code] ?? {}).length > 0;
-      return hasShift || hasLeave;
+      const hasRecords = info.recordCodes.some((recordCode) => codesWithRecords.has(recordCode));
+      const isInactive = info.employmentStatus.toString().trim().toLowerCase() === 'inactive';
+      return (hasShift || hasLeave) && (!isInactive || hasRecords);
     })
     .map(([code, info]) => ({
       code: code.toUpperCase(),
