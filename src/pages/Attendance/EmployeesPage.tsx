@@ -729,6 +729,13 @@ export const EmployeesPage: React.FC = () => {
     return `${hours}h ${mins.toString().padStart(2, '0')}m`;
   };
 
+  const isNightShift = (shift: any): boolean => {
+    if (!shift?.startTime || !shift?.endTime) return false;
+    const [sh, sm] = shift.startTime.split(':').map(Number);
+    const [eh, em] = shift.endTime.split(':').map(Number);
+    return (eh * 60 + em) <= (sh * 60 + sm);
+  };
+
   const groupedAttendance = (): DayAttendance[] => {
     const map: Record<string, RawPunch[]> = {};
     attendancePunches.forEach((p) => {
@@ -736,6 +743,52 @@ export const EmployeesPage: React.FC = () => {
       if (!map[key]) map[key] = [];
       map[key].push(p);
     });
+
+    // For night shifts, move next-day OUT punches into the shift-start date group
+    const movedPunchIds = new Set<string>();
+    const allDates = Object.keys(map).sort();
+    for (const dateStr of allDates) {
+      const shift = findShiftForDate(dateStr, employeeAttendanceShifts);
+      if (!shift || !isNightShift(shift)) continue;
+
+      const nextDay = new Date(dateStr);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDateStr = nextDay.toISOString().split('T')[0];
+      const nextGroup = map[nextDateStr];
+      if (!nextGroup) continue;
+
+      const [eh, em] = shift.endTime.split(':').map(Number);
+      const shiftEndMin = eh * 60 + em;
+      const cutoffMin = shiftEndMin + 120;
+
+      const toMove: RawPunch[] = [];
+      const toKeep: RawPunch[] = [];
+      nextGroup.forEach((p) => {
+        if (movedPunchIds.has(p.id)) { toKeep.push(p); return; }
+        if (p.direction === 'out') {
+          const pd = toDate(p.logDate);
+          if (pd) {
+            const pMin = pd.getHours() * 60 + pd.getMinutes();
+            if (pMin <= cutoffMin) {
+              toMove.push(p);
+              return;
+            }
+          }
+        }
+        toKeep.push(p);
+      });
+
+      if (toMove.length > 0) {
+        map[dateStr] = [...map[dateStr], ...toMove];
+        toMove.forEach((p) => movedPunchIds.add(p.id));
+        if (toKeep.length > 0) {
+          map[nextDateStr] = toKeep;
+        } else {
+          delete map[nextDateStr];
+        }
+      }
+    }
+
     return Object.entries(map)
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([date, punches]) => ({ date, punches }));

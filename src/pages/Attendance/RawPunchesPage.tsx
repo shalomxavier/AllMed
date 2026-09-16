@@ -912,7 +912,23 @@ export const RawPunchesPage: React.FC = () => {
     XLSX.writeFile(wb, `attendance-${fromLabel}-to-${toLabel}.xlsx`);
   };
 
+  const isNightShift = (shift: any): boolean => {
+    if (!shift?.startTime || !shift?.endTime) return false;
+    const [sh, sm] = shift.startTime.split(':').map(Number);
+    const [eh, em] = shift.endTime.split(':').map(Number);
+    return (eh * 60 + em) <= (sh * 60 + sm);
+  };
+
+  const getShiftForUser = (userId: string, dateStr: string): any | null => {
+    if (!userId) return null;
+    const key = userId.trim().toLowerCase();
+    const shifts = shiftsMap[key];
+    if (!shifts || shifts.length === 0) return null;
+    return shifts.find((s) => dateStr >= s.fromDate && dateStr <= s.toDate) ?? null;
+  };
+
   const computeDailyRecords = (punches: RawPunch[]): DailyRecord[] => {
+    // Phase 1: Group punches by userId + calendar date
     const groups: Record<string, RawPunch[]> = {};
     punches.forEach((punch) => {
       const d = toDate(punch.logDate);
@@ -921,6 +937,55 @@ export const RawPunchesPage: React.FC = () => {
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(punch);
     });
+
+    // Phase 2: For night shifts, move next-day OUT punches into the IN-date group
+    const movedPunchIds = new Set<string>();
+    const allKeys = Object.keys(groups);
+    for (const dateKey of allKeys) {
+      const [userKey, dateStr] = [dateKey.substring(0, dateKey.lastIndexOf('_')), dateKey.substring(dateKey.lastIndexOf('_') + 1)];
+      const shift = getShiftForUser(userKey, dateStr);
+      if (!shift || !isNightShift(shift)) continue;
+
+      // Look for a next-day group for the same user
+      const nextDay = new Date(dateStr + 'T00:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const nextDateStr = formatLocalDate(nextDay);
+      const nextKey = `${userKey}_${nextDateStr}`;
+      const nextGroup = groups[nextKey];
+      if (!nextGroup) continue;
+
+      // Determine shift end boundary: punches on the next day before the shift end time belong to this night shift
+      const [eh, em] = shift.endTime.split(':').map(Number);
+      const shiftEndMin = eh * 60 + em;
+      // Add a 2-hour grace period beyond shift end for late out-punches
+      const cutoffMin = shiftEndMin + 120;
+
+      const toMove: RawPunch[] = [];
+      const toKeep: RawPunch[] = [];
+      nextGroup.forEach((p) => {
+        if (p.direction === 'out') {
+          const pd = toDate(p.logDate);
+          if (pd) {
+            const pMin = pd.getUTCHours() * 60 + pd.getUTCMinutes();
+            if (pMin <= cutoffMin) {
+              toMove.push(p);
+              return;
+            }
+          }
+        }
+        toKeep.push(p);
+      });
+
+      if (toMove.length > 0) {
+        groups[dateKey] = [...groups[dateKey], ...toMove];
+        toMove.forEach((p) => movedPunchIds.add(p.id));
+        if (toKeep.length > 0) {
+          groups[nextKey] = toKeep;
+        } else {
+          delete groups[nextKey];
+        }
+      }
+    }
 
     return Object.values(groups).map((punches) => {
       const sorted = [...punches].sort((a, b) => {
@@ -954,6 +1019,7 @@ export const RawPunchesPage: React.FC = () => {
         .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'out' as const, isEdited: editedPunchIds.has(p.id) }));
 
       const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
+      const nightShift = isNightShift(shift);
       let lateMinutes = 0;
       let earlyMinutes = 0;
       let overtimeMinutes = 0;
@@ -962,8 +1028,17 @@ export const RawPunchesPage: React.FC = () => {
         const [sh, sm] = shift.startTime.split(':').map(Number);
         const shiftStartMin = sh * 60 + sm;
         const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-        if (!isNaN(shiftStartMin) && inMin > shiftStartMin) {
-          lateMinutes = inMin - shiftStartMin;
+        if (!isNaN(shiftStartMin)) {
+          if (nightShift) {
+            // For night shifts, IN punch is in the evening. Late = punched in after shift start (same day).
+            if (inMin > shiftStartMin) {
+              lateMinutes = inMin - shiftStartMin;
+            }
+          } else {
+            if (inMin > shiftStartMin) {
+              lateMinutes = inMin - shiftStartMin;
+            }
+          }
         }
       }
 
@@ -972,10 +1047,19 @@ export const RawPunchesPage: React.FC = () => {
         const shiftEndMin = eh * 60 + em;
         const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
         if (!isNaN(shiftEndMin)) {
-          if (outMin < shiftEndMin) {
-            earlyMinutes = shiftEndMin - outMin;
-          } else if (outMin > shiftEndMin) {
-            overtimeMinutes = outMin - shiftEndMin;
+          if (nightShift) {
+            // For night shifts, OUT punch is next morning. Compare wall-clock times.
+            if (outMin < shiftEndMin) {
+              earlyMinutes = shiftEndMin - outMin;
+            } else if (outMin > shiftEndMin) {
+              overtimeMinutes = outMin - shiftEndMin;
+            }
+          } else {
+            if (outMin < shiftEndMin) {
+              earlyMinutes = shiftEndMin - outMin;
+            } else if (outMin > shiftEndMin) {
+              overtimeMinutes = outMin - shiftEndMin;
+            }
           }
         }
       }
@@ -991,12 +1075,6 @@ export const RawPunchesPage: React.FC = () => {
         } else {
           workingDurationMinutes = outMin + 24 * 60 - inMin;
         }
-        console.warn('[RawPunches] lastOut before firstIn UTC; used wall-clock time for duration', {
-          userId,
-          firstIn: inDate.toISOString(),
-          lastOut: outDate.toISOString(),
-          workingDurationMinutes,
-        });
       }
 
       return {
