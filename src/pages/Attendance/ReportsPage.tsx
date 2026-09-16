@@ -2,7 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Eye } from 'lucide-react';
 import { collection, getDocs, getFirestore, query, where } from 'firebase/firestore';
-import { exportAttendanceReport, exportDailyAttendanceRecords, exportShiftReport } from '@/utils/attendanceExport';
+import {
+  exportAttendanceReport,
+  exportDailyAttendanceRecords,
+  exportEmployeeMaster,
+  exportShiftReport,
+} from '@/utils/attendanceExport';
 import { useAuthContext } from '@/contexts/AuthContext';
 
 export const ReportsPage: React.FC = () => {
@@ -17,9 +22,11 @@ export const ReportsPage: React.FC = () => {
   const [shiftFromDate, setShiftFromDate] = useState('');
   const [shiftToDate, setShiftToDate] = useState('');
   const [shiftLocation, setShiftLocation] = useState('');
+  const [employeeMasterLocation, setEmployeeMasterLocation] = useState('');
   const [exporting, setExporting] = useState(false);
   const [exportingDaily, setExportingDaily] = useState(false);
   const [exportingShift, setExportingShift] = useState(false);
+  const [exportingEmployeeMaster, setExportingEmployeeMaster] = useState(false);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
 
@@ -35,6 +42,7 @@ export const ReportsPage: React.FC = () => {
           setMonthlyLocation(branchName);
           setDailyLocation(branchName);
           setShiftLocation(branchName);
+          setEmployeeMasterLocation(branchName);
         } catch (err) {
           console.error('Error resolving manager branch:', err);
           setManagerBranchName('');
@@ -128,6 +136,20 @@ export const ReportsPage: React.FC = () => {
       location: shiftLocation,
     });
     window.open(`/attendance/reports/preview/shifts?${params.toString()}`, '_blank');
+  };
+
+  const handleEmployeeMasterExport = async () => {
+    setExportingEmployeeMaster(true);
+    try {
+      await exportEmployeeMaster(employeeMasterLocation);
+    } finally {
+      setExportingEmployeeMaster(false);
+    }
+  };
+
+  const handleEmployeeMasterView = () => {
+    const params = new URLSearchParams({ location: employeeMasterLocation });
+    window.open(`/attendance/reports/preview/employee-master?${params.toString()}`, '_blank');
   };
 
   return (
@@ -344,6 +366,52 @@ export const ReportsPage: React.FC = () => {
               >
                 <Download size={16} />
                 {exportingShift ? 'Exporting...' : 'Export Shift Report'}
+              </button>
+            </div>
+          </div>
+
+          {/* Employee Master */}
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+            <h2 className="text-lg font-medium text-secondary-900 mb-2">Employee Master</h2>
+            <p className="text-sm text-secondary-500 mb-4">Export all employee details.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+              <div>
+                <label htmlFor="employeeMasterLocation" className="block text-sm font-medium text-secondary-700 mb-1">Branch</label>
+                <select
+                  id="employeeMasterLocation"
+                  value={employeeMasterLocation}
+                  onChange={(e) => setEmployeeMasterLocation(e.target.value)}
+                  disabled={userData?.designation === 'Branch Manager'}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                >
+                  {userData?.designation === 'Branch Manager' ? (
+                    <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
+                  ) : (
+                    <>
+                      <option value="">All Branches</option>
+                      {branchOptions.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </>
+                  )}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleEmployeeMasterView}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Eye size={16} />
+                View Employee Master
+              </button>
+              <button
+                onClick={handleEmployeeMasterExport}
+                disabled={exportingEmployeeMaster}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download size={16} />
+                {exportingEmployeeMaster ? 'Exporting...' : 'Export Employee Master'}
               </button>
             </div>
           </div>

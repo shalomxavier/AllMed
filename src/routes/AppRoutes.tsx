@@ -17,6 +17,7 @@ import { ChangeTrackerPage } from '@pages/Attendance/ChangeTrackerPage';
 import { MonthlyReportPreviewPage } from '@pages/Attendance/MonthlyReportPreviewPage';
 import { DailyReportPreviewPage } from '@pages/Attendance/DailyReportPreviewPage';
 import { ShiftReportPreviewPage } from '@pages/Attendance/ShiftReportPreviewPage';
+import { EmployeeMasterPreviewPage } from '@pages/Attendance/EmployeeMasterPreviewPage';
 import { UsersPage } from '@pages/Users/UsersPage';
 import { DMSPage } from '@pages/DMS/DMSPage';
 import { WhatsAppEnquiryPage } from '@pages/DMS/WhatsAppEnquiryPage';
@@ -102,6 +103,16 @@ const AppRoutesContent: React.FC = () => {
           <ProtectedRoute>
             <RoleProtectedRoute>
               <ShiftReportPreviewPage />
+            </RoleProtectedRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/attendance/reports/preview/employee-master"
+        element={
+          <ProtectedRoute>
+            <RoleProtectedRoute>
+              <EmployeeMasterPreviewPage />
             </RoleProtectedRoute>
           </ProtectedRoute>
         }

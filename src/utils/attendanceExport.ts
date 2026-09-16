@@ -1350,3 +1350,223 @@ export const exportShiftReport = async (fromDate: string, exportToDate: string, 
     console.error('Error exporting shift report:', error);
   }
 };
+
+export interface EmployeeMasterRecord {
+  employeeCode: string;
+  employeeCodeInDevice: string;
+  employeeId: string;
+  employeeName: string;
+  officialEmail: string;
+  username: string;
+  loginId: string;
+  dateOfJoining: string;
+  employmentType: string;
+  designation: string;
+  subDesignation: string;
+  department: string;
+  grade: string;
+  group: string;
+  reportingManager: string;
+  workLocation: string;
+  probationPeriod: string;
+  confirmationDate: string;
+  employmentStatus: string;
+  lastSynced: string;
+}
+
+export interface EmployeeMasterData {
+  locationLabel: string;
+  employees: EmployeeMasterRecord[];
+}
+
+const formatSyncedAt = (syncedAt: any): string => {
+  if (!syncedAt) return '';
+  if (syncedAt.toDate) return syncedAt.toDate().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  if (syncedAt instanceof Date) return syncedAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  return String(syncedAt);
+};
+
+export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMasterData | null> => {
+  const employeesSnapshot = await getDocs(collection(db, 'employees'));
+  const employees: any[] = [];
+
+  employeesSnapshot.forEach((doc) => {
+    const data = doc.data();
+    if (location && data.workLocation !== location) return;
+    employees.push({ id: doc.id, ...data });
+  });
+
+  const records: EmployeeMasterRecord[] = employees
+    .filter((employee) => {
+      const deviceCode = (employee.employeeCodeInDevice ?? '').toString().trim();
+      return !deviceCode.toLowerCase().startsWith('del');
+    })
+    .map((employee) => ({
+      employeeCode: (employee.employeeCode ?? '').toString().toUpperCase(),
+      employeeCodeInDevice: (employee.employeeCodeInDevice ?? '').toString().toUpperCase(),
+      employeeId: (employee.employeeId ?? '').toString().toUpperCase(),
+      employeeName: (employee.employeeName ?? '').toString().toUpperCase(),
+      officialEmail: (employee.officialEmail ?? '').toString(),
+      username: (employee.username ?? '').toString(),
+      loginId: (employee.loginId ?? '').toString(),
+      dateOfJoining: (employee.dateOfJoining ?? '').toString(),
+      employmentType: (employee.employmentType ?? '').toString().toUpperCase(),
+      designation: (employee.designation ?? '').toString().toUpperCase(),
+      subDesignation: (employee.subDesignation ?? '').toString().toUpperCase(),
+      department: (employee.department ?? '').toString().toUpperCase(),
+      grade: (employee.grade ?? '').toString().toUpperCase(),
+      group: (employee.group ?? '').toString().toUpperCase(),
+      reportingManager: (employee.reportingManager ?? '').toString().toUpperCase(),
+      workLocation: (employee.workLocation ?? '').toString().toUpperCase(),
+      probationPeriod: (employee.probationPeriod ?? '').toString().toUpperCase(),
+      confirmationDate: (employee.confirmationDate ?? '').toString(),
+      employmentStatus: (employee.employmentStatus ?? '').toString().toUpperCase(),
+      lastSynced: formatSyncedAt(employee.syncedAt),
+    }))
+    .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+
+  const locationLabel = location ? location.toUpperCase() : 'ALL LOCATIONS';
+
+  return { locationLabel, employees: records };
+};
+
+export const exportEmployeeMaster = async (location = ''): Promise<void> => {
+  const reportData = await getEmployeeMasterData(location);
+  if (!reportData) return;
+
+  const { locationLabel, employees } = reportData;
+
+  try {
+    const headers = [
+      'Employee Code',
+      'Device Code',
+      'Employee ID',
+      'Employee Name',
+      'Official Email',
+      'Username',
+      'Login ID',
+      'Date of Joining',
+      'Employment Type',
+      'Designation',
+      'Sub Designation',
+      'Department',
+      'Grade',
+      'Group',
+      'Reporting Manager',
+      'Work Location',
+      'Probation Period',
+      'Confirmation Date',
+      'Employment Status',
+      'Last Synced',
+    ];
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Employee Master');
+
+    const headerFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE7F3FF' } };
+    const titleFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F4F8' } };
+    const thinBorder = { style: 'thin' as const, color: { argb: 'FFCCCCCC' } };
+
+    const colCount = headers.length;
+    const endCol = worksheetColumnLetter(colCount);
+
+    let currentRow = 1;
+
+    worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
+    const locationCell = worksheet.getCell(`A${currentRow}`);
+    locationCell.value = locationLabel;
+    locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
+    locationCell.fill = titleFill;
+    locationCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
+    const titleCell = worksheet.getCell(`A${currentRow}`);
+    titleCell.value = 'EMPLOYEE MASTER';
+    titleCell.font = { bold: true, size: 16, color: { argb: 'FF333333' } };
+    titleCell.fill = titleFill;
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    currentRow++;
+
+    currentRow++;
+
+    const headerRow = worksheet.getRow(currentRow);
+    headers.forEach((header, index) => {
+      const cell = headerRow.getCell(index + 1);
+      cell.value = header;
+      cell.font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      cell.fill = headerFill;
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+    });
+    currentRow++;
+
+    employees.forEach((emp) => {
+      const row = worksheet.getRow(currentRow);
+      const values = [
+        emp.employeeCode,
+        emp.employeeCodeInDevice,
+        emp.employeeId,
+        emp.employeeName,
+        emp.officialEmail,
+        emp.username,
+        emp.loginId,
+        emp.dateOfJoining,
+        emp.employmentType,
+        emp.designation,
+        emp.subDesignation,
+        emp.department,
+        emp.grade,
+        emp.group,
+        emp.reportingManager,
+        emp.workLocation,
+        emp.probationPeriod,
+        emp.confirmationDate,
+        emp.employmentStatus,
+        emp.lastSynced,
+      ];
+      values.forEach((value, index) => {
+        const cell = row.getCell(index + 1);
+        cell.value = value;
+        cell.alignment = { horizontal: 'left', vertical: 'middle' };
+        cell.border = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+      });
+      currentRow++;
+    });
+
+    worksheet.getColumn(1).width = 15;
+    worksheet.getColumn(2).width = 15;
+    worksheet.getColumn(3).width = 15;
+    worksheet.getColumn(4).width = 30;
+    worksheet.getColumn(5).width = 30;
+    worksheet.getColumn(6).width = 18;
+    worksheet.getColumn(7).width = 18;
+    worksheet.getColumn(8).width = 15;
+    worksheet.getColumn(9).width = 18;
+    worksheet.getColumn(10).width = 20;
+    worksheet.getColumn(11).width = 20;
+    worksheet.getColumn(12).width = 20;
+    worksheet.getColumn(13).width = 12;
+    worksheet.getColumn(14).width = 12;
+    worksheet.getColumn(15).width = 25;
+    worksheet.getColumn(16).width = 20;
+    worksheet.getColumn(17).width = 18;
+    worksheet.getColumn(18).width = 18;
+    worksheet.getColumn(19).width = 18;
+    worksheet.getColumn(20).width = 22;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    const timestamp = new Date().toISOString().split('T')[0];
+    link.setAttribute('download', `employee_master_${locationLabel.replace(/\s+/g, '_').toLowerCase()}_${timestamp}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (error) {
+    console.error('Error exporting employee master:', error);
+  }
+};

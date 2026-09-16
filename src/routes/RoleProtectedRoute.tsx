@@ -43,6 +43,7 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
     '/attendance/reports/preview/monthly',
     '/attendance/reports/preview/daily',
     '/attendance/reports/preview/shifts',
+    '/attendance/reports/preview/employee-master',
     '/users',
   ];
 
@@ -98,6 +99,7 @@ export const RoleProtectedRoute: React.FC<RoleProtectedRouteProps> = ({ children
       '/attendance/reports/preview/monthly',
       '/attendance/reports/preview/daily',
       '/attendance/reports/preview/shifts',
+      '/attendance/reports/preview/employee-master',
     ];
     // Also explicitly restrict devices, branches, designations, and departments
     const restrictedPaths = [
