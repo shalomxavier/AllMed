@@ -6,6 +6,7 @@ import { RedSpinner } from '@/components/common';
 export const EmployeeMasterPreviewPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const location = searchParams.get('location') ?? '';
+  const status = searchParams.get('status') ?? 'Active';
 
   const [data, setData] = useState<EmployeeMasterData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -14,7 +15,7 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const reportData = await getEmployeeMasterData(location);
+        const reportData = await getEmployeeMasterData(location, status);
         setData(reportData);
       } catch (err) {
         setError('Failed to load preview.');
@@ -23,7 +24,7 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
       }
     };
     load();
-  }, [location]);
+  }, [location, status]);
 
   if (loading) {
     return (

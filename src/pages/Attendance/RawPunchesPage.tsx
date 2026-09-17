@@ -468,13 +468,23 @@ export const RawPunchesPage: React.FC = () => {
 
   const buildQueryConstraints = (from: string, to: string, userIds: string[] | null, cursor?: QueryDocumentSnapshot<DocumentData>) => {
     const constraints: any[] = [orderBy('logDate', 'desc')];
-    if (from) {
-      // Treat the date string as UTC to match the wall-clock interpretation of stored timestamps.
-      const fromTs = Timestamp.fromDate(new Date(from + 'T00:00:00Z'));
+
+    // Expand the actual Firestore query by one day on each side so night-shift
+    // out-punches on adjacent calendar days are available for merging.
+    const shiftDate = (dateStr: string, days: number): string => {
+      const d = new Date(dateStr + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + days);
+      return formatLocalDate(d);
+    };
+    const queryFrom = from ? shiftDate(from, -1) : '';
+    const queryTo = to ? shiftDate(to, 1) : '';
+
+    if (queryFrom) {
+      const fromTs = Timestamp.fromDate(new Date(queryFrom + 'T00:00:00Z'));
       constraints.push(where('logDate', '>=', fromTs));
     }
-    if (to) {
-      const toTs = Timestamp.fromDate(new Date(to + 'T23:59:59Z'));
+    if (queryTo) {
+      const toTs = Timestamp.fromDate(new Date(queryTo + 'T23:59:59Z'));
       constraints.push(where('logDate', '<=', toTs));
     }
     if (userIds && userIds.length > 0) {
@@ -1150,6 +1160,16 @@ export const RawPunchesPage: React.FC = () => {
     try {
       const punches = await fetchAllPunchesForExport(exportFromDate, exportToDate, locationFilter);
       const records = computeDailyRecords(punches).filter((record) => {
+        // Keep exports aligned with the user's selected export range even though
+        // the fetch was widened for night-shift merging.
+        if (exportFromDate || exportToDate) {
+          const recordDateStr = record.date ? formatLocalDate(record.date) : '';
+          if (recordDateStr) {
+            if (exportFromDate && recordDateStr < exportFromDate) return false;
+            if (exportToDate && recordDateStr > exportToDate) return false;
+          }
+        }
+
         if (debouncedSearch.trim()) {
           const q = debouncedSearch.toLowerCase();
           return (
@@ -1172,6 +1192,17 @@ export const RawPunchesPage: React.FC = () => {
   const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, workLocationMap, shiftsMap, editedPunchIds]);
 
   const filteredRecords = dailyRecords.filter((record) => {
+    // The underlying fetch is widened by one day so night-shift merges work, but
+    // the table should still only display rows whose start date is within the
+    // user's selected range.
+    if (fromDate || toDateFilter) {
+      const recordDateStr = record.date ? formatLocalDate(record.date) : '';
+      if (recordDateStr) {
+        if (fromDate && recordDateStr < fromDate) return false;
+        if (toDateFilter && recordDateStr > toDateFilter) return false;
+      }
+    }
+
     if (debouncedSearch.trim()) {
       const q = debouncedSearch.toLowerCase();
       return (

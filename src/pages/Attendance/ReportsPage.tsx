@@ -23,6 +23,7 @@ export const ReportsPage: React.FC = () => {
   const [shiftToDate, setShiftToDate] = useState('');
   const [shiftLocation, setShiftLocation] = useState('');
   const [employeeMasterLocation, setEmployeeMasterLocation] = useState('');
+  const [employeeMasterStatus, setEmployeeMasterStatus] = useState('Active');
   const [exporting, setExporting] = useState(false);
   const [exportingDaily, setExportingDaily] = useState(false);
   const [exportingShift, setExportingShift] = useState(false);
@@ -141,14 +142,17 @@ export const ReportsPage: React.FC = () => {
   const handleEmployeeMasterExport = async () => {
     setExportingEmployeeMaster(true);
     try {
-      await exportEmployeeMaster(employeeMasterLocation);
+      await exportEmployeeMaster(employeeMasterLocation, employeeMasterStatus);
     } finally {
       setExportingEmployeeMaster(false);
     }
   };
 
   const handleEmployeeMasterView = () => {
-    const params = new URLSearchParams({ location: employeeMasterLocation });
+    const params = new URLSearchParams({
+      location: employeeMasterLocation,
+      status: employeeMasterStatus,
+    });
     window.open(`/attendance/reports/preview/employee-master?${params.toString()}`, '_blank');
   };
 
@@ -394,6 +398,19 @@ export const ReportsPage: React.FC = () => {
                       ))}
                     </>
                   )}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="employeeMasterStatus" className="block text-sm font-medium text-secondary-700 mb-1">Status</label>
+                <select
+                  id="employeeMasterStatus"
+                  value={employeeMasterStatus}
+                  onChange={(e) => setEmployeeMasterStatus(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                >
+                  <option value="All">All</option>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
                 </select>
               </div>
             </div>

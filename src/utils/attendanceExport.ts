@@ -1378,7 +1378,7 @@ export interface EmployeeMasterData {
   employees: EmployeeMasterRecord[];
 }
 
-export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMasterData | null> => {
+export const getEmployeeMasterData = async (location = '', status = 'Active'): Promise<EmployeeMasterData | null> => {
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
   const employees: any[] = [];
 
@@ -1388,11 +1388,15 @@ export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMast
     employees.push({ id: doc.id, ...data });
   });
 
+  const statusLower = status.toLowerCase();
   const records: EmployeeMasterRecord[] = employees
     .filter((employee) => {
       const deviceCode = (employee.employeeCodeInDevice ?? '').toString().trim();
-      const status = (employee.employmentStatus ?? '').toString().trim().toLowerCase();
-      return !deviceCode.toLowerCase().startsWith('del') && status !== 'inactive';
+      if (deviceCode.toLowerCase().startsWith('del')) return false;
+      const employmentStatus = (employee.employmentStatus ?? '').toString().trim().toLowerCase();
+      if (statusLower === 'all') return true;
+      if (statusLower === 'inactive') return employmentStatus === 'inactive';
+      return employmentStatus !== 'inactive';
     })
     .map((employee) => ({
       employeeCode: (employee.employeeCode ?? '').toString().toUpperCase(),
@@ -1422,8 +1426,8 @@ export const getEmployeeMasterData = async (location = ''): Promise<EmployeeMast
   return { locationLabel, employees: records };
 };
 
-export const exportEmployeeMaster = async (location = ''): Promise<void> => {
-  const reportData = await getEmployeeMasterData(location);
+export const exportEmployeeMaster = async (location = '', status = 'Active'): Promise<void> => {
+  const reportData = await getEmployeeMasterData(location, status);
   if (!reportData) return;
 
   const { locationLabel, employees } = reportData;
