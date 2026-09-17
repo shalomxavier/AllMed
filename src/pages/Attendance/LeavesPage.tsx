@@ -15,6 +15,9 @@ interface LeaveRecord {
   fromDate?: string;
   toDate?: string;
   reason?: string;
+  duration?: 'full_day' | 'half_day';
+  halfDayPeriod?: 'first_half' | 'second_half';
+  dayValue?: number;
   createdAt?: any;
 }
 
@@ -78,6 +81,7 @@ const getLeaveColor = (reason?: string) => {
 export const LeavesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
+  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR';
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [weekOffs, setWeekOffs] = useState<WeekOffRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -100,7 +104,7 @@ export const LeavesPage: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
   const [bulkLeaveSelectedIds, setBulkLeaveSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLeaveSearchQuery, setBulkLeaveSearchQuery] = useState('');
-  const [bulkLeaveForm, setBulkLeaveForm] = useState({ reason: '' });
+  const [bulkLeaveForm, setBulkLeaveForm] = useState<{ reason: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: 'first_half' | 'second_half' }>({ reason: '', duration: 'full_day' });
   const [bulkLeaveSelectedDates, setBulkLeaveSelectedDates] = useState<string[]>([]);
   const [bulkLeaveCalendarMonth, setBulkLeaveCalendarMonth] = useState(new Date().getMonth());
   const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
@@ -108,7 +112,7 @@ export const LeavesPage: React.FC = () => {
 
   const [editLeaveOpen, setEditLeaveOpen] = useState(false);
   const [editingLeave, setEditingLeave] = useState<LeaveRecord | null>(null);
-  const [editLeaveForm, setEditLeaveForm] = useState({ reason: '', dates: [] as string[] });
+  const [editLeaveForm, setEditLeaveForm] = useState<{ reason: string; dates: string[]; duration: 'full_day' | 'half_day'; halfDayPeriod?: 'first_half' | 'second_half' }>({ reason: '', dates: [], duration: 'full_day' });
   const [editCalMonth, setEditCalMonth] = useState(new Date().getMonth());
   const [editCalYear, setEditCalYear] = useState(new Date().getFullYear());
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -175,7 +179,7 @@ export const LeavesPage: React.FC = () => {
     e.stopPropagation();
     setEditingLeave(leave);
     const dates = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-    setEditLeaveForm({ reason: leave.reason ?? '', dates });
+    setEditLeaveForm({ reason: leave.reason ?? '', dates, duration: leave.duration === 'half_day' ? 'half_day' : 'full_day', halfDayPeriod: leave.halfDayPeriod });
     if (dates.length > 0) {
       const d = new Date(dates[0]);
       setEditCalMonth(d.getMonth());
@@ -196,6 +200,9 @@ export const LeavesPage: React.FC = () => {
         fromDate: sorted[0],
         toDate: sorted[sorted.length - 1],
         reason: editLeaveForm.reason,
+        duration: editLeaveForm.duration,
+        halfDayPeriod: editLeaveForm.duration === 'half_day' ? editLeaveForm.halfDayPeriod : null,
+        dayValue: editLeaveForm.duration === 'half_day' ? 0.5 : 1,
       });
       setEditLeaveOpen(false);
       setEditingLeave(null);
@@ -230,7 +237,7 @@ export const LeavesPage: React.FC = () => {
     setBulkLeaveModalOpen(false);
     setBulkLeaveSelectedIds(new Set());
     setBulkLeaveSearchQuery('');
-    setBulkLeaveForm({ reason: '' });
+    setBulkLeaveForm({ reason: '', duration: 'full_day' });
     setBulkLeaveSelectedDates([]);
     setBulkLeaveCalendarMonth(new Date().getMonth());
     setBulkLeaveCalendarYear(new Date().getFullYear());
@@ -264,6 +271,9 @@ export const LeavesPage: React.FC = () => {
             fromDate: date,
             toDate: date,
             reason: bulkLeaveForm.reason,
+            duration: bulkLeaveForm.duration,
+            ...(bulkLeaveForm.halfDayPeriod ? { halfDayPeriod: bulkLeaveForm.halfDayPeriod } : {}),
+            dayValue: bulkLeaveForm.duration === 'half_day' ? 0.5 : 1,
             createdAt: serverTimestamp(),
             createdBy: currentUser?.uid,
           });
@@ -307,12 +317,14 @@ export const LeavesPage: React.FC = () => {
       const leavesData: LeaveRecord[] = [];
       leavesSnap.forEach((d) => { const rec = { id: d.id, ...d.data() } as LeaveRecord; if (rec.type !== 'weekoff') leavesData.push(rec); });
 
-      // Fetch raw punches for 2026 and filter by month in memory
-      const punchesSnap = await getDocs(query(collection(db, 'rawPunches'), where('year', '==', 2026)));
+      const punchesSnap = await getDocs(collection(db, 'rawPunches'));
       const punchesByEmp: Record<string, RawPunch[]> = {};
+      const periodStartKey = PERIOD_START.toISOString().split('T')[0];
+      const periodEndKey = PERIOD_END.toISOString().split('T')[0];
       punchesSnap.forEach((d) => {
         const data = { id: d.id, ...d.data() } as RawPunch;
-        if (data.month !== 5 && data.month !== 6) return;
+        const punchDate = getDateKey(data.logDate);
+        if (punchDate < periodStartKey || punchDate > periodEndKey) return;
         const empCode = data.userId ?? '';
         if (!punchesByEmp[empCode]) punchesByEmp[empCode] = [];
         punchesByEmp[empCode].push(data);
@@ -335,10 +347,10 @@ export const LeavesPage: React.FC = () => {
         });
 
         const empLeaves = leavesData.filter((l) => l.employeeCode === empCode);
-        const leaveDates = new Set<string>();
+        const fullDayLeaveDates = new Set<string>();
         empLeaves.forEach((l) => {
           const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
-          dates.forEach((date) => leaveDates.add(date));
+          if (l.duration !== 'half_day') dates.forEach((date) => fullDayLeaveDates.add(date));
         });
 
         const empPunches = punchesByEmp[empCode] ?? [];
@@ -362,7 +374,7 @@ export const LeavesPage: React.FC = () => {
           if (!shift) continue;
 
           // Skip approved leave days
-          if (leaveDates.has(dateStr)) continue;
+          if (fullDayLeaveDates.has(dateStr)) continue;
 
           // Skip week-offs (from unified leaves collection with type=weekoff)
           const wo = weekOffs.find((w) => w.employeeCode === empCode);
@@ -552,10 +564,12 @@ export const LeavesPage: React.FC = () => {
             </select>
           </div>
           <div className="flex items-center gap-3 ml-auto">
-            <button onClick={() => setBulkLeaveModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shrink-0">
-              <Umbrella size={16} />
-              Add Leaves
-            </button>
+            {canManageLeaves && (
+              <button onClick={() => setBulkLeaveModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shrink-0">
+                <Umbrella size={16} />
+                Add Leaves
+              </button>
+            )}
             <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shrink-0 disabled:opacity-70">
               {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={16} />}
               Check Unauthorized Absence
@@ -648,7 +662,7 @@ export const LeavesPage: React.FC = () => {
                           return (
                             <span key={date} className={`text-sm font-medium ${colors.text} ${colors.badge} px-2 py-0.5 rounded-full inline-flex items-center gap-1.5`}>
                               <span>{formatDate(date)}</span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>{reason}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>{reason}{leave?.duration === 'half_day' ? ` · ${leave.halfDayPeriod === 'first_half' ? 'First Half' : 'Second Half'}` : ''}</span>
                             </span>
                           );
                         })}
@@ -697,7 +711,7 @@ export const LeavesPage: React.FC = () => {
                           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colors.badge} ${colors.text}`}>
                             {(detail as any).leaveType || 'Leave'}
                           </span>
-                          {matchingLeave && (
+                          {matchingLeave && canManageLeaves && (
                             <div className="flex items-center gap-1">
                               <button type="button" onClick={(e) => openEditLeave(matchingLeave, e)} className="p-1 rounded hover:bg-secondary-200 text-secondary-600">
                                 <Pencil size={14} />
@@ -874,7 +888,7 @@ export const LeavesPage: React.FC = () => {
               {/* Leave type */}
               <div className="border border-secondary-300 rounded-lg p-3">
                 <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
-                <select value={bulkLeaveForm.reason} onChange={(e) => setBulkLeaveForm({ reason: e.target.value })}
+                <select value={bulkLeaveForm.reason} onChange={(e) => setBulkLeaveForm((form) => ({ ...form, reason: e.target.value }))}
                   className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
                   <option value="">Select leave type...</option>
                   <option value="Week Off">Week Off</option>
@@ -882,6 +896,14 @@ export const LeavesPage: React.FC = () => {
                   <option value="Earned Leave">Earned Leave</option>
                   <option value="Holiday Off">Holiday Off</option>
                   <option value="Overtime Off">Overtime Off</option>
+                </select>
+                <label className="block text-sm font-medium text-secondary-700 mt-3 mb-2">Duration</label>
+                <select value={bulkLeaveForm.duration === 'full_day' ? 'full_day' : bulkLeaveForm.halfDayPeriod}
+                  onChange={(e) => setBulkLeaveForm((form) => e.target.value === 'full_day' ? { ...form, duration: 'full_day', halfDayPeriod: undefined } : { ...form, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm">
+                  <option value="full_day">Full Day</option>
+                  <option value="first_half">Half Day (First)</option>
+                  <option value="second_half">Half Day (Second)</option>
                 </select>
               </div>
 
@@ -957,6 +979,14 @@ export const LeavesPage: React.FC = () => {
                   <option value="Earned Leave">Earned Leave</option>
                   <option value="Holiday Off">Holiday Off</option>
                   <option value="Overtime Off">Overtime Off</option>
+                </select>
+                <label className="block text-sm font-medium text-secondary-700 mt-3 mb-2">Duration</label>
+                <select value={editLeaveForm.duration === 'full_day' ? 'full_day' : editLeaveForm.halfDayPeriod}
+                  onChange={(e) => setEditLeaveForm((form) => e.target.value === 'full_day' ? { ...form, duration: 'full_day', halfDayPeriod: undefined } : { ...form, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm">
+                  <option value="full_day">Full Day</option>
+                  <option value="first_half">Half Day (First)</option>
+                  <option value="second_half">Half Day (Second)</option>
                 </select>
               </div>
               <div className="flex gap-3 pt-2">

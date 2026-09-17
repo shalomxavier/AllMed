@@ -43,6 +43,7 @@ export interface MonthlyEmployeeReport {
   inTimes: string[];
   outTimes: string[];
   durations: string[];
+  statuses: string[];
   totalDuration: string;
   overtimeDuration: string;
   lateDuration: string;
@@ -120,7 +121,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
 
   // Fetch leaves (including week offs) and build a per-employee, per-date abbreviation map
   const leavesSnapshot = await getDocs(collection(db, 'leaves'));
-  const leaveMap: Record<string, Record<string, string>> = {};
+  const leaveMap: Record<string, Record<string, { code: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: 'first_half' | 'second_half' }>> = {};
   leavesSnapshot.forEach((doc) => {
     const data = doc.data();
     const empCode = (data.employeeCode ?? '').toString().trim().toLowerCase();
@@ -150,7 +151,10 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     if (!leaveMap[empCode]) leaveMap[empCode] = {};
     leaveDates.forEach((dateStr) => {
       if (dateStr >= fromDate && dateStr <= exportToDate) {
-        leaveMap[empCode][dateStr] = code;
+        const duration: 'full_day' | 'half_day' = data.duration === 'half_day' ? 'half_day' : 'full_day';
+        const next = { code, duration, halfDayPeriod: data.halfDayPeriod };
+        const existing = leaveMap[empCode][dateStr];
+        if (!existing || duration === 'full_day') leaveMap[empCode][dateStr] = next;
       }
     });
   });
@@ -230,6 +234,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
     const inTimes: string[] = [];
     const outTimes: string[] = [];
     const durations: string[] = [];
+    const statuses: string[] = [];
     let totalDurationMinutes = 0;
     let overtimeMinutes = 0;
     let lateMinutes = 0;
@@ -248,12 +253,16 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
         return d.toISOString().split('T')[0] === dateStr;
       });
 
-      const leaveCode = empLeaveMap[dateStr];
+      const leave = empLeaveMap[dateStr];
+      const halfDayStatus = leave?.duration === 'half_day'
+        ? `${leave.code} / ${leave.halfDayPeriod === 'first_half' ? 'HD-1' : 'HD-2'}`
+        : '';
+      statuses.push(halfDayStatus && dayPunches.length === 0 ? `${halfDayStatus} / A` : halfDayStatus);
 
-      if (leaveCode) {
-        inTimes.push(leaveCode);
-        outTimes.push(leaveCode);
-        durations.push(leaveCode);
+      if (leave?.duration === 'full_day') {
+        inTimes.push(leave.code);
+        outTimes.push(leave.code);
+        durations.push(leave.code);
       } else if (dayPunches.length === 0) {
         inTimes.push('');
         outTimes.push('');
@@ -319,7 +328,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
           durations.push('');
         }
 
-        if (shift && inDate) {
+        if (shift && inDate && leave?.halfDayPeriod !== 'first_half') {
           const [startHour, startMinute] = shift.startTime.split(':').map(Number);
           const shiftStartMinutes = startHour * 60 + startMinute;
           const actualInMinutes = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
@@ -327,7 +336,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
             lateMinutes += actualInMinutes - shiftStartMinutes;
           }
         }
-        if (shift && outDate) {
+        if (shift && outDate && leave?.halfDayPeriod !== 'second_half') {
           const [endHour, endMinute] = shift.endTime.split(':').map(Number);
           const shiftEndMinutes = endHour * 60 + endMinute;
           const actualOutMinutes = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
@@ -361,6 +370,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
       inTimes,
       outTimes,
       durations,
+      statuses,
       totalDuration,
       overtimeDuration: formatDurationMinutes(overtimeMinutes),
       lateDuration: formatDurationMinutes(lateMinutes),
@@ -501,6 +511,12 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
       durationRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
       durationRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
 
+      const statusRow = worksheet.getRow(currentRow + 3);
+      statusRow.getCell(1).value = 'STATUS';
+      statusRow.getCell(1).font = { bold: true, size: 10, color: { argb: 'FF333333' } };
+      statusRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F5F5' } };
+      statusRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+
       // Fill in data
       empReport.inTimes.forEach((value, i) => {
         const colIndex = i + 2;
@@ -517,6 +533,11 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
         durationRow.getCell(colIndex).value = value;
         durationRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
       });
+      empReport.statuses.forEach((value, i) => {
+        const colIndex = i + 2;
+        statusRow.getCell(colIndex).value = value;
+        statusRow.getCell(colIndex).alignment = { horizontal: 'center', vertical: 'middle' };
+      });
 
       const summaryValues = [
         [totalColumn, empReport.totalDuration],
@@ -531,7 +552,7 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
         durationRow.getCell(column).alignment = { horizontal: 'center', vertical: 'middle' };
       });
 
-      currentRow += 3;
+      currentRow += 4;
 
       // Empty row separator between employees
       currentRow++;
@@ -1182,7 +1203,10 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
     const code = getLeaveCode(type, reason);
     leaveDates.forEach((dateStr) => {
       if (dateStr >= fromDate && dateStr <= exportToDate) {
-        leaveMap[empCode][dateStr] = code;
+        const halfDayCode = data.duration === 'half_day'
+          ? `${code} / ${data.halfDayPeriod === 'first_half' ? 'HD-1' : 'HD-2'}`
+          : '';
+        if (!leaveMap[empCode][dateStr] || !halfDayCode) leaveMap[empCode][dateStr] = halfDayCode || code;
       }
     });
   });
@@ -1202,8 +1226,10 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
       department: info.department,
       values: dateRange.map((dateStr) => {
         const leaveValue = leaveMap[code]?.[dateStr];
+        const shiftValue = shiftAssignments[code]?.[dateStr] ?? '';
+        if (leaveValue?.includes('/ HD-')) return shiftValue ? `${shiftValue} / ${leaveValue}` : leaveValue;
         if (leaveValue) return leaveValue;
-        return shiftAssignments[code]?.[dateStr] ?? '';
+        return shiftValue;
       }),
     }));
 

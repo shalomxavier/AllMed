@@ -7,6 +7,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
     }
 
+    function canManageLeaves() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    }
+
     // Allow authenticated users to read conversations
     match /whatsapp_conversations/{conversationId} {
       allow read: if request.auth != null;
@@ -43,10 +48,10 @@ service cloud.firestore {
       allow write: if request.auth != null;
     }
 
-    // Allow authenticated users to read and write leaves
+    // Allow authenticated users to read leaves; only Director/HR may mutate them
     match /leaves/{leaveId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow write: if canManageLeaves();
     }
 
     // Allow authenticated users to read and write week offs

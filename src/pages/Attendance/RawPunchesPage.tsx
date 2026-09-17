@@ -62,6 +62,11 @@ interface PunchRef {
   isEdited?: boolean;
 }
 
+interface HalfDayLeave {
+  duration: 'half_day';
+  halfDayPeriod: 'first_half' | 'second_half';
+}
+
 interface DailyRecord {
   id: string;
   userId: string;
@@ -80,6 +85,7 @@ interface DailyRecord {
   lateMinutes: number;
   earlyMinutes: number;
   overtimeMinutes: number;
+  halfDayPeriod?: 'first_half' | 'second_half';
 }
 
 interface AnalyzeResult {
@@ -117,6 +123,8 @@ export const RawPunchesPage: React.FC = () => {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [shiftsMap, setShiftsMap] = useState<Record<string, any[]>>({});
+  const [halfDayLeavesMap, setHalfDayLeavesMap] = useState<Record<string, Record<string, HalfDayLeave>>>({});
+  const [employeeLeaveCodeMap, setEmployeeLeaveCodeMap] = useState<Record<string, string>>({});
   const [employeesLoaded, setEmployeesLoaded] = useState(false);
   const [locationFilter, setLocationFilter] = useState('');
   const [managerBranch, setManagerBranch] = useState<string | null>(null);
@@ -595,6 +603,7 @@ export const RawPunchesPage: React.FC = () => {
     fetchEmployees();
     fetchShifts();
     fetchBranches();
+    fetchHalfDayLeaves();
   }, [currentUser]);
 
   useEffect(() => {
@@ -653,6 +662,7 @@ export const RawPunchesPage: React.FC = () => {
       const deptMap: Record<string, string> = {};
       const workLocMap: Record<string, string> = {};
       const originalCaseMap: Record<string, string> = {};
+      const leaveCodeMap: Record<string, string> = {};
       snapshot.forEach((doc) => {
         const data = doc.data();
         const rawCode = (data.employeeCodeInDevice ?? '').toString().trim();
@@ -662,15 +672,38 @@ export const RawPunchesPage: React.FC = () => {
           deptMap[key] = data.department ?? '';
           workLocMap[key] = data.workLocation ?? '';
           originalCaseMap[key] = rawCode;
+          leaveCodeMap[key] = (data.employeeCode ?? rawCode).toString().trim().toLowerCase();
         }
       });
       setEmployeeMap(map);
       setDepartmentMap(deptMap);
       setWorkLocationMap(workLocMap);
       setEmployeeCodeOriginalMap(originalCaseMap);
+      setEmployeeLeaveCodeMap(leaveCodeMap);
       setEmployeesLoaded(true);
     } catch (error) {
       console.error('Error fetching employees:', error);
+    }
+  };
+
+  const fetchHalfDayLeaves = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'leaves'));
+      const map: Record<string, Record<string, HalfDayLeave>> = {};
+      snapshot.forEach((leaveDoc) => {
+        const data = leaveDoc.data();
+        if (data.duration !== 'half_day' || (data.status && data.status !== 'approved') || !['first_half', 'second_half'].includes(data.halfDayPeriod)) return;
+        const employeeCode = (data.employeeCode ?? '').toString().trim().toLowerCase();
+        if (!employeeCode) return;
+        const dates: string[] = data.dates?.length ? data.dates : data.fromDate ? [data.fromDate] : [];
+        if (!map[employeeCode]) map[employeeCode] = {};
+        dates.forEach((date) => {
+          map[employeeCode][date] = { duration: 'half_day', halfDayPeriod: data.halfDayPeriod };
+        });
+      });
+      setHalfDayLeavesMap(map);
+    } catch (error) {
+      console.error('Error fetching half-day leaves:', error);
     }
   };
 
@@ -713,16 +746,6 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
-  const getShiftForPunch = (userId: string | undefined, logDate: any): any | null => {
-    if (!userId) return null;
-    const key = userId.trim().toLowerCase();
-    const shifts = shiftsMap[key];
-    if (!shifts || shifts.length === 0) return null;
-    const d = toDate(logDate);
-    if (!d) return null;
-    const punchDateStr = formatLocalDate(d);
-    return shifts.find((s) => punchDateStr >= s.fromDate && punchDateStr <= s.toDate) ?? null;
-  };
 
   const handleNextPage = () => {
     if (currentPageIndex < totalPages - 1) {
@@ -789,12 +812,12 @@ export const RawPunchesPage: React.FC = () => {
       const shift = record.shift;
       if (!shift) return items;
 
-      record.inTimes.forEach((inTime) => {
+      if (record.halfDayPeriod !== 'first_half') record.inTimes.forEach((inTime) => {
         const anomaly = shift.startTime ? buildAnomaly('in', record, inTime, shift.startTime) : null;
         if (anomaly) items.push(anomaly);
       });
 
-      record.outTimes.forEach((outTime) => {
+      if (record.halfDayPeriod !== 'second_half') record.outTimes.forEach((outTime) => {
         const anomaly = shift.endTime ? buildAnomaly('out', record, outTime, shift.endTime) : null;
         if (anomaly) items.push(anomaly);
       });
@@ -982,67 +1005,41 @@ export const RawPunchesPage: React.FC = () => {
     return shifts.find((s) => dateStr >= s.fromDate && dateStr <= s.toDate) ?? null;
   };
 
+  const getAttendanceDate = (punch: RawPunch): string | null => {
+    const d = toDate(punch.logDate);
+    if (!d || !punch.userId) return null;
+    const dateStr = formatLocalDate(d);
+    const userId = punch.userId.trim().toLowerCase();
+
+    // For night shifts, out-punches that occur before the shift start belong to the previous day
+    if (punch.direction !== 'out') return dateStr;
+
+    const timeMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+    const shiftToday = getShiftForUser(userId, dateStr);
+    if (!shiftToday || !isNightShift(shiftToday)) return dateStr;
+
+    const [sh, sm] = shiftToday.startTime.split(':').map(Number);
+    const shiftStartMin = sh * 60 + sm;
+    if (timeMin >= shiftStartMin) return dateStr;
+
+    const prevDay = new Date(dateStr + 'T00:00:00Z');
+    prevDay.setUTCDate(prevDay.getUTCDate() - 1);
+    return formatLocalDate(prevDay);
+  };
+
   const computeDailyRecords = (punches: RawPunch[]): DailyRecord[] => {
-    // Phase 1: Group punches by userId + calendar date
+    // Phase 1: Group punches by userId + attendance day (handles night-shift out-punches)
     const groups: Record<string, RawPunch[]> = {};
     punches.forEach((punch) => {
-      const d = toDate(punch.logDate);
-      if (!d || !punch.userId) return;
-      const dateKey = `${punch.userId.trim().toLowerCase()}_${formatLocalDate(d)}`;
+      const attendanceDate = getAttendanceDate(punch);
+      if (!attendanceDate || !punch.userId) return;
+      const dateKey = `${punch.userId.trim().toLowerCase()}_${attendanceDate}`;
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(punch);
     });
 
-    // Phase 2: For night shifts, move next-day OUT punches into the IN-date group
-    const movedPunchIds = new Set<string>();
-    const allKeys = Object.keys(groups);
-    for (const dateKey of allKeys) {
-      const [userKey, dateStr] = [dateKey.substring(0, dateKey.lastIndexOf('_')), dateKey.substring(dateKey.lastIndexOf('_') + 1)];
-      const shift = getShiftForUser(userKey, dateStr);
-      if (!shift || !isNightShift(shift)) continue;
-
-      // Look for a next-day group for the same user
-      const nextDay = new Date(dateStr + 'T00:00:00Z');
-      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-      const nextDateStr = formatLocalDate(nextDay);
-      const nextKey = `${userKey}_${nextDateStr}`;
-      const nextGroup = groups[nextKey];
-      if (!nextGroup) continue;
-
-      // Determine shift end boundary: punches on the next day before the shift end time belong to this night shift
-      const [eh, em] = shift.endTime.split(':').map(Number);
-      const shiftEndMin = eh * 60 + em;
-      // Add a 2-hour grace period beyond shift end for late out-punches
-      const cutoffMin = shiftEndMin + 120;
-
-      const toMove: RawPunch[] = [];
-      const toKeep: RawPunch[] = [];
-      nextGroup.forEach((p) => {
-        if (p.direction === 'out') {
-          const pd = toDate(p.logDate);
-          if (pd) {
-            const pMin = pd.getUTCHours() * 60 + pd.getUTCMinutes();
-            if (pMin <= cutoffMin) {
-              toMove.push(p);
-              return;
-            }
-          }
-        }
-        toKeep.push(p);
-      });
-
-      if (toMove.length > 0) {
-        groups[dateKey] = [...groups[dateKey], ...toMove];
-        toMove.forEach((p) => movedPunchIds.add(p.id));
-        if (toKeep.length > 0) {
-          groups[nextKey] = toKeep;
-        } else {
-          delete groups[nextKey];
-        }
-      }
-    }
-
-    return Object.values(groups).map((punches) => {
+    return Object.entries(groups).map(([groupKey, punches]) => {
+      const [key, attendanceDate] = [groupKey.substring(0, groupKey.lastIndexOf('_')), groupKey.substring(groupKey.lastIndexOf('_') + 1)];
       const sorted = [...punches].sort((a, b) => {
         const dA = toDate(a.logDate);
         const dB = toDate(b.logDate);
@@ -1052,12 +1049,11 @@ export const RawPunchesPage: React.FC = () => {
 
       const firstPunch = sorted[0];
       const userId = firstPunch.userId ?? '';
-      const key = userId.trim().toLowerCase();
       const firstIn = sorted.find((p) => p.direction === 'in');
       const lastOut = [...sorted].reverse().find((p) => p.direction === 'out');
       const inDate = toDate(firstIn?.logDate ?? null);
       const outDate = toDate(lastOut?.logDate ?? null);
-      const date = toDate(firstPunch.logDate);
+      const date = new Date(attendanceDate + 'T00:00:00Z');
       const inTimes = sorted
         .filter((p) => p.direction === 'in')
         .map((p) => toDate(p.logDate))
@@ -1073,13 +1069,16 @@ export const RawPunchesPage: React.FC = () => {
         .filter((p) => p.direction === 'out' && toDate(p.logDate))
         .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'out' as const, isEdited: editedPunchIds.has(p.id) }));
 
-      const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
+      const shift = getShiftForUser(userId, attendanceDate);
       const nightShift = isNightShift(shift);
+      const workDate = attendanceDate;
+      const leaveCode = employeeLeaveCodeMap[key] ?? key;
+      const halfDayPeriod = halfDayLeavesMap[leaveCode]?.[workDate]?.halfDayPeriod;
       let lateMinutes = 0;
       let earlyMinutes = 0;
       let overtimeMinutes = 0;
 
-      if (inDate && shift?.startTime) {
+      if (inDate && shift?.startTime && halfDayPeriod !== 'first_half') {
         const [sh, sm] = shift.startTime.split(':').map(Number);
         const shiftStartMin = sh * 60 + sm;
         const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
@@ -1097,7 +1096,7 @@ export const RawPunchesPage: React.FC = () => {
         }
       }
 
-      if (outDate && shift?.endTime) {
+      if (outDate && shift?.endTime && halfDayPeriod !== 'second_half') {
         const [eh, em] = shift.endTime.split(':').map(Number);
         const shiftEndMin = eh * 60 + em;
         const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
@@ -1133,7 +1132,7 @@ export const RawPunchesPage: React.FC = () => {
       }
 
       return {
-        id: `${key}_${date ? formatLocalDate(date) : firstPunch.id}`,
+        id: `${key}_${attendanceDate}`,
         userId,
         employeeName: employeeMap[key] ?? '',
         department: departmentMap[key] ?? '',
@@ -1150,6 +1149,7 @@ export const RawPunchesPage: React.FC = () => {
         lateMinutes,
         earlyMinutes,
         overtimeMinutes,
+        halfDayPeriod,
       };
     });
   };
@@ -1189,7 +1189,7 @@ export const RawPunchesPage: React.FC = () => {
     }
   };
 
-  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, workLocationMap, shiftsMap, editedPunchIds]);
+  const dailyRecords: DailyRecord[] = useMemo(() => computeDailyRecords(allPunches), [allPunches, employeeMap, departmentMap, workLocationMap, shiftsMap, editedPunchIds, halfDayLeavesMap, employeeLeaveCodeMap]);
 
   const filteredRecords = dailyRecords.filter((record) => {
     // The underlying fetch is widened by one day so night-shift merges work, but

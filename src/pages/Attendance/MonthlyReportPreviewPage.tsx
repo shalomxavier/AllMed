@@ -274,6 +274,14 @@ export const MonthlyReportPreviewPage: React.FC = () => {
                   <td style={totalStyle}>{emp.lateDuration}</td>
                   <td style={totalStyle}>{emp.earlyOutDuration}</td>
                 </tr>
+                <tr>
+                  <td style={rowLabelStyle}>STATUS</td>
+                  {emp.statuses.map((value, i) => <td key={i} style={cellStyle}>{value}</td>)}
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
+                  <td style={cellStyle}></td>
+                </tr>
                 {empIndex < data.employeeReports.length - 1 && (
                   <tr>
                     <td colSpan={totalColumn} style={{ border: 'none', height: '16px' }}></td>

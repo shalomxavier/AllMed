@@ -122,6 +122,35 @@ const findOverlappingShifts = (newShift: any, existingShifts: any[], employeeCod
   });
 };
 
+type WizardHalfDayPeriod = 'first_half' | 'second_half';
+interface WizardLeaveSelection { reason: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: WizardHalfDayPeriod; }
+const WIZARD_LEAVE_REASONS = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
+
+const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelection) => void }> = ({ onSelect }) => {
+  const [halfDayPeriod, setHalfDayPeriod] = useState<WizardHalfDayPeriod | null>(null);
+  return (
+    <>
+      {!halfDayPeriod ? (
+        <>
+          {WIZARD_LEAVE_REASONS.map((reason) => <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">{reason}</button>)}
+          <button type="button" onClick={() => setHalfDayPeriod('first_half')} className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (First)</span><ChevronRight size={14} /></button>
+          <button type="button" onClick={() => setHalfDayPeriod('second_half')} className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (Second)</span><ChevronRight size={14} /></button>
+        </>
+      ) : (
+        <button type="button" className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded bg-secondary-50 text-secondary-700">
+          <span>{halfDayPeriod === 'first_half' ? 'Half Day (First)' : 'Half Day (Second)'}</span><ChevronRight size={14} />
+        </button>
+      )}
+      {halfDayPeriod && (
+        <div className="absolute left-full bottom-0 ml-1 z-20 w-48 bg-white border border-secondary-200 rounded-lg shadow-lg p-2">
+          <p className="px-2 py-1 text-xs font-semibold text-secondary-500">Select leave type</p>
+          {WIZARD_LEAVE_REASONS.map((reason) => <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">{reason}</button>)}
+        </div>
+      )}
+    </>
+  );
+};
+
 export const ShiftsPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
@@ -156,7 +185,7 @@ export const ShiftsPage: React.FC = () => {
 
   // Leave wizard state
   interface EmpLeaveEntry { employeeCode: string; employeeName: string; employeeId: string; fromDate: string; toDate: string; }
-  interface DateLeave { date: string; type: string; }
+  interface DateLeave { date: string; type: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: WizardHalfDayPeriod; }
   const [askLeavesDialog, setAskLeavesDialog] = useState(false);
   const [leaveWizardOpen, setLeaveWizardOpen] = useState(false);
   const [wizardEmployees, setWizardEmployees] = useState<EmpLeaveEntry[]>([]);
@@ -1332,7 +1361,6 @@ export const ShiftsPage: React.FC = () => {
           return { badge: 'bg-purple-100 text-purple-700', dot: 'bg-purple-500' };
         };
 
-        const LEAVE_TYPES = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
         const DAY_HEADERS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
         const empLeaves = wizardEmpLeaves[emp.employeeCode] ?? [];
         const selectedDates = empLeaves.map(l => l.date);
@@ -1433,14 +1461,14 @@ export const ShiftsPage: React.FC = () => {
                           const empSnap = await getDocs(query(collection(db, 'employees'), where('employeeCode', '==', e.employeeCode)));
                           if (empSnap.empty) continue;
                           const empDocId = empSnap.docs[0].id;
-                          // Group by leave type, save one doc per type with dates array
-                          const byType: Record<string, string[]> = {};
+                          const grouped = new Map<string, DateLeave[]>();
                           for (const leave of leaves) {
-                            if (!byType[leave.type]) byType[leave.type] = [];
-                            byType[leave.type].push(leave.date);
+                            const key = `${leave.type}|${leave.duration}|${leave.halfDayPeriod ?? ''}`;
+                            grouped.set(key, [...(grouped.get(key) ?? []), leave]);
                           }
-                          for (const [type, dates] of Object.entries(byType)) {
-                            const sorted = dates.sort();
+                          for (const groupedLeaves of grouped.values()) {
+                            const first = groupedLeaves[0];
+                            const sorted = groupedLeaves.map((leave) => leave.date).sort();
                             await addDoc(collection(db, 'leaves'), {
                               type: 'leave',
                               employeeCode: e.employeeCode,
@@ -1449,7 +1477,10 @@ export const ShiftsPage: React.FC = () => {
                               dates: sorted,
                               fromDate: sorted[0],
                               toDate: sorted[sorted.length - 1],
-                              reason: type,
+                              reason: first.type,
+                              duration: first.duration,
+                              ...(first.halfDayPeriod ? { halfDayPeriod: first.halfDayPeriod } : {}),
+                              dayValue: first.duration === 'half_day' ? 0.5 : 1,
                               createdAt: serverTimestamp(),
                               createdBy: currentUser?.uid,
                             });
@@ -1572,23 +1603,14 @@ export const ShiftsPage: React.FC = () => {
                             <div className="fixed inset-0 z-[99]" onClick={() => { setWizardTooltipDate(null); setWizardTooltipPos(null); }} />
                           <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
-                            {LEAVE_TYPES.map(lt => (
-                              <button
-                                key={lt}
-                                type="button"
-                                onClick={() => {
-                                  setWizardEmpLeaves(prev => {
-                                    const curr = prev[emp.employeeCode] ?? [];
-                                    const filtered = curr.filter(l => l.date !== ds);
-                                    return { ...prev, [emp.employeeCode]: [...filtered, { date: ds, type: lt }] };
-                                  });
-                                  setWizardTooltipDate(null); setWizardTooltipPos(null);
-                                }}
-                                className={`w-full text-left px-2 py-1.5 text-sm rounded transition-colors hover:opacity-80 ${leaveType === lt ? `${getLeaveColor(lt).badge} font-semibold` : 'text-secondary-700 hover:bg-secondary-50'}`}
-                              >
-                                {lt}
-                              </button>
-                            ))}
+                            <WizardLeaveOptionMenu onSelect={(selection) => {
+                              setWizardEmpLeaves(prev => {
+                                const curr = prev[emp.employeeCode] ?? [];
+                                const filtered = curr.filter(l => l.date !== ds);
+                                return { ...prev, [emp.employeeCode]: [...filtered, { date: ds, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod }] };
+                              });
+                              setWizardTooltipDate(null); setWizardTooltipPos(null);
+                            }} />
                             <button
                               type="button"
                               onClick={() => {
@@ -1624,23 +1646,14 @@ export const ShiftsPage: React.FC = () => {
                   <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
                     <div className="flex flex-wrap gap-2">
-                      {LEAVE_TYPES.map((type) => (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() => {
-                            setWizardEmpLeaves((prev) => {
-                              const current = prev[emp.employeeCode] ?? [];
-                              const remaining = current.filter((leave) => !wizardMultiSelectedDates.includes(leave.date));
-                              return { ...prev, [emp.employeeCode]: [...remaining, ...wizardMultiSelectedDates.map((date) => ({ date, type }))] };
-                            });
-                            setWizardMultiSelectedDates([]);
-                          }}
-                          className="px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-full hover:bg-blue-100 transition-colors"
-                        >
-                          {type}
-                        </button>
-                      ))}
+                      <WizardLeaveOptionMenu onSelect={(selection) => {
+                        setWizardEmpLeaves((prev) => {
+                          const current = prev[emp.employeeCode] ?? [];
+                          const remaining = current.filter((leave) => !wizardMultiSelectedDates.includes(leave.date));
+                          return { ...prev, [emp.employeeCode]: [...remaining, ...wizardMultiSelectedDates.map((date) => ({ date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod }))] };
+                        });
+                        setWizardMultiSelectedDates([]);
+                      }} />
                       <button
                         type="button"
                         onClick={() => setWizardMultiSelectedDates([])}
