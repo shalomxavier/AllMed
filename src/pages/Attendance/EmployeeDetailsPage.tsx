@@ -26,6 +26,7 @@ interface Employee {
   probationPeriod?: string;
   confirmationDate?: string;
   employmentStatus?: string;
+  resignDate?: string;
   syncedAt?: any;
 }
 
@@ -45,6 +46,7 @@ const employmentFields: Array<{ key: keyof Employee; label: string; type?: strin
   { key: 'probationPeriod', label: 'Probation Period' },
   { key: 'confirmationDate', label: 'Confirmation Date', type: 'date' },
   { key: 'employmentStatus', label: 'Employment Status' },
+  { key: 'resignDate', label: 'Resign Date', type: 'date' },
 ];
 
 export const EmployeeDetailsPage: React.FC = () => {

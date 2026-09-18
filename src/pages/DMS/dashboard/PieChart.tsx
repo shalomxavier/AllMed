@@ -15,6 +15,8 @@ interface PieChartProps {
   departmentData?: PieChartData[];
   onDepartmentLabelClick?: (label: string) => void;
   className?: string;
+  overallTotal?: number;
+  overallTotalEmployees?: number;
 }
 
 export const PieChart: React.FC<PieChartProps> = ({
@@ -25,10 +27,16 @@ export const PieChart: React.FC<PieChartProps> = ({
   departmentData,
   onDepartmentLabelClick,
   className,
+  overallTotal,
+  overallTotalEmployees,
 }) => {
   const total = useMemo(() => data.reduce((sum, item) => sum + item.value, 0), [data]);
   const totalEmployees = useMemo(() => data.reduce((sum, item) => sum + (item.total || item.value), 0), [data]);
-  const overallPercentage = useMemo(() => totalEmployees > 0 ? Math.round((total / totalEmployees) * 100) : 0, [total, totalEmployees]);
+  const displayTotal = overallTotal ?? total;
+  const displayTotalEmployees = overallTotalEmployees ?? totalEmployees;
+  const overallPercentage = useMemo(() => displayTotalEmployees > 0 ? Math.round((displayTotal / displayTotalEmployees) * 100) : 0, [displayTotal, displayTotalEmployees]);
+
+  const departmentTotal = useMemo(() => departmentData?.reduce((sum, item) => sum + item.value, 0) ?? 0, [departmentData]);
 
   const slices = useMemo(() => {
     if (total === 0) return [];
@@ -110,13 +118,13 @@ export const PieChart: React.FC<PieChartProps> = ({
                 textAnchor="middle"
                 className={`text-lg font-bold ${overallPercentage <= 50 ? 'fill-red-600' : 'fill-secondary-900'}`}
               >
-                {total}
+                {displayTotal}
               </text>
             </svg>
             <div className="text-center">
               <span className="text-sm text-secondary-600">out of </span>
               <span className={`text-sm font-semibold ${overallPercentage <= 50 ? 'text-red-600' : 'text-secondary-900'}`}>
-                {totalEmployees}
+                {displayTotalEmployees}
               </span>
               <span className="text-sm text-secondary-600"> total employees</span>
             </div>
@@ -174,7 +182,7 @@ export const PieChart: React.FC<PieChartProps> = ({
                           </span>
                         </div>
                         <span className={`font-medium ${item.total && (item.value / item.total) <= 0.5 ? 'text-red-600' : 'text-secondary-900'}`}>
-                          {item.total ? `${item.value}/${item.total}` : item.value} ({item.total ? Math.round((item.value / item.total) * 100) : (total > 0 ? Math.round((item.value / total) * 100) : 0)}%)
+                          {item.total ? `${item.value}/${item.total}` : item.value} ({item.total ? Math.round((item.value / item.total) * 100) : (departmentTotal > 0 ? Math.round((item.value / departmentTotal) * 100) : 0)}%)
                         </span>
                       </li>
                     ))}

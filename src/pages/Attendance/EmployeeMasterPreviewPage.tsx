@@ -62,6 +62,7 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
     'Probation Period',
     'Confirmation Date',
     'Employment Status',
+    'Resign Date',
   ];
 
   const titleStyle = {
@@ -175,6 +176,7 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
                   <td style={fixedCellStyle}>{emp.probationPeriod}</td>
                   <td style={fixedCellStyle}>{emp.confirmationDate}</td>
                   <td style={fixedCellStyle}>{emp.employmentStatus}</td>
+                  <td style={fixedCellStyle}>{emp.resignDate}</td>
                 </tr>
               ))}
             </tbody>

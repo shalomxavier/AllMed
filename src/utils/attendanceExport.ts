@@ -1397,6 +1397,7 @@ export interface EmployeeMasterRecord {
   probationPeriod: string;
   confirmationDate: string;
   employmentStatus: string;
+  resignDate: string;
 }
 
 export interface EmployeeMasterData {
@@ -1444,6 +1445,7 @@ export const getEmployeeMasterData = async (location = '', status = 'Active'): P
       probationPeriod: (employee.probationPeriod ?? '').toString().toUpperCase(),
       confirmationDate: (employee.confirmationDate ?? '').toString(),
       employmentStatus: (employee.employmentStatus ?? '').toString().toUpperCase(),
+      resignDate: (employee.resignDate ?? '').toString(),
     }))
     .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 
@@ -1479,6 +1481,7 @@ export const exportEmployeeMaster = async (location = '', status = 'Active'): Pr
       'Probation Period',
       'Confirmation Date',
       'Employment Status',
+      'Resign Date',
     ];
 
     const workbook = new ExcelJS.Workbook();
@@ -1544,6 +1547,7 @@ export const exportEmployeeMaster = async (location = '', status = 'Active'): Pr
         emp.probationPeriod,
         emp.confirmationDate,
         emp.employmentStatus,
+        emp.resignDate,
       ];
       values.forEach((value, index) => {
         const cell = row.getCell(index + 1);
@@ -1573,6 +1577,7 @@ export const exportEmployeeMaster = async (location = '', status = 'Active'): Pr
     worksheet.getColumn(17).width = 18;
     worksheet.getColumn(18).width = 18;
     worksheet.getColumn(19).width = 18;
+    worksheet.getColumn(20).width = 15;
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
