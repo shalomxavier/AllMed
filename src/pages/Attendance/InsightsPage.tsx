@@ -79,13 +79,13 @@ const SHIFT_WINDOWS = [
   { key: 'night', start: 22 * 60, end: 32 * 60 }, // 10 PM to 8 AM next day
 ] as const;
 
-const categorizeShiftTime = (shiftTime: string): keyof DepartmentShiftCounts | null => {
+const categorizeShiftTime = (shiftTime: string): Array<keyof DepartmentShiftCounts> => {
   const [startStr, endStr] = shiftTime.split('-').map((s) => s.trim());
-  if (!startStr || !endStr) return null;
+  if (!startStr || !endStr) return [];
 
   const [startHour, startMinute] = startStr.split(':').map(Number);
   const [endHour, endMinute] = endStr.split(':').map(Number);
-  if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) return null;
+  if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) return [];
 
   let start = startHour * 60 + startMinute;
   let end = endHour * 60 + endMinute;
@@ -96,8 +96,9 @@ const categorizeShiftTime = (shiftTime: string): keyof DepartmentShiftCounts | n
     overlap: Math.max(0, Math.min(end, window.end) - Math.max(start, window.start)),
   }));
 
-  const best = overlaps.reduce((previous, current) => (current.overlap > previous.overlap ? current : previous));
-  return best.overlap > 0 ? best.key : null;
+  const maxOverlap = Math.max(0, ...overlaps.map((item) => item.overlap));
+  if (maxOverlap === 0) return [];
+  return overlaps.filter((item) => item.overlap === maxOverlap).map((item) => item.key);
 };
 
 const toDate = (logDate: any): Date | null => {
@@ -226,7 +227,7 @@ const DepartmentShiftTable: React.FC<{ rows: [string, DepartmentShiftCounts][]; 
 
   return (
     <>
-      <div className="card p-5 bg-white border border-secondary-200">
+      <div className="card p-5 bg-white border border-secondary-200 mb-6">
         <h3 className="text-lg font-semibold text-secondary-900 mb-4">Department-wise Shift Availability</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
@@ -314,13 +315,13 @@ const DepartmentShiftTable: React.FC<{ rows: [string, DepartmentShiftCounts][]; 
                   </thead>
                   <tbody>
                     {selectedEmployees.map((employee) => {
-                      const bucket = categorizeShiftTime(employee.shiftTime || '');
+                      const buckets = categorizeShiftTime(employee.shiftTime || '');
                       return (
                         <tr key={employee.employeeCode} className="border-b border-secondary-200">
                           <td className="px-3 py-2 font-medium text-secondary-900 border border-secondary-200">{employee.name}</td>
                           {SHIFT_COLUMNS.map((col) => (
                             <td key={col.key} className="px-3 py-2 text-center border border-secondary-200">
-                              {bucket === col.key && (
+                              {buckets.includes(col.key) && (
                                 <span className="inline-block w-4 h-4 rounded-full bg-green-500" />
                               )}
                             </td>
@@ -387,28 +388,36 @@ export const InsightsPage: React.FC = () => {
       setError(null);
       try {
         const firestore = getFirestore();
-        // Expand the query by one day on each side so night-shift out-punches that
-        // belong to the previous attendance day are included, matching the logic in
-        // /attendance/records (RawPunchesPage).
-        const queryFrom = shiftDate(selectedDate, -1);
-        const queryTo = shiftDate(selectedDate, 1);
-        const startOfDay = Timestamp.fromDate(new Date(`${queryFrom}T00:00:00Z`));
-        const endOfDay = Timestamp.fromDate(new Date(`${queryTo}T23:59:59.999Z`));
-        const [employeesSnapshot, punchesSnapshot, shiftsSnapshot, leavesSnapshot] = await Promise.all([
-          getDocs(collection(firestore, 'employees')),
-          getDocs(query(collection(firestore, 'rawPunches'), where('logDate', '>=', startOfDay), where('logDate', '<=', endOfDay), orderBy('logDate'))),
-          getDocs(collection(firestore, 'shifts')),
-          getDocs(collection(firestore, 'leaves')),
-        ]);
 
-        const shifts = shiftsSnapshot.docs.map((shiftDocument) => shiftDocument.data() as Shift);
-        const leaves = leavesSnapshot.docs.map((leaveDocument) => leaveDocument.data() as LeaveRecord);
+        // 1. Fetch employees first. When a branch is selected, ask Firestore to filter
+        // so we do not read the entire company roster on every date change.
+        const employeesQuery = branchFilter
+          ? query(collection(firestore, 'employees'), where('workLocation', '==', branchFilter))
+          : collection(firestore, 'employees');
+        const employeesSnapshot = await getDocs(employeesQuery);
 
         const employees = employeesSnapshot.docs
           .map((employee) => employee.data() as Employee)
-          .filter((employee) => !branchFilter || employee.workLocation === branchFilter)
           .filter((employee) => isEmployeeActiveOnDate(employee, selectedDate));
         const hasActiveEmployees = employees.length > 0;
+
+        // If a specific branch is selected but has no active employees on this date,
+        // skip the remaining fetches and show zero results.
+        if (branchFilter && employees.length === 0) {
+          setCharts([{
+            key: ALL_EMPLOYEES_KEY,
+            title: 'All Employees',
+            data: [],
+            employeesByDesignation: {},
+            employeesByDepartment: {},
+            departmentData: [],
+            emptyText: 'No active employees for this date.',
+          }]);
+          setDepartmentShiftRows([]);
+          setAttendanceLoading(false);
+          return;
+        }
+
         const employeeByCode = new Map<string, Employee>();
         const branchEmployeeCodes = new Set<string>();
         employees.forEach((employee) => {
@@ -419,6 +428,49 @@ export const InsightsPage: React.FC = () => {
             branchEmployeeCodes.add(normalized);
           });
         });
+
+        // Build the list of user IDs to query. Firestore 'in' supports up to 30 values.
+        const branchUserIds = Array.from(branchEmployeeCodes);
+        const canFilterByUserIds = branchFilter && branchUserIds.length > 0 && branchUserIds.length <= 30;
+
+        // 2. Fetch punches, leaves, and shifts. Use 'in' filters when we have a small,
+        // known set of employee codes for the selected branch to avoid reading unrelated
+        // documents. Shifts are an array-of-objects in each document, so they still
+        // require in-memory filtering unless we later denormalize employeeCodes.
+        // Expand the punch query by one day on each side so night-shift out-punches on
+        // adjacent calendar days are included (same as /attendance/records).
+        const queryFrom = shiftDate(selectedDate, -1);
+        const queryTo = shiftDate(selectedDate, 1);
+        const startOfDay = Timestamp.fromDate(new Date(`${queryFrom}T00:00:00Z`));
+        const endOfDay = Timestamp.fromDate(new Date(`${queryTo}T23:59:59.999Z`));
+
+        const punchesQuery = canFilterByUserIds
+          ? query(
+              collection(firestore, 'rawPunches'),
+              where('logDate', '>=', startOfDay),
+              where('logDate', '<=', endOfDay),
+              where('userId', 'in', branchUserIds),
+              orderBy('logDate')
+            )
+          : query(
+              collection(firestore, 'rawPunches'),
+              where('logDate', '>=', startOfDay),
+              where('logDate', '<=', endOfDay),
+              orderBy('logDate')
+            );
+
+        const leavesQuery = canFilterByUserIds
+          ? query(collection(firestore, 'leaves'), where('employeeCode', 'in', branchUserIds))
+          : collection(firestore, 'leaves');
+
+        const [punchesSnapshot, shiftsSnapshot, leavesSnapshot] = await Promise.all([
+          getDocs(punchesQuery),
+          getDocs(collection(firestore, 'shifts')),
+          getDocs(leavesQuery),
+        ]);
+
+        const shifts = shiftsSnapshot.docs.map((shiftDocument) => shiftDocument.data() as Shift);
+        const leaves = leavesSnapshot.docs.map((leaveDocument) => leaveDocument.data() as LeaveRecord);
 
         const shiftTimesByEmployee = new Map<string, string>();
         shifts.forEach((shift) => {
@@ -586,8 +638,8 @@ export const InsightsPage: React.FC = () => {
         attendanceByDepartment.forEach((codes, department) => {
           const counts = departmentShiftMap.get(department) ?? { morning: 0, mid: 0, night: 0 };
           codes.forEach((code) => {
-            const bucket = categorizeShiftTime(shiftTimesByEmployee.get(code) || '');
-            if (bucket) counts[bucket]++;
+            const buckets = categorizeShiftTime(shiftTimesByEmployee.get(code) || '');
+            buckets.forEach((bucket) => counts[bucket]++);
           });
           departmentShiftMap.set(department, counts);
         });
