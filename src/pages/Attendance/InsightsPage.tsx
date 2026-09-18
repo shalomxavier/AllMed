@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lightbulb, X, ArrowLeft } from 'lucide-react';
 import { Timestamp, collection, getDocs, getFirestore, orderBy, query, where } from 'firebase/firestore';
@@ -65,7 +65,40 @@ interface AttendanceChart {
   emptyText: string;
 }
 
+interface DepartmentShiftCounts {
+  morning: number;
+  mid: number;
+  night: number;
+}
+
 const CHART_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#9333ea', '#db2777', '#0891b2', '#ca8a04', '#4f46e5'];
+
+const SHIFT_WINDOWS = [
+  { key: 'morning', start: 8 * 60, end: 16 * 60 },
+  { key: 'mid', start: 16 * 60, end: 24 * 60 },
+  { key: 'night', start: 22 * 60, end: 32 * 60 }, // 10 PM to 8 AM next day
+] as const;
+
+const categorizeShiftTime = (shiftTime: string): keyof DepartmentShiftCounts | null => {
+  const [startStr, endStr] = shiftTime.split('-').map((s) => s.trim());
+  if (!startStr || !endStr) return null;
+
+  const [startHour, startMinute] = startStr.split(':').map(Number);
+  const [endHour, endMinute] = endStr.split(':').map(Number);
+  if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) return null;
+
+  let start = startHour * 60 + startMinute;
+  let end = endHour * 60 + endMinute;
+  if (end <= start) end += 24 * 60;
+
+  const overlaps = SHIFT_WINDOWS.map((window) => ({
+    key: window.key,
+    overlap: Math.max(0, Math.min(end, window.end) - Math.max(start, window.start)),
+  }));
+
+  const best = overlaps.reduce((previous, current) => (current.overlap > previous.overlap ? current : previous));
+  return best.overlap > 0 ? best.key : null;
+};
 
 const toDate = (logDate: any): Date | null => {
   if (!logDate) return null;
@@ -172,6 +205,140 @@ const getToday = (): string => formatLocalDate(new Date());
 
 const ALL_EMPLOYEES_KEY = 'all';
 
+const SHIFT_COLUMNS: { key: keyof DepartmentShiftCounts; title: string; sub: string; headerBg: string; headerText: string }[] = [
+  { key: 'morning', title: 'Morning', sub: '8 AM–4 PM', headerBg: 'bg-green-100', headerText: 'text-green-800' },
+  { key: 'mid', title: 'Mid', sub: '4 PM–12 AM', headerBg: 'bg-orange-100', headerText: 'text-orange-800' },
+  { key: 'night', title: 'Night', sub: '10 PM–8 AM', headerBg: 'bg-indigo-100', headerText: 'text-indigo-800' },
+];
+
+const DepartmentShiftTable: React.FC<{ rows: [string, DepartmentShiftCounts][]; employeesByDepartment: Record<string, ChartEmployee[]> }> = ({ rows, employeesByDepartment }) => {
+  const totals = useMemo(() => rows.reduce((acc, [, counts]) => {
+    acc.morning += counts.morning;
+    acc.mid += counts.mid;
+    acc.night += counts.night;
+    return acc;
+  }, { morning: 0, mid: 0, night: 0 }), [rows]);
+
+  const [selectedDepartment, setSelectedDepartment] = useState<string | null>(null);
+  const selectedEmployees = selectedDepartment ? employeesByDepartment[selectedDepartment] ?? [] : [];
+
+  if (rows.length === 0) return null;
+
+  return (
+    <>
+      <div className="card p-5 bg-white border border-secondary-200">
+        <h3 className="text-lg font-semibold text-secondary-900 mb-4">Department-wise Shift Availability</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="text-secondary-900">
+                <th className="px-4 py-3 text-left text-base font-bold bg-secondary-200 border border-secondary-200">Department</th>
+                {SHIFT_COLUMNS.map((col) => (
+                  <th key={col.key} className={`px-4 py-3 text-center text-base font-bold border border-secondary-200 ${col.headerBg} ${col.headerText}`}>
+                    <div>{col.title}</div>
+                    <div className="text-xs font-normal opacity-80">{col.sub}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([department, counts]) => {
+                const hasEmployees = (employeesByDepartment[department]?.length ?? 0) > 0;
+                return (
+                  <tr
+                    key={department}
+                    onClick={() => hasEmployees && setSelectedDepartment(department)}
+                    className={`border-b border-secondary-200 ${hasEmployees ? 'cursor-pointer hover:bg-secondary-100' : 'hover:bg-secondary-50'}`}
+                  >
+                    <td className="px-3 py-2 font-medium text-secondary-900 border border-secondary-200">{department}</td>
+                    {SHIFT_COLUMNS.map((col) => (
+                      <td key={col.key} className="px-3 py-2 text-center font-semibold text-secondary-900 border border-secondary-200">
+                        {counts[col.key]}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-secondary-100 font-semibold text-secondary-900">
+                <td className="px-3 py-2 border border-secondary-200">Total</td>
+                {SHIFT_COLUMNS.map((col) => (
+                  <td key={col.key} className="px-3 py-2 text-center font-semibold text-secondary-900 border border-secondary-200">
+                    {totals[col.key]}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      {selectedDepartment && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setSelectedDepartment(null)}
+        >
+          <div
+            className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-secondary-200 p-5">
+              <div>
+                <h2 className="text-lg font-semibold text-secondary-900">{selectedDepartment}</h2>
+                <p className="text-sm text-secondary-500">Employee shift breakdown</p>
+              </div>
+              <button
+                onClick={() => setSelectedDepartment(null)}
+                className="rounded-lg p-1.5 text-secondary-500 hover:bg-secondary-100 hover:text-secondary-900"
+                aria-label="Close employee shift breakdown"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="max-h-96 overflow-y-auto p-5">
+              {selectedEmployees.length === 0 ? (
+                <p className="text-center text-secondary-500 py-8">No employees to display.</p>
+              ) : (
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="text-secondary-900">
+                      <th className="px-3 py-2 text-left font-semibold bg-secondary-200 border border-secondary-200">Employee</th>
+                      {SHIFT_COLUMNS.map((col) => (
+                        <th key={col.key} className={`px-3 py-2 text-center font-semibold border border-secondary-200 ${col.headerBg} ${col.headerText}`}>
+                          <div>{col.title}</div>
+                          <div className="text-xs font-normal opacity-80">{col.sub}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedEmployees.map((employee) => {
+                      const bucket = categorizeShiftTime(employee.shiftTime || '');
+                      return (
+                        <tr key={employee.employeeCode} className="border-b border-secondary-200">
+                          <td className="px-3 py-2 font-medium text-secondary-900 border border-secondary-200">{employee.name}</td>
+                          {SHIFT_COLUMNS.map((col) => (
+                            <td key={col.key} className="px-3 py-2 text-center border border-secondary-200">
+                              {bucket === col.key && (
+                                <span className="inline-block w-4 h-4 rounded-full bg-green-500" />
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
 export const InsightsPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
@@ -181,6 +348,7 @@ export const InsightsPage: React.FC = () => {
   const [branchesLoading, setBranchesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<{ chartTitle: string; groupLabel: string; employees: ChartEmployee[] } | null>(null);
+  const [departmentShiftRows, setDepartmentShiftRows] = useState<[string, DepartmentShiftCounts][]>([]);
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
   const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
@@ -410,10 +578,32 @@ export const InsightsPage: React.FC = () => {
           departmentData: departmentChartData,
           emptyText,
         }]);
+
+        const departmentShiftMap = new Map<string, DepartmentShiftCounts>();
+        totalEmployeesByDepartment.forEach((_, department) => {
+          departmentShiftMap.set(department, { morning: 0, mid: 0, night: 0 });
+        });
+        attendanceByDepartment.forEach((codes, department) => {
+          const counts = departmentShiftMap.get(department) ?? { morning: 0, mid: 0, night: 0 };
+          codes.forEach((code) => {
+            const bucket = categorizeShiftTime(shiftTimesByEmployee.get(code) || '');
+            if (bucket) counts[bucket]++;
+          });
+          departmentShiftMap.set(department, counts);
+        });
+
+        const sortedDepartmentShiftRows = Array.from(departmentShiftMap.entries()).sort(([deptA, countsA], [deptB, countsB]) => {
+          const totalA = countsA.morning + countsA.mid + countsA.night;
+          const totalB = countsB.morning + countsB.mid + countsB.night;
+          if (totalB !== totalA) return totalB - totalA;
+          return deptA.localeCompare(deptB);
+        });
+        setDepartmentShiftRows(sortedDepartmentShiftRows);
       } catch (error) {
         console.error('Error fetching attendance insights:', error);
         setError('Failed to load attendance insights. Please try again.');
         setCharts([]);
+        setDepartmentShiftRows([]);
       } finally {
         setAttendanceLoading(false);
       }
@@ -519,16 +709,17 @@ export const InsightsPage: React.FC = () => {
           ) : (
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
               {charts.map((chart) => (
-                <PieChart
-                  key={chart.key}
-                  title={chart.title}
-                  data={chart.data}
-                  emptyText={chart.emptyText}
-                  onLabelClick={(designation) => handleDesignationClick(chart, designation)}
-                  departmentData={chart.departmentData}
-                  onDepartmentLabelClick={(department) => handleDepartmentClick(chart, department)}
-                  className="xl:col-span-2"
-                />
+                <div key={chart.key} className="xl:col-span-2 flex flex-col gap-4">
+                  <PieChart
+                    title={chart.title}
+                    data={chart.data}
+                    emptyText={chart.emptyText}
+                    onLabelClick={(designation) => handleDesignationClick(chart, designation)}
+                    departmentData={chart.departmentData}
+                    onDepartmentLabelClick={(department) => handleDepartmentClick(chart, department)}
+                  />
+                  <DepartmentShiftTable rows={departmentShiftRows} employeesByDepartment={chart.employeesByDepartment ?? {}} />
+                </div>
               ))}
             </div>
           )}
