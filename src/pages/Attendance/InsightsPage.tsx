@@ -133,16 +133,14 @@ const isNightShift = (shift: Shift): boolean => {
 
 const getShiftForEmployee = (employeeCode: string, dateStr: string, shifts: Shift[]): Shift | null => {
   const key = employeeCode.trim().toLowerCase();
-  for (const shift of shifts) {
-    const assignment = shift.employees?.find((emp) => {
-      const code = emp.employeeCode?.trim().toLowerCase();
-      return code === key
-        && (!emp.fromDate || dateStr >= emp.fromDate)
-        && (!emp.toDate || dateStr <= emp.toDate);
-    });
-    if (assignment) return shift;
-  }
-  return null;
+  const matches = shifts.filter((shift) => shift.employees?.some((emp) => {
+    const code = emp.employeeCode?.trim().toLowerCase();
+    return code === key
+      && (!emp.fromDate || dateStr >= emp.fromDate)
+      && (!emp.toDate || dateStr <= emp.toDate);
+  }));
+  if (matches.length > 1) console.error('Multiple shifts cover employee date:', employeeCode, dateStr, matches);
+  return matches.length === 1 ? matches[0] : null;
 };
 
 const getAttendanceDate = (punch: RawPunch, shifts: Shift[]): string | null => {
@@ -420,17 +418,21 @@ export const InsightsPage: React.FC = () => {
 
         const employeeByCode = new Map<string, Employee>();
         const branchEmployeeCodes = new Set<string>();
+        const branchUserIdSet = new Set<string>();
         employees.forEach((employee) => {
           [employee.employeeCodeInDevice, employee.employeeCode].forEach((code) => {
             if (!code) return;
             const normalized = code.trim().toLowerCase();
             employeeByCode.set(normalized, employee);
             branchEmployeeCodes.add(normalized);
+            // Keep the original casing for the Firestore 'in' filter, which is
+            // case-sensitive — rawPunches.userId is stored as e.g. 'BR012'.
+            branchUserIdSet.add(code.trim());
           });
         });
 
         // Build the list of user IDs to query. Firestore 'in' supports up to 30 values.
-        const branchUserIds = Array.from(branchEmployeeCodes);
+        const branchUserIds = Array.from(branchUserIdSet);
         const canFilterByUserIds = branchFilter && branchUserIds.length > 0 && branchUserIds.length <= 30;
 
         // 2. Fetch punches, leaves, and shifts. Use 'in' filters when we have a small,

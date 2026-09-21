@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2, BarChart3 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import {
+  flattenShiftAssignments,
+  normalizeEmployeeCode,
+  resolveShiftAssignment,
+  type ShiftSlotDocument,
+} from '@/utils/shiftAssignments';
 
 interface LeaveRecord {
   id: string;
@@ -68,6 +74,38 @@ const timeToMinutes = (time24: string): number => {
   return h * 60 + m;
 };
 
+const getIstDayName = (date: Date): string =>
+  date.toLocaleDateString('en-US', { timeZone: 'Asia/Kolkata', weekday: 'long' });
+
+const isFutureDate = (dateStr: string): boolean => {
+  const today = getDateKey(new Date());
+  return dateStr > today;
+};
+
+const getPunchMinutes = (logDate: any): number | null => {
+  const d = toDate(logDate);
+  if (!d) return null;
+  const timeStr = d.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + m;
+};
+
+const shiftRelativeMinutes = (punchMinutes: number, startMinutes: number): number => {
+  if (punchMinutes >= startMinutes) return punchMinutes - startMinutes;
+  return punchMinutes + 24 * 60 - startMinutes;
+};
+
+const addDaysIst = (dateStr: string, days: number): string => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return getDateKey(date);
+};
+
 const getLeaveColor = (reason?: string) => {
   const r = reason?.toLowerCase() ?? '';
   if (r.includes('sick') || r.includes('medical')) return { bg: 'bg-red-50', text: 'text-red-600', badge: 'bg-red-100' };
@@ -81,7 +119,7 @@ const getLeaveColor = (reason?: string) => {
 export const LeavesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
-  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR';
+  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR' || userData?.designation === 'Branch Manager';
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [weekOffs, setWeekOffs] = useState<WeekOffRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +137,7 @@ export const LeavesPage: React.FC = () => {
   const [modalData, setModalData] = useState<{ employeeCode: string; employeeName: string; type: 'type' | 'total'; typeKey?: string; details: any[] } | null>(null);
   const [unauthorizedModalOpen, setUnauthorizedModalOpen] = useState(false);
   const [unauthorizedResults, setUnauthorizedResults] = useState<any[]>([]);
+  const [unauthorizedPeriod, setUnauthorizedPeriod] = useState<{ start: string; end: string } | null>(null);
   const [checkingAbsences, setCheckingAbsences] = useState(false);
   const [bulkLeaveModalOpen, setBulkLeaveModalOpen] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -297,119 +336,183 @@ export const LeavesPage: React.FC = () => {
       const PERIOD_START = new Date();
       PERIOD_START.setDate(PERIOD_START.getDate() - 29);
 
-      // Fetch all shifts
-      const shiftsSnap = await getDocs(collection(db, 'shifts'));
-      const shifts: any[] = [];
-      shiftsSnap.forEach((d) => shifts.push({ id: d.id, ...d.data() }));
+      const periodStartKey = getDateKey(PERIOD_START);
+      const periodEndKey = getDateKey(PERIOD_END);
+      setUnauthorizedPeriod({ start: periodStartKey, end: periodEndKey });
 
-      // Fetch all employees
+      // Fetch all shifts and convert to typed slots
+      const shiftsSnap = await getDocs(collection(db, 'shifts'));
+      const shiftSlots: ShiftSlotDocument[] = [];
+      shiftsSnap.forEach((d) => {
+        const data = d.data();
+        shiftSlots.push({
+          id: d.id,
+          startTime: data.startTime ?? '',
+          endTime: data.endTime ?? '',
+          name: data.name,
+          employees: (data.employees ?? []).map((e: any, index: number) => ({
+            assignmentId: e.assignmentId || `${d.id}:legacy:${index}`,
+            employeeCode: e.employeeCode ?? '',
+            employeeName: e.employeeName ?? '',
+            fromDate: e.fromDate,
+            toDate: e.toDate,
+          })),
+        });
+      });
+
+      // Fetch all employees and build a normalized code -> employee map
       const employeesSnap = await getDocs(collection(db, 'employees'));
-      const employeesMap: Record<string, any> = {};
+      const employeeByCode: Record<string, any> = {};
       employeesSnap.forEach((d) => {
         const data = d.data();
-        if (data.employeeCode) {
-          employeesMap[data.employeeCode] = { id: d.id, ...data };
-        }
+        const base = { id: d.id, ...data };
+        [data.employeeCode, data.employeeCodeInDevice].forEach((code) => {
+          const key = normalizeEmployeeCode(code);
+          if (key) employeeByCode[key] = base;
+        });
       });
 
       // Fetch all leaves (type=leave only, not weekoff)
       const leavesSnap = await getDocs(collection(db, 'leaves'));
       const leavesData: LeaveRecord[] = [];
-      leavesSnap.forEach((d) => { const rec = { id: d.id, ...d.data() } as LeaveRecord; if (rec.type !== 'weekoff') leavesData.push(rec); });
+      leavesSnap.forEach((d) => {
+        const rec = { id: d.id, ...d.data() } as LeaveRecord;
+        if (rec.type !== 'weekoff') leavesData.push(rec);
+      });
 
+      // Fetch all punches and group by normalized employee code
       const punchesSnap = await getDocs(collection(db, 'rawPunches'));
       const punchesByEmp: Record<string, RawPunch[]> = {};
-      const periodStartKey = PERIOD_START.toISOString().split('T')[0];
-      const periodEndKey = PERIOD_END.toISOString().split('T')[0];
       punchesSnap.forEach((d) => {
         const data = { id: d.id, ...d.data() } as RawPunch;
         const punchDate = getDateKey(data.logDate);
         if (punchDate < periodStartKey || punchDate > periodEndKey) return;
-        const empCode = data.userId ?? '';
+        const empCode = normalizeEmployeeCode(data.userId);
+        if (!empCode) return;
         if (!punchesByEmp[empCode]) punchesByEmp[empCode] = [];
         punchesByEmp[empCode].push(data);
       });
 
       const results: any[] = [];
       const empCodesWithShifts = new Set<string>();
-      shifts.forEach((shift) => {
-        (shift.employees ?? []).forEach((emp: any) => {
-          if (emp.employeeCode) empCodesWithShifts.add(emp.employeeCode);
+      shiftSlots.forEach((slot) => {
+        slot.employees.forEach((emp) => {
+          const code = normalizeEmployeeCode(emp.employeeCode);
+          if (code) empCodesWithShifts.add(code);
         });
       });
 
       empCodesWithShifts.forEach((empCode) => {
-        const employee = employeesMap[empCode];
+        const employee = employeeByCode[empCode];
         const empName = employee?.employeeName ?? empCode;
+        const empCodeInDevice = employee?.employeeCodeInDevice;
 
-        const empShifts = shifts.filter((shift) => {
-          return (shift.employees ?? []).some((e: any) => e.employeeCode === empCode);
-        });
+        const assignments = flattenShiftAssignments(shiftSlots, empCode);
+        const empLeaves = leavesData.filter((l) => normalizeEmployeeCode(l.employeeCode) === empCode);
+        const empWeekOffs = weekOffs.filter((w) => normalizeEmployeeCode(w.employeeCode) === empCode);
 
-        const empLeaves = leavesData.filter((l) => l.employeeCode === empCode);
         const fullDayLeaveDates = new Set<string>();
+        const halfDayLeaveMap: Record<string, 'first_half' | 'second_half'> = {};
         empLeaves.forEach((l) => {
           const dates = l.dates ?? (l.fromDate ? [l.fromDate] : []);
-          if (l.duration !== 'half_day') dates.forEach((date) => fullDayLeaveDates.add(date));
+          dates.forEach((date) => {
+            if (l.duration === 'half_day' && l.halfDayPeriod) {
+              halfDayLeaveMap[date] = l.halfDayPeriod;
+            } else {
+              fullDayLeaveDates.add(date);
+            }
+          });
         });
 
-        const empPunches = punchesByEmp[empCode] ?? [];
+        // Collect punches keyed by canonical code or device code
+        const punchKeys = [empCode];
+        const deviceKey = normalizeEmployeeCode(empCodeInDevice);
+        if (deviceKey && deviceKey !== empCode) punchKeys.push(deviceKey);
+        const empPunches = punchKeys.flatMap((key) => punchesByEmp[key] ?? []);
 
-        for (let d = new Date(PERIOD_START); d <= PERIOD_END; d.setDate(d.getDate() + 1)) {
-          const dateStr = d.toISOString().split('T')[0];
-          const dayName = ALL_DAYS[d.getDay()];
+        for (let offset = 0; ; offset++) {
+          const d = new Date(PERIOD_START);
+          d.setDate(d.getDate() + offset);
+          const dateStr = getDateKey(d);
+          if (dateStr > periodEndKey) break;
+          if (isFutureDate(dateStr)) continue;
 
-          // Find applicable shift for this date
-          const shift = empShifts.find((s) => {
-            const entry = (s.employees ?? []).find((e: any) => e.employeeCode === empCode);
-            if (!entry) return false;
-            const fromDate = entry.fromDate ?? '';
-            const toDate = entry.toDate ?? '';
-            if (!fromDate && !toDate) return true;
-            if (fromDate && !toDate) return dateStr === fromDate;
-            if (!fromDate && toDate) return dateStr === toDate;
-            return dateStr >= fromDate && dateStr <= toDate;
-          });
+          const dayName = getIstDayName(d);
 
-          if (!shift) continue;
+          const resolution = resolveShiftAssignment(assignments, empCode, dateStr);
+          if (resolution.status !== 'resolved') continue;
+          const shift = resolution.assignment;
 
-          // Skip approved leave days
+          // Skip approved full-day leave days
           if (fullDayLeaveDates.has(dateStr)) continue;
 
-          // Skip week-offs (from unified leaves collection with type=weekoff)
-          const wo = weekOffs.find((w) => w.employeeCode === empCode);
-          if (wo?.days?.includes(dayName)) continue;
+          // Skip week-offs
+          const hasWeekOff = empWeekOffs.some((w) => (w.days ?? []).includes(dayName));
+          if (hasWeekOff) continue;
 
           const startMinutes = timeToMinutes(shift.startTime ?? '00:00');
           const endMinutes = timeToMinutes(shift.endTime ?? '00:00');
-          const isNightShift = endMinutes <= startMinutes;
+          const isNight = endMinutes <= startMinutes;
+          const shiftDurationMinutes = isNight
+            ? 24 * 60 - startMinutes + endMinutes
+            : endMinutes - startMinutes;
 
-          // Clock-in date is the scheduled workday
-          const hasIn = empPunches.some((p) => {
-            if (p.direction !== 'in') return false;
-            return getDateKey(p.logDate) === dateStr;
-          });
+          const inPunches = empPunches.filter((p) => p.direction === 'in');
+          const outPunches = empPunches.filter((p) => p.direction === 'out');
 
-          // Clock-out date is the same day for day shifts, next day for night shifts
-          const outDate = new Date(dateStr);
-          if (isNightShift) outDate.setDate(outDate.getDate() + 1);
-          const outDateStr = outDate.toISOString().split('T')[0];
+          let missingIn = false;
+          let missingOut = false;
+          const halfDayPeriod = halfDayLeaveMap[dateStr];
 
-          const hasOut = empPunches.some((p) => {
-            if (p.direction !== 'out') return false;
-            return getDateKey(p.logDate) === outDateStr;
-          });
+          if (halfDayPeriod) {
+            // Only check punches that fall within the working half of the shift
+            const midpoint = shiftDurationMinutes / 2;
+            const inWorkingPunches = inPunches.filter((p) => {
+              const m = getPunchMinutes(p.logDate);
+              if (m === null) return false;
+              const rel = shiftRelativeMinutes(m, startMinutes);
+              return halfDayPeriod === 'first_half' ? rel >= midpoint : rel <= midpoint;
+            });
+            const outWorkingPunches = outPunches.filter((p) => {
+              const m = getPunchMinutes(p.logDate);
+              if (m === null) return false;
+              const rel = shiftRelativeMinutes(m, startMinutes);
+              return halfDayPeriod === 'first_half' ? rel >= midpoint : rel <= midpoint;
+            });
+            missingIn = inWorkingPunches.length === 0;
+            missingOut = outWorkingPunches.length === 0;
+          } else {
+            const hasIn = inPunches.some((p) => getDateKey(p.logDate) === dateStr);
+            missingIn = !hasIn;
 
-          if (!hasIn || !hasOut) {
+            if (isNight) {
+              const nextDateStr = addDaysIst(dateStr, 1);
+              const cutoffMinutes = endMinutes + 120;
+              const hasOut = outPunches.some((p) => {
+                const punchDate = getDateKey(p.logDate);
+                if (punchDate !== nextDateStr) return false;
+                const m = getPunchMinutes(p.logDate);
+                if (m === null) return false;
+                return m <= cutoffMinutes;
+              });
+              missingOut = !hasOut;
+            } else {
+              const hasOut = outPunches.some((p) => getDateKey(p.logDate) === dateStr);
+              missingOut = !hasOut;
+            }
+          }
+
+          if (missingIn || missingOut) {
             results.push({
               employeeCode: empCode,
               employeeName: empName,
               date: dateStr,
               shiftStart: shift.startTime,
               shiftEnd: shift.endTime,
-              missingIn: !hasIn,
-              missingOut: !hasOut,
-              isNightShift,
+              missingIn,
+              missingOut,
+              isNightShift: isNight,
+              halfDayPeriod,
             });
           }
         }
@@ -563,18 +666,22 @@ export const LeavesPage: React.FC = () => {
               <option value="earned">Earned Leave</option>
             </select>
           </div>
-          <div className="flex items-center gap-3 ml-auto">
-            {canManageLeaves && (
-              <button onClick={() => setBulkLeaveModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shrink-0">
-                <Umbrella size={16} />
-                Add Leaves
-              </button>
-            )}
-            <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors shrink-0 disabled:opacity-70">
-              {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={16} />}
-              Check Unauthorized Absence
+        </div>
+        <div className="flex items-center gap-5 mt-4">
+          {canManageLeaves && (
+            <button onClick={() => setBulkLeaveModalOpen(true)} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-indigo-600 border-2 border-indigo-500 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm">
+              <Umbrella size={20} />
+              Add Leaves
             </button>
-          </div>
+          )}
+          <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-rose-600 border-2 border-rose-500 rounded-2xl hover:bg-rose-700 transition-colors disabled:opacity-70 shadow-sm">
+            {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={18} />}
+            Check Unauthorized Absence
+          </button>
+          <button onClick={() => navigate('/attendance/leave-counts')} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-teal-600 border-2 border-teal-500 rounded-2xl hover:bg-teal-700 transition-colors shadow-sm">
+            <BarChart3 size={20} />
+            Leave Counts
+          </button>
         </div>
       </div>
 
@@ -750,7 +857,9 @@ export const LeavesPage: React.FC = () => {
             <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
               <div>
                 <h2 className="text-base font-semibold text-secondary-900">Unauthorized Absences</h2>
-                <p className="text-xs text-secondary-500">May 12 — Jun 10, 2026 (30 days)</p>
+                <p className="text-xs text-secondary-500">
+                  {unauthorizedPeriod ? `${formatDate(unauthorizedPeriod.start)} — ${formatDate(unauthorizedPeriod.end)} (30 days)` : ''}
+                </p>
               </div>
               <button onClick={() => setUnauthorizedModalOpen(false)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
                 <X size={18} className="text-secondary-500" />
@@ -772,7 +881,12 @@ export const LeavesPage: React.FC = () => {
                       <div>
                         <p className="text-sm font-medium text-secondary-900">{result.employeeName}</p>
                         <p className="text-xs text-secondary-500">{result.employeeCode}</p>
-                        <p className="text-sm text-red-600 mt-0.5">{formatDate(result.date)} {result.isNightShift && '(night shift)'}</p>
+                        <p className="text-sm text-red-600 mt-0.5">
+                          {formatDate(result.date)}
+                          {result.isNightShift && ' (night shift)'}
+                          {result.halfDayPeriod === 'first_half' && ' · half-day (second half working)'}
+                          {result.halfDayPeriod === 'second_half' && ' · half-day (first half working)'}
+                        </p>
                       </div>
                       <div className="flex flex-col gap-1 items-end">
                         <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-secondary-200 text-secondary-700">

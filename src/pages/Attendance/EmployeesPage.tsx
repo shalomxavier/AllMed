@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc, arrayUnion, writeBatch } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc } from 'firebase/firestore';
 
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
+import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 
 interface RawPunch {
   id: string;
@@ -120,7 +122,7 @@ interface Employee {
 export const EmployeesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
-  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR';
+  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR' || userData?.designation === 'Branch Manager';
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -733,16 +735,21 @@ export const EmployeesPage: React.FC = () => {
         
         const data = doc.data();
         const employees: any[] = data.employees ?? [];
-        const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
-        if (entry) {
+        employees.forEach((entry, legacyIndex) => {
+          if ((entry.employeeCode ?? '').trim().toLowerCase() !== empCode) return;
           shifts.push({
             id: doc.id,
+            slotId: doc.id,
+            assignmentId: entry.assignmentId || `${doc.id}:legacy:${legacyIndex}`,
+            legacyIndex,
+            employeeCode: entry.employeeCode ?? employee.employeeCode ?? '',
+            employeeName: entry.employeeName ?? employee.employeeName ?? '',
             startTime: data.startTime,
             endTime: data.endTime,
             fromDate: entry.fromDate ?? '',
             toDate: entry.toDate ?? '',
           });
-        }
+        });
       });
       setEmployeeAttendanceShifts(shifts);
     } catch (error) {
@@ -751,18 +758,9 @@ export const EmployeesPage: React.FC = () => {
   };
 
   const findShiftForDate = (dateStr: string, shifts: any[]) => {
-    const date = new Date(dateStr);
-    return shifts.find((shift) => {
-      // If no date range is specified, the shift applies to all dates
-      if (!shift.fromDate && !shift.toDate) return true;
-      // If only one date is specified, check that specific date
-      if (shift.fromDate && !shift.toDate) return dateStr === shift.fromDate;
-      if (!shift.fromDate && shift.toDate) return dateStr === shift.toDate;
-      // If both dates are specified, check the range
-      const fromDate = new Date(shift.fromDate);
-      const toDate = new Date(shift.toDate);
-      return date >= fromDate && date <= toDate;
-    });
+    const matches = shifts.filter((shift) => assignmentContainsDate(shift, dateStr));
+    if (matches.length > 1) console.error('Multiple shift assignments cover the same employee date:', dateStr, matches);
+    return matches.length === 1 ? matches[0] : undefined;
   };
 
   const getPunchTimeInMinutes = (logDate: any): number | null => {
@@ -1010,16 +1008,21 @@ export const EmployeesPage: React.FC = () => {
         
         const data = doc.data();
         const employees: any[] = data.employees ?? [];
-        const entry = employees.find((e) => (e.employeeCode ?? '').trim().toLowerCase() === empCode);
-        if (entry) {
+        employees.forEach((entry, legacyIndex) => {
+          if ((entry.employeeCode ?? '').trim().toLowerCase() !== empCode) return;
           shifts.push({
             id: doc.id,
+            slotId: doc.id,
+            assignmentId: entry.assignmentId || `${doc.id}:legacy:${legacyIndex}`,
+            legacyIndex,
+            employeeCode: entry.employeeCode ?? selectedEmployee.employeeCode ?? '',
+            employeeName: entry.employeeName ?? selectedEmployee.employeeName ?? '',
             startTime: data.startTime,
             endTime: data.endTime,
             fromDate: entry.fromDate ?? '',
             toDate: entry.toDate ?? '',
           });
-        }
+        });
       });
       shifts.sort((a, b) => (b.fromDate ?? '').localeCompare(a.fromDate ?? ''));
       setEmployeeShifts(shifts);
@@ -1039,16 +1042,7 @@ export const EmployeesPage: React.FC = () => {
     if (!selectedEmployee || !shiftToDelete) return;
     setShowDeleteConfirm(false);
     try {
-      const db = getFirestore();
-      const shiftRef = doc(db, 'shifts', shiftToDelete.id);
-      const shiftDoc = await getDocs(query(collection(db, 'shifts')));
-      const shiftData = shiftDoc.docs.find(d => d.id === shiftToDelete.id)?.data();
-      if (shiftData) {
-        const updatedEmployees = (shiftData.employees ?? []).filter(
-          (e: any) => (e.employeeCode ?? '').trim().toLowerCase() !== (selectedEmployee.employeeCode ?? '').trim().toLowerCase()
-        );
-        await updateDoc(shiftRef, { employees: updatedEmployees, updatedAt: serverTimestamp() });
-      }
+      await shiftAssignmentsService.removeAssignment(shiftToDelete as ResolvedShiftAssignment);
       setShiftToDelete(null);
       setSuccessMessage('Shift Deleted Successfully');
       setShowSuccessDialog(true);
@@ -1135,13 +1129,13 @@ export const EmployeesPage: React.FC = () => {
         throw new Error('Invalid time data detected before save');
       }
 
-      const shiftRef = doc(db, 'shifts', selectedShift.id);
-      await updateDoc(shiftRef, {
+      await shiftAssignmentsService.moveAssignment(selectedShift as ResolvedShiftAssignment, {
+        employeeCode: selectedEmployee.employeeCode ?? '',
+        employeeName: selectedEmployee.employeeName ?? '',
         fromDate: editShiftForm.fromDate,
         toDate: editShiftForm.toDate,
         startTime: startTime24,
         endTime: endTime24,
-        updatedAt: serverTimestamp()
       });
 
       console.log('Shift updated successfully');
@@ -1208,27 +1202,17 @@ export const EmployeesPage: React.FC = () => {
         return;
       }
 
-      const empEntry = { employeeCode: selectedEmployee.employeeCode ?? '', employeeName: selectedEmployee.employeeName ?? '', fromDate: shiftForm.fromDate, toDate: shiftForm.toDate };
-
-      // Find existing doc for this exact time slot (one doc per startTime+endTime)
-      const slotSnap = await getDocs(query(shiftsRef,
-        where('startTime', '==', startTime24),
-        where('endTime', '==', endTime24)
-      ));
-
-      if (!slotSnap.empty) {
-        // Final validation before saving to database
-        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
-          throw new Error('Invalid time data detected. Please refresh the page and try again.');
-        }
-        await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(empEntry) });
-      } else {
-        // Final validation before saving to database
-        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
-          throw new Error('Invalid time data detected. Please refresh the page and try again.');
-        }
-        await addDoc(shiftsRef, { startTime: startTime24, endTime: endTime24, employees: [empEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
+      if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+        throw new Error('Invalid time data detected. Please refresh the page and try again.');
       }
+      await shiftAssignmentsService.addAssignment({
+        employeeCode: selectedEmployee.employeeCode ?? '',
+        employeeName: selectedEmployee.employeeName ?? '',
+        fromDate: shiftForm.fromDate,
+        toDate: shiftForm.toDate,
+        startTime: startTime24,
+        endTime: endTime24,
+      });
 
       setLastAssignedShiftDates({ fromDate: shiftForm.fromDate, toDate: shiftForm.toDate });
       setShowAddShiftForm(false);
@@ -1376,26 +1360,18 @@ export const EmployeesPage: React.FC = () => {
         return;
       }
 
-      const empEntries = selectedEmps.map((e) => ({ employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', fromDate: bulkShiftForm.fromDate, toDate: bulkShiftForm.toDate }));
-
-      // Find existing doc for this exact time slot (one doc per startTime+endTime)
-      const slotSnap = await getDocs(query(shiftsRef,
-        where('startTime', '==', startTime24),
-        where('endTime', '==', endTime24)
-      ));
-
-      if (!slotSnap.empty) {
-        // Final validation before saving to database
-        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
-          throw new Error('Invalid time data detected. Please refresh the page and try again.');
-        }
-        await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(...empEntries) });
-      } else {
-        // Final validation before saving to database
-        if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
-          throw new Error('Invalid time data detected. Please refresh the page and try again.');
-        }
-        await addDoc(shiftsRef, { startTime: startTime24, endTime: endTime24, employees: empEntries, createdAt: serverTimestamp(), createdBy: currentUser?.uid });
+      if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
+        throw new Error('Invalid time data detected. Please refresh the page and try again.');
+      }
+      for (const employee of selectedEmps) {
+        await shiftAssignmentsService.addAssignment({
+          employeeCode: employee.employeeCode ?? '',
+          employeeName: employee.employeeName ?? '',
+          fromDate: bulkShiftForm.fromDate,
+          toDate: bulkShiftForm.toDate,
+          startTime: startTime24,
+          endTime: endTime24,
+        });
       }
 
       setSuccessMessage(`Shift assigned to ${selectedEmployeeIds.size} employee(s) successfully`);
@@ -3305,70 +3281,12 @@ export const EmployeesPage: React.FC = () => {
                           if (!wizardEmployee || !changeShiftDate) return;
                           setIsSavingShiftOverride(true);
                           try {
-                            const shiftsRef = collection(db, 'shifts');
-                            const allSnap = await getDocs(query(shiftsRef));
-                            const changeDate = new Date(changeShiftDate);
-
-                            // Find the shift doc containing this employee where changeDate falls in range
-                            let foundDocId: string | null = null;
-                            let foundEmpEntry: any = null;
-                            let foundDocData: any = null;
-                            allSnap.forEach((d) => {
-                              const data = d.data();
-                              const employees: any[] = data.employees ?? [];
-                              const match = employees.find((em: any) => {
-                                if ((em.employeeCode ?? '').trim().toLowerCase() !== wizardEmployee.employeeCode.trim().toLowerCase()) return false;
-                                const from = new Date(em.fromDate);
-                                const to = new Date(em.toDate);
-                                return changeDate >= from && changeDate <= to;
-                              });
-                              if (match && !foundDocId) {
-                                foundDocId = d.id;
-                                foundEmpEntry = match;
-                                foundDocData = data;
-                              }
-                            });
-
-                            if (foundDocId && foundEmpEntry && foundDocData) {
-                              const origFrom = new Date(foundEmpEntry.fromDate);
-                              const origTo = new Date(foundEmpEntry.toDate);
-                              const dayBefore = new Date(changeDate); dayBefore.setDate(dayBefore.getDate() - 1);
-                              const dayAfter = new Date(changeDate); dayAfter.setDate(dayAfter.getDate() + 1);
-
-                              const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-
-                              // Remove the original employee entry from the old shift doc
-                              const updatedEmployees = (foundDocData.employees ?? []).filter((em: any) => {
-                                if ((em.employeeCode ?? '').trim().toLowerCase() !== wizardEmployee.employeeCode.trim().toLowerCase()) return true;
-                                return em.fromDate !== foundEmpEntry.fromDate || em.toDate !== foundEmpEntry.toDate;
-                              });
-
-                              // Add back split entries (before the change date) to the SAME shift doc
-                              if (origFrom < changeDate) {
-                                updatedEmployees.push({ employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: foundEmpEntry.fromDate, toDate: fmt(dayBefore) });
-                              }
-                              // Add back split entries (after the change date) to the SAME shift doc
-                              if (origTo > changeDate) {
-                                updatedEmployees.push({ employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: fmt(dayAfter), toDate: foundEmpEntry.toDate });
-                              }
-
-                              const batch = writeBatch(db);
-
-                              // Update the old shift doc
-                              batch.update(doc(db, 'shifts', foundDocId), { employees: updatedEmployees, updatedAt: serverTimestamp() });
-
-                              // Now add the employee to the NEW shift doc (matching the chosen time slot)
-                              const newEmpEntry = { employeeCode: wizardEmployee.employeeCode, employeeName: wizardEmployee.employeeName, fromDate: changeShiftDate, toDate: changeShiftDate };
-                              const slotSnap = await getDocs(query(shiftsRef, where('startTime', '==', t.startTime), where('endTime', '==', t.endTime)));
-                              if (!slotSnap.empty) {
-                                batch.update(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(newEmpEntry) });
-                              } else {
-                                const newShiftRef = doc(shiftsRef);
-                                batch.set(newShiftRef, { startTime: t.startTime, endTime: t.endTime, employees: [newEmpEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
-                              }
-
-                              await batch.commit();
-                            }
+                            await shiftAssignmentsService.changeAssignmentForDate(
+                              wizardEmployee.employeeCode,
+                              changeShiftDate,
+                              t.startTime,
+                              t.endTime,
+                            );
 
                             setShiftChangedDates(prev => [...prev, { date: changeShiftDate, startTime: t.startTime, endTime: t.endTime }]);
                             setChangeShiftModalOpen(false);

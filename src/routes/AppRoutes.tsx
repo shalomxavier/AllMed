@@ -7,6 +7,7 @@ import { EmployeeDetailsPage } from '@pages/Attendance/EmployeeDetailsPage';
 import { RawPunchesPage } from '@pages/Attendance/RawPunchesPage';
 import { ShiftsPage } from '@pages/Attendance/ShiftsPage';
 import { LeavesPage } from '@pages/Attendance/LeavesPage';
+import { LeaveCountsPage } from '@pages/Attendance/LeaveCountsPage';
 import { DevicesPage } from '@pages/Attendance/DevicesPage';
 import { DesignationsPage } from '@pages/Attendance/DesignationsPage';
 import { DepartmentsPage } from '@pages/Attendance/DepartmentsPage';
@@ -63,6 +64,7 @@ const AppRoutesContent: React.FC = () => {
         <Route path="/attendance/records" element={<RawPunchesPage />} />
         <Route path="/attendance/shifts" element={<ShiftsPage />} />
         <Route path="/attendance/leaves" element={<LeavesPage />} />
+        <Route path="/attendance/leave-counts" element={<LeaveCountsPage />} />
         <Route path="/attendance/devices" element={<DevicesPage />} />
         <Route path="/attendance/designations" element={<DesignationsPage />} />
         <Route path="/attendance/departments" element={<DepartmentsPage />} />

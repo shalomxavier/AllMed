@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, arrayUnion, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
+import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 
 interface Employee {
   id: string;
@@ -15,6 +17,7 @@ interface Employee {
 }
 
 interface ShiftEmployee {
+  assignmentId?: string;
   employeeName: string;
   employeeCode: string;
   fromDate?: string;
@@ -392,8 +395,12 @@ export const ShiftsPage: React.FC = () => {
         }
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
 
-        if (empEntries.length > 0) {
-          await updateDoc(doc(db, 'shifts', addingToSlot.key), { employees: arrayUnion(...empEntries) });
+        for (const entry of empEntries) {
+          await shiftAssignmentsService.addAssignment({
+            ...entry,
+            startTime: addingToSlot.startTime,
+            endTime: addingToSlot.endTime,
+          });
         }
         const empsForWizard = selectedEmps.map(e => ({ employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', employeeId: e.employeeCodeInDevice ?? e.employeeCode ?? '', fromDate: assignForm.fromDate, toDate: assignForm.toDate }));
         setJustAssignedEmps(empsForWizard);
@@ -418,36 +425,22 @@ export const ShiftsPage: React.FC = () => {
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
       }
 
-      // Check if a doc for this exact slot already exists
-      const slotSnap = await getDocs(query(collection(db, 'shifts'),
-        where('startTime', '==', startTime),
-        where('endTime', '==', endTime)
-      ));
-
-      const empEntries = selectedEmps.map((e) => ({ employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', fromDate: assignForm.fromDate, toDate: assignForm.toDate }));
-
-      if (!slotSnap.empty) {
-        // Slot already exists — if no employees to add, show duplicate warning
-        if (empEntries.length === 0) {
-          setShowSlotExistsDialog(true);
-          setIsAssigning(false);
-          return;
-        }
-        await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), {
-          employees: arrayUnion(...empEntries),
-        });
-      } else {
-        // Final validation before saving to database
-        if (!startTime || !endTime || startTime.includes('NaN') || endTime.includes('NaN')) {
-          throw new Error('Invalid time data detected. Please refresh the page and try again.');
-        }
-        
-        await addDoc(collection(db, 'shifts'), {
+      if (!startTime || !endTime || startTime.includes('NaN') || endTime.includes('NaN')) {
+        throw new Error('Invalid time data detected. Please refresh the page and try again.');
+      }
+      if (selectedEmps.length === 0) {
+        setShowSlotExistsDialog(true);
+        setIsAssigning(false);
+        return;
+      }
+      for (const employee of selectedEmps) {
+        await shiftAssignmentsService.addAssignment({
+          employeeCode: employee.employeeCode ?? '',
+          employeeName: employee.employeeName ?? '',
+          fromDate: assignForm.fromDate,
+          toDate: assignForm.toDate,
           startTime,
           endTime,
-          employees: empEntries,
-          createdAt: serverTimestamp(),
-          createdBy: currentUser?.uid,
         });
       }
       const empsForWizard = selectedEmps.map(e => ({ employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', employeeId: e.employeeCodeInDevice ?? e.employeeCode ?? '', fromDate: assignForm.fromDate, toDate: assignForm.toDate }));
@@ -521,7 +514,8 @@ export const ShiftsPage: React.FC = () => {
         }
         
         const data = d.data();
-        const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any) => ({ 
+        const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any, legacyIndex: number) => ({
+          assignmentId: e.assignmentId || `${d.id}:legacy:${legacyIndex}`,
           employeeName: e.employeeName ?? '', 
           employeeCode: e.employeeCode ?? '',
           fromDate: e.fromDate,
@@ -978,11 +972,18 @@ export const ShiftsPage: React.FC = () => {
                 onClick={async () => {
                   setIsRemovingEmp(true);
                   try {
-                    const shiftRef = doc(db, 'shifts', editingSlot.key);
-                    const updatedEmployees = editingSlot.employees.filter((_, index) => index !== removeEditEmpConfirm.index);
-                    await updateDoc(shiftRef, { employees: updatedEmployees });
+                    const employee = removeEditEmpConfirm.emp;
+                    await shiftAssignmentsService.removeAssignment({
+                      ...employee,
+                      assignmentId: employee.assignmentId || `${editingSlot.key}:legacy:${removeEditEmpConfirm.index}`,
+                      slotId: editingSlot.key,
+                      startTime: editingSlot.startTime,
+                      endTime: editingSlot.endTime,
+                      legacyIndex: removeEditEmpConfirm.index,
+                    } as ResolvedShiftAssignment);
                     await fetchShifts();
-                    setEditingSlot((slot) => slot ? { ...slot, employees: updatedEmployees, count: new Set(updatedEmployees.map((employee) => employee.employeeCode).filter(Boolean)).size } : null);
+                    setEditingSlot(null);
+                    setEditEmployeesOpen(false);
                     setRemoveEditEmpConfirm(null);
                   } catch (e) {
                     console.error('Error removing employee:', e);
@@ -1775,59 +1776,12 @@ export const ShiftsPage: React.FC = () => {
                             if (!changeShiftDate) return;
                             setIsSavingShiftOverride(true);
                             try {
-                              const shiftsRef = collection(db, 'shifts');
-                              const allSnap = await getDocs(query(shiftsRef));
-                              const changeDate = new Date(changeShiftDate);
-
-                              let foundDocId: string | null = null;
-                              let foundEmpEntry: any = null;
-                              let foundDocData: any = null;
-                              allSnap.forEach((d) => {
-                                const data = d.data();
-                                const employees: any[] = data.employees ?? [];
-                                const match = employees.find((em: any) => {
-                                  if ((em.employeeCode ?? '').trim().toLowerCase() !== emp.employeeCode.trim().toLowerCase()) return false;
-                                  const from = new Date(em.fromDate);
-                                  const to = new Date(em.toDate);
-                                  return changeDate >= from && changeDate <= to;
-                                });
-                                if (match && !foundDocId) {
-                                  foundDocId = d.id;
-                                  foundEmpEntry = match;
-                                  foundDocData = data;
-                                }
-                              });
-
-                              if (foundDocId && foundEmpEntry && foundDocData) {
-                                const origFrom = new Date(foundEmpEntry.fromDate);
-                                const origTo = new Date(foundEmpEntry.toDate);
-                                const dayBefore = new Date(changeDate); dayBefore.setDate(dayBefore.getDate() - 1);
-                                const dayAfter = new Date(changeDate); dayAfter.setDate(dayAfter.getDate() + 1);
-
-                                const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-
-                                const updatedEmployees = (foundDocData.employees ?? []).filter((em: any) => {
-                                  if ((em.employeeCode ?? '').trim().toLowerCase() !== emp.employeeCode.trim().toLowerCase()) return true;
-                                  return em.fromDate !== foundEmpEntry.fromDate || em.toDate !== foundEmpEntry.toDate;
-                                });
-
-                                if (origFrom < changeDate) {
-                                  updatedEmployees.push({ employeeCode: emp.employeeCode, employeeName: emp.employeeName, fromDate: foundEmpEntry.fromDate, toDate: fmt(dayBefore) });
-                                }
-                                if (origTo > changeDate) {
-                                  updatedEmployees.push({ employeeCode: emp.employeeCode, employeeName: emp.employeeName, fromDate: fmt(dayAfter), toDate: foundEmpEntry.toDate });
-                                }
-
-                                await updateDoc(doc(db, 'shifts', foundDocId), { employees: updatedEmployees, updatedAt: serverTimestamp() });
-
-                                const newEmpEntry = { employeeCode: emp.employeeCode, employeeName: emp.employeeName, fromDate: changeShiftDate, toDate: changeShiftDate };
-                                const slotSnap = await getDocs(query(shiftsRef, where('startTime', '==', t.startTime), where('endTime', '==', t.endTime)));
-                                if (!slotSnap.empty) {
-                                  await updateDoc(doc(db, 'shifts', slotSnap.docs[0].id), { employees: arrayUnion(newEmpEntry) });
-                                } else {
-                                  await addDoc(shiftsRef, { startTime: t.startTime, endTime: t.endTime, employees: [newEmpEntry], createdAt: serverTimestamp(), createdBy: currentUser?.uid });
-                                }
-                              }
+                              await shiftAssignmentsService.changeAssignmentForDate(
+                                emp.employeeCode,
+                                changeShiftDate,
+                                t.startTime,
+                                t.endTime,
+                              );
 
                               setShiftChangedDates(prev => ({
                                 ...prev,

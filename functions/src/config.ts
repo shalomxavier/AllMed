@@ -1,7 +1,7 @@
 import * as admin from 'firebase-admin';
 
-export const db = admin.firestore();
-export const messaging = admin.messaging();
+export const db: admin.firestore.Firestore = admin.firestore();
+export const messaging: admin.messaging.Messaging = admin.messaging();
 
 export const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || 'v25.0';
 export const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;

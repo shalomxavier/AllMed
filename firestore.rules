@@ -12,6 +12,11 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
     }
 
+    function canManageShifts() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    }
+
     // Allow authenticated users to read conversations
     match /whatsapp_conversations/{conversationId} {
       allow read: if request.auth != null;
@@ -42,14 +47,24 @@ service cloud.firestore {
       allow write: if canManagePunches();
     }
 
-    // Allow authenticated users to read and write shifts
+    // Allow authenticated users to read shifts; only Director/HR may mutate valid slot documents
     match /shifts/{shiftId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow create, update: if canManageShifts()
+        && request.resource.data.startTime is string
+        && request.resource.data.endTime is string
+        && request.resource.data.employees is list;
+      allow delete: if canManageShifts();
     }
 
     // Allow authenticated users to read leaves; only Director/HR may mutate them
     match /leaves/{leaveId} {
+      allow read: if request.auth != null;
+      allow write: if canManageLeaves();
+    }
+
+    // Allow authenticated users to read leave limits; only Director/HR may mutate them
+    match /leaveLimits/{limitId} {
       allow read: if request.auth != null;
       allow write: if canManageLeaves();
     }
