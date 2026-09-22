@@ -1,55 +1,34 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Calendar, User, Pencil, Eye, X, Trash2 } from 'lucide-react';
+import { ArrowLeft, Calendar, User, Pencil, Eye, X, Trash2, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getFirestore, collection, getDocs, query, orderBy, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import {
+  findOverlappingLeaveLimits,
+  getLeaveUsageByType,
+  normalizeLeaveEmployeeCode,
+  type LeaveLimitRecord,
+  type StoredLeaveRecord,
+} from '@/utils/leaveLimits';
 
 interface Employee {
   id: string;
   employeeCode?: string;
+  employeeCodeInDevice?: string;
+  employeeId?: string;
   employeeName?: string;
+  workLocation?: string;
   designation?: string;
   department?: string;
+  employmentStatus?: string;
   limits?: LeaveLimit[];
 }
 
-interface LeaveRecord {
-  id: string;
-  type?: 'leave' | 'weekoff';
-  employeeCode?: string;
-  employeeName?: string;
-  dates?: string[];
-  fromDate?: string;
-  toDate?: string;
-  reason?: string;
-  duration?: 'full_day' | 'half_day';
-  status?: string;
-}
-
-interface LeaveLimit {
-  id: string;
-  employeeCode?: string;
-  fromDate?: string;
-  toDate?: string;
-  limits?: Record<string, number>;
-  createdAt?: any;
-}
+type LeaveRecord = StoredLeaveRecord;
+type LeaveLimit = LeaveLimitRecord;
 
 const LEAVE_TYPES = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
-
-const getLeaveDates = (leave: LeaveRecord): string[] => {
-  if (leave.dates && leave.dates.length > 0) return leave.dates;
-  if (!leave.fromDate) return [];
-  if (!leave.toDate || leave.fromDate === leave.toDate) return [leave.fromDate];
-  const dates: string[] = [];
-  const start = new Date(leave.fromDate + 'T00:00:00Z');
-  const end = new Date(leave.toDate + 'T00:00:00Z');
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    dates.push(d.toISOString().split('T')[0]);
-  }
-  return dates;
-};
 
 const formatDateRange = (from?: string, to?: string): string => {
   if (!from || !to) return from || to || '—';
@@ -59,28 +38,9 @@ const formatDateRange = (from?: string, to?: string): string => {
 
 const kebabCase = (value: string): string => value.toLowerCase().replace(/\s+/g, '-');
 
-const getUsageByType = (
-  employeeCode: string,
-  fromDate: string,
-  toDate: string,
-  leaves: LeaveRecord[],
-): Record<string, number> => {
-  const usage: Record<string, number> = {};
-  leaves.forEach((l) => {
-    if (l.employeeCode !== employeeCode) return;
-    if (l.status && l.status !== 'approved') return;
-    const dates = getLeaveDates(l).filter((d) => d >= fromDate && d <= toDate);
-    if (dates.length === 0) return;
-    const type = l.type === 'weekoff' ? 'Week Off' : (l.reason || 'Other');
-    const days = l.duration === 'half_day' ? dates.length * 0.5 : dates.length;
-    usage[type] = (usage[type] || 0) + days;
-  });
-  return usage;
-};
-
 export const LeaveCountsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { currentUser } = useAuthContext();
+  const { currentUser, userData } = useAuthContext();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [limits, setLimits] = useState<LeaveLimit[]>([]);
@@ -94,6 +54,11 @@ export const LeaveCountsPage: React.FC = () => {
     toDate: string;
     limits: Record<string, string>;
   }>({ fromDate: '', toDate: '', limits: {} });
+  const [limitFormError, setLimitFormError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [managerBranch, setManagerBranch] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -101,13 +66,35 @@ export const LeaveCountsPage: React.FC = () => {
       setLoading(true);
       try {
         const db = getFirestore();
-        const [empSnap, leavesSnap, limitsSnap] = await Promise.all([
+        const [empSnap, leavesSnap, limitsSnap, branchesSnap] = await Promise.all([
           getDocs(query(collection(db, 'employees'), orderBy('employeeName'))),
           getDocs(collection(db, 'leaves')),
           getDocs(collection(db, 'leaveLimits')),
+          getDocs(collection(db, 'branches')),
         ]);
+        const branchesData: { id: string; name: string; employeeIds: string[] }[] = [];
+        branchesSnap.forEach((d) => {
+          branchesData.push({ id: d.id, name: d.data().name || '', employeeIds: d.data().employeeIds || [] });
+        });
+
+        let allowedEmployeeIds: string[] | null = null;
+        let resolvedManagerBranch = '';
+        if (userData?.designation === 'Branch Manager') {
+          const branchSnapshot = await getDocs(query(collection(db, 'branches'), where('managerId', '==', currentUser.uid)));
+          if (!branchSnapshot.empty) {
+            const branchData = branchSnapshot.docs[0].data();
+            allowedEmployeeIds = branchData.employeeIds || [];
+            resolvedManagerBranch = branchData.name || '';
+          } else {
+            allowedEmployeeIds = [];
+          }
+        }
+
         const empData: Employee[] = [];
-        empSnap.forEach((d) => empData.push({ id: d.id, ...d.data() } as Employee));
+        empSnap.forEach((d) => {
+          if (allowedEmployeeIds && !allowedEmployeeIds.includes(d.id)) return;
+          empData.push({ id: d.id, ...d.data() } as Employee);
+        });
         const leaveData: LeaveRecord[] = [];
         leavesSnap.forEach((d) => leaveData.push({ id: d.id, ...d.data() } as LeaveRecord));
         const limitData: LeaveLimit[] = [];
@@ -115,6 +102,9 @@ export const LeaveCountsPage: React.FC = () => {
         setEmployees(empData);
         setLeaves(leaveData);
         setLimits(limitData);
+        setBranchesList(branchesData);
+        setManagerBranch(resolvedManagerBranch || null);
+        setBranchFilter(resolvedManagerBranch);
       } catch (e) {
         console.error('Error fetching leave counts data:', e);
       } finally {
@@ -122,10 +112,11 @@ export const LeaveCountsPage: React.FC = () => {
       }
     };
     fetchData();
-  }, [currentUser]);
+  }, [currentUser, userData]);
 
   const openEditLimit = (employee: Employee) => {
     setEditingEmployee(employee);
+    setLimitFormError('');
     const latestLimit = (employee.limits ?? [])
       .slice()
       .sort((a, b) => (b.fromDate || '').localeCompare(a.fromDate || ''))[0];
@@ -147,6 +138,7 @@ export const LeaveCountsPage: React.FC = () => {
   const closeEditLimit = () => {
     setEditingEmployee(null);
     setLimitForm({ fromDate: '', toDate: '', limits: {} });
+    setLimitFormError('');
   };
 
   const handleSaveLimit = async (e: React.FormEvent) => {
@@ -161,9 +153,31 @@ export const LeaveCountsPage: React.FC = () => {
       if (!Number.isNaN(num)) limitsToSave[type] = num;
     });
 
+    if (limitForm.fromDate > limitForm.toDate) {
+      setLimitFormError('The From date must be on or before the To date.');
+      return;
+    }
+
     setSavingLimit(true);
+    setLimitFormError('');
     try {
       const db = getFirestore();
+      const existingSnapshot = await getDocs(collection(db, 'leaveLimits'));
+      const existingLimits: LeaveLimit[] = [];
+      existingSnapshot.forEach((d) => existingLimits.push({ id: d.id, ...d.data() } as LeaveLimit));
+
+      const overlaps = findOverlappingLeaveLimits(
+        existingLimits,
+        editingEmployee.employeeCode ?? '',
+        limitForm.fromDate,
+        limitForm.toDate,
+      );
+      if (overlaps.length > 0) {
+        const periods = overlaps.map((limit) => formatDateRange(limit.fromDate, limit.toDate)).join(', ');
+        setLimitFormError(`A leave-limit period already exists for ${editingEmployee.employeeName || 'this employee'} covering ${periods}. Choose a non-overlapping date range.`);
+        return;
+      }
+
       await addDoc(collection(db, 'leaveLimits'), {
         employeeCode: editingEmployee.employeeCode,
         fromDate: limitForm.fromDate,
@@ -201,16 +215,33 @@ export const LeaveCountsPage: React.FC = () => {
   };
 
   const employeeStats = useMemo(() => {
+    const search = searchQuery.trim().toLowerCase();
+    const effectiveBranch = userData?.designation === 'Branch Manager' ? (managerBranch ?? '') : branchFilter;
+    const selectedBranch = effectiveBranch ? branchesList.find((branch) => branch.name === effectiveBranch) : undefined;
+
     return employees
+      .filter((emp) => !emp.employeeCodeInDevice?.startsWith('Del'))
+      .filter((emp) => emp.employmentStatus?.toLowerCase() !== 'inactive')
+      .filter((emp) => !effectiveBranch || selectedBranch?.employeeIds.includes(emp.id) || emp.workLocation === effectiveBranch)
+      .filter((emp) => {
+        if (!search) return true;
+        return (
+          emp.employeeName?.toLowerCase().includes(search) ||
+          emp.employeeCode?.toLowerCase().includes(search) ||
+          emp.employeeId?.toLowerCase().includes(search) ||
+          emp.employeeCodeInDevice?.toLowerCase().includes(search)
+        );
+      })
       .map((emp) => {
-        const empLimits = limits.filter((l) => l.employeeCode === emp.employeeCode);
+        const employeeCode = normalizeLeaveEmployeeCode(emp.employeeCode);
+        const empLimits = limits.filter((l) => normalizeLeaveEmployeeCode(l.employeeCode) === employeeCode);
         return {
           ...emp,
           limits: empLimits,
         };
       })
       .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
-  }, [employees, limits]);
+  }, [employees, limits, searchQuery, branchFilter, managerBranch, branchesList, userData?.designation]);
 
   if (loading) {
     return (
@@ -236,8 +267,41 @@ export const LeaveCountsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Search & Branch Filter */}
+      <div className="px-4 pt-3 pb-4">
+        <div className="flex items-center justify-start gap-3 flex-wrap">
+          <div className="relative w-full sm:w-1/2">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
+            <input
+              type="text"
+              placeholder="Search employees by name, code, or ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+            />
+          </div>
+          <select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            disabled={userData?.designation === 'Branch Manager'}
+            className="w-full sm:w-56 px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:bg-secondary-100 disabled:cursor-not-allowed"
+          >
+            {userData?.designation === 'Branch Manager' ? (
+              <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
+            ) : (
+              <>
+                <option value="">All Locations</option>
+                {branchesList.map((branch) => (
+                  <option key={branch.id} value={branch.name}>{branch.name}</option>
+                ))}
+              </>
+            )}
+          </select>
+        </div>
+      </div>
+
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 content-start">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 content-start">
         {employeeStats.length === 0 ? (
           <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
@@ -247,7 +311,19 @@ export const LeaveCountsPage: React.FC = () => {
           </div>
         ) : (
           employeeStats.map((emp) => (
-            <div key={emp.id} className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg p-4 flex items-center gap-3">
+            <div
+              key={emp.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => setViewingEmployee(emp)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setViewingEmployee(emp);
+                }
+              }}
+              className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg p-4 flex items-center gap-3 cursor-pointer hover:shadow-xl transition-shadow"
+            >
               <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
                 <User className="w-5 h-5 text-purple-600" />
               </div>
@@ -257,14 +333,14 @@ export const LeaveCountsPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => openEditLimit(emp)}
+                  onClick={(e) => { e.stopPropagation(); openEditLimit(emp); }}
                   className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
                   aria-label="Edit limits"
                 >
                   <Pencil size={16} />
                 </button>
                 <button
-                  onClick={() => setViewingEmployee(emp)}
+                  onClick={(e) => { e.stopPropagation(); setViewingEmployee(emp); }}
                   className="p-1.5 rounded-lg text-secondary-500 hover:text-teal-600 hover:bg-teal-50 transition-colors"
                   aria-label="View limits"
                 >
@@ -297,7 +373,7 @@ export const LeaveCountsPage: React.FC = () => {
                     type="date"
                     required
                     value={limitForm.fromDate}
-                    onChange={(e) => setLimitForm((f) => ({ ...f, fromDate: e.target.value }))}
+                    onChange={(e) => { setLimitFormError(''); setLimitForm((f) => ({ ...f, fromDate: e.target.value })); }}
                     className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
                   />
                 </div>
@@ -307,7 +383,7 @@ export const LeaveCountsPage: React.FC = () => {
                     type="date"
                     required
                     value={limitForm.toDate}
-                    onChange={(e) => setLimitForm((f) => ({ ...f, toDate: e.target.value }))}
+                    onChange={(e) => { setLimitFormError(''); setLimitForm((f) => ({ ...f, toDate: e.target.value })); }}
                     className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
                   />
                 </div>
@@ -324,6 +400,7 @@ export const LeaveCountsPage: React.FC = () => {
                       placeholder="0"
                       value={limitForm.limits[type] ?? ''}
                       onChange={(e) => {
+                        setLimitFormError('');
                         const value = e.target.value.replace(/[^0-9]/g, '');
                         setLimitForm((f) => ({
                           ...f,
@@ -335,6 +412,11 @@ export const LeaveCountsPage: React.FC = () => {
                   </div>
                 ))}
               </div>
+              {limitFormError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {limitFormError}
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button
                   type="button"
@@ -382,7 +464,7 @@ export const LeaveCountsPage: React.FC = () => {
                     .sort((a, b) => (a.fromDate || '').localeCompare(b.fromDate || ''))
                     .map((limit) => {
                       const usage = limit.fromDate && limit.toDate
-                        ? getUsageByType(
+                        ? getLeaveUsageByType(
                             viewingEmployee.employeeCode || '',
                             limit.fromDate,
                             limit.toDate,

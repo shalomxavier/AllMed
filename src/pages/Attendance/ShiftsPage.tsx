@@ -8,6 +8,13 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
+import {
+  formatLeaveLimitFailures,
+  validateLeaveAssignments,
+  type LeaveLimitRecord,
+  type ProposedLeaveAssignment,
+  type StoredLeaveRecord,
+} from '@/utils/leaveLimits';
 
 interface Employee {
   id: string;
@@ -207,6 +214,23 @@ export const ShiftsPage: React.FC = () => {
   const [changeShiftModalOpen, setChangeShiftModalOpen] = useState(false);
   const [isSavingShiftOverride, setIsSavingShiftOverride] = useState(false);
   const [shiftChangedDates, setShiftChangedDates] = useState<Record<string, { date: string; startTime: string; endTime: string }[]>>({});
+  const [allLeaveRecords, setAllLeaveRecords] = useState<StoredLeaveRecord[]>([]);
+  const [leaveLimits, setLeaveLimits] = useState<LeaveLimitRecord[]>([]);
+  const [wizardLeaveLimitErrors, setWizardLeaveLimitErrors] = useState<string[]>([]);
+
+  const fetchLeaveValidationData = async () => {
+    const [leavesSnap, limitsSnap] = await Promise.all([
+      getDocs(collection(db, 'leaves')),
+      getDocs(collection(db, 'leaveLimits')),
+    ]);
+    const latestLeaves: StoredLeaveRecord[] = [];
+    const latestLimits: LeaveLimitRecord[] = [];
+    leavesSnap.forEach((d) => latestLeaves.push({ id: d.id, ...d.data() }));
+    limitsSnap.forEach((d) => latestLimits.push({ id: d.id, ...d.data() }));
+    setAllLeaveRecords(latestLeaves);
+    setLeaveLimits(latestLimits);
+    return { latestLeaves, latestLimits };
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -540,6 +564,61 @@ export const ShiftsPage: React.FC = () => {
     }
   };
 
+  const getWizardLeaveProposals = (leavesByEmployee = wizardEmpLeaves): ProposedLeaveAssignment[] =>
+    wizardEmployees.flatMap((employee) => (leavesByEmployee[employee.employeeCode] ?? []).map((leave) => ({
+      employeeCode: employee.employeeCode,
+      employeeName: employee.employeeName,
+      date: leave.date,
+      leaveType: leave.type,
+      duration: leave.duration,
+    })));
+
+  const validateWizardEmployeeSelection = (
+    employee: EmpLeaveEntry,
+    entries: DateLeave[],
+  ): boolean => {
+    const failures = validateLeaveAssignments(
+      entries.map((leave) => ({
+        employeeCode: employee.employeeCode,
+        employeeName: employee.employeeName,
+        date: leave.date,
+        leaveType: leave.type,
+        duration: leave.duration,
+      })),
+      allLeaveRecords,
+      leaveLimits,
+    );
+    setWizardLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const selectWizardLeaveDate = (employee: EmpLeaveEntry, date: string, selection: WizardLeaveSelection) => {
+    const current = wizardEmpLeaves[employee.employeeCode] ?? [];
+    const nextEntries = [
+      ...current.filter((leave) => leave.date !== date),
+      { date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod },
+    ];
+    if (!validateWizardEmployeeSelection(employee, nextEntries)) return;
+    setWizardEmpLeaves((prev) => ({ ...prev, [employee.employeeCode]: nextEntries }));
+  };
+
+  const selectWizardLeaveDates = (employee: EmpLeaveEntry, dates: string[], selection: WizardLeaveSelection) => {
+    const current = wizardEmpLeaves[employee.employeeCode] ?? [];
+    const nextEntries = [
+      ...current.filter((leave) => !dates.includes(leave.date)),
+      ...dates.map((date) => ({ date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod })),
+    ];
+    if (!validateWizardEmployeeSelection(employee, nextEntries)) return;
+    setWizardEmpLeaves((prev) => ({ ...prev, [employee.employeeCode]: nextEntries }));
+    setWizardMultiSelectedDates([]);
+  };
+
+  const removeWizardLeaveDate = (employee: EmpLeaveEntry, date: string) => {
+    const nextEntries = (wizardEmpLeaves[employee.employeeCode] ?? []).filter((leave) => leave.date !== date);
+    setWizardEmpLeaves((prev) => ({ ...prev, [employee.employeeCode]: nextEntries }));
+    validateWizardEmployeeSelection(employee, nextEntries);
+  };
+
   const filteredSlots = selectedBranchFilter
     ? slots.filter((s) => branchOptions.find((b) => b.name === selectedBranchFilter)?.shiftIds.includes(s.key))
     : slots;
@@ -550,6 +629,7 @@ export const ShiftsPage: React.FC = () => {
     if (userData) {
       fetchShifts();
       fetchEmployees();
+      fetchLeaveValidationData().catch((error) => console.error('Error fetching leave limits:', error));
     }
   }, [currentUser, userData]);
 
@@ -1329,6 +1409,7 @@ export const ShiftsPage: React.FC = () => {
                   setWizardEmpIndex(0);
                   setWizardEmpLeaves({});
                   setWizardMultiSelectedDates([]);
+                  setWizardLeaveLimitErrors([]);
                   setWizardShowConfirm(false);
                   const from = justAssignedEmps[0].fromDate;
                   if (from) {
@@ -1407,6 +1488,14 @@ export const ShiftsPage: React.FC = () => {
                   <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {wizardLeaveLimitErrors.length > 0 && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                      <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                      <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                        {wizardLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                      </ul>
+                    </div>
+                  )}
                   {wizardEmployees.map(e => {
                     const leaves = wizardEmpLeaves[e.employeeCode] ?? [];
                     return (
@@ -1456,6 +1545,13 @@ export const ShiftsPage: React.FC = () => {
                     onClick={async () => {
                       setIsSavingLeaves(true);
                       try {
+                        const { latestLeaves, latestLimits } = await fetchLeaveValidationData();
+                        const failures = validateLeaveAssignments(getWizardLeaveProposals(), latestLeaves, latestLimits);
+                        if (failures.length > 0) {
+                          setWizardLeaveLimitErrors(formatLeaveLimitFailures(failures));
+                          return;
+                        }
+
                         for (const e of wizardEmployees) {
                           const leaves = wizardEmpLeaves[e.employeeCode] ?? [];
                           if (leaves.length === 0) continue;
@@ -1605,11 +1701,7 @@ export const ShiftsPage: React.FC = () => {
                           <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
                             <WizardLeaveOptionMenu onSelect={(selection) => {
-                              setWizardEmpLeaves(prev => {
-                                const curr = prev[emp.employeeCode] ?? [];
-                                const filtered = curr.filter(l => l.date !== ds);
-                                return { ...prev, [emp.employeeCode]: [...filtered, { date: ds, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod }] };
-                              });
+                              selectWizardLeaveDate(emp, ds, selection);
                               setWizardTooltipDate(null); setWizardTooltipPos(null);
                             }} />
                             <button
@@ -1627,7 +1719,7 @@ export const ShiftsPage: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setWizardEmpLeaves(prev => ({ ...prev, [emp.employeeCode]: (prev[emp.employeeCode] ?? []).filter(l => l.date !== ds) }));
+                                  removeWizardLeaveDate(emp, ds);
                                   setWizardTooltipDate(null); setWizardTooltipPos(null);
                                 }}
                                 className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
@@ -1647,14 +1739,7 @@ export const ShiftsPage: React.FC = () => {
                   <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
                     <div className="flex flex-wrap gap-2">
-                      <WizardLeaveOptionMenu onSelect={(selection) => {
-                        setWizardEmpLeaves((prev) => {
-                          const current = prev[emp.employeeCode] ?? [];
-                          const remaining = current.filter((leave) => !wizardMultiSelectedDates.includes(leave.date));
-                          return { ...prev, [emp.employeeCode]: [...remaining, ...wizardMultiSelectedDates.map((date) => ({ date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod }))] };
-                        });
-                        setWizardMultiSelectedDates([]);
-                      }} />
+                      <WizardLeaveOptionMenu onSelect={(selection) => selectWizardLeaveDates(emp, wizardMultiSelectedDates, selection)} />
                       <button
                         type="button"
                         onClick={() => setWizardMultiSelectedDates([])}
@@ -1667,6 +1752,14 @@ export const ShiftsPage: React.FC = () => {
                 )}
                 {selectedDates.length > 0 && (
                   <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
+                )}
+                {wizardLeaveLimitErrors.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                    <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                    <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                      {wizardLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                    </ul>
+                  </div>
                 )}
               </div>
 
@@ -1682,6 +1775,7 @@ export const ShiftsPage: React.FC = () => {
                         setWizardCalMonth(d.getMonth());
                       }
                       setWizardEmpIndex(i => i - 1);
+                      setWizardLeaveLimitErrors([]);
                       setWizardMultiSelectedDates([]);
                       setWizardTooltipDate(null); setWizardTooltipPos(null);
                     }}
@@ -1697,6 +1791,7 @@ export const ShiftsPage: React.FC = () => {
                       const source = wizardEmployees.find((employee) => employee.employeeCode === e.target.value);
                       if (!source) return;
                       const copiedLeaves = (wizardEmpLeaves[source.employeeCode] ?? []).map((leave) => ({ ...leave }));
+                      if (!validateWizardEmployeeSelection(emp, copiedLeaves)) return;
                       setWizardEmpLeaves((prev) => ({ ...prev, [emp.employeeCode]: copiedLeaves }));
                       setWizardMultiSelectedDates([]);
                       e.currentTarget.value = '';
@@ -1722,6 +1817,7 @@ export const ShiftsPage: React.FC = () => {
                         setWizardCalMonth(d.getMonth());
                       }
                       setWizardEmpIndex(i => i + 1);
+                      setWizardLeaveLimitErrors([]);
                       setWizardMultiSelectedDates([]);
                     } else {
                       setWizardShowConfirm(true);

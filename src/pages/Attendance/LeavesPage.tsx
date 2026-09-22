@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2, BarChart3 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2, BarChart3, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -10,6 +10,12 @@ import {
   resolveShiftAssignment,
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
+import {
+  formatLeaveLimitFailures,
+  validateLeaveAssignments,
+  type LeaveLimitRecord,
+  type ProposedLeaveAssignment,
+} from '@/utils/leaveLimits';
 
 interface LeaveRecord {
   id: string;
@@ -28,6 +34,19 @@ interface LeaveRecord {
 }
 
 type WeekOffRecord = LeaveRecord;
+
+type ViewMode = 'calendar' | 'cards';
+
+interface CalendarEntry {
+  key: string;
+  date: string;
+  employeeCode: string;
+  employeeName: string;
+  type: 'leave' | 'weekoff';
+  reason: string;
+  duration?: 'full_day' | 'half_day';
+  halfDayPeriod?: 'first_half' | 'second_half';
+}
 
 interface RawPunch {
   id: string;
@@ -48,6 +67,24 @@ const formatDate = (dateStr: string) => {
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
+
+const getDateRange = (fromDate: string, toDate: string): string[] => {
+  const dates: string[] = [];
+  const [startYear, startMonth, startDay] = fromDate.split('-').map(Number);
+  const [endYear, endMonth, endDay] = toDate.split('-').map(Number);
+  const current = new Date(Date.UTC(startYear, startMonth - 1, startDay));
+  const end = new Date(Date.UTC(endYear, endMonth - 1, endDay));
+  while (current <= end) {
+    dates.push(current.toISOString().split('T')[0]);
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return dates;
+};
+
+const getMonthRange = (year: number, month: number) => ({
+  from: `${year}-${String(month + 1).padStart(2, '0')}-01`,
+  to: `${year}-${String(month + 1).padStart(2, '0')}-${String(new Date(year, month + 1, 0).getDate()).padStart(2, '0')}`,
+});
 
 const getLatestLeaveDate = (r: LeaveRecord): string => {
   if (r.toDate) return r.toDate;
@@ -133,6 +170,10 @@ export const LeavesPage: React.FC = () => {
     return new Date(today.getFullYear(), today.getMonth() + 1, 0).toLocaleDateString('en-CA');
   });
   const [typeFilter, setTypeFilter] = useState<'all' | 'leave' | 'weekoff' | 'sick' | 'casual' | 'holiday' | 'maternity' | 'earned'>('all');
+  const [viewMode, setViewMode] = useState<ViewMode>('calendar');
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState<{ employeeCode: string; employeeName: string; type: 'type' | 'total'; typeKey?: string; details: any[] } | null>(null);
   const [unauthorizedModalOpen, setUnauthorizedModalOpen] = useState(false);
@@ -162,16 +203,20 @@ export const LeavesPage: React.FC = () => {
   const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
   const [managerBranch, setManagerBranch] = useState<string | null>(null);
+  const [leaveLimits, setLeaveLimits] = useState<LeaveLimitRecord[]>([]);
+  const [bulkLeaveLimitErrors, setBulkLeaveLimitErrors] = useState<string[]>([]);
+  const [editLeaveLimitErrors, setEditLeaveLimitErrors] = useState<string[]>([]);
 
   const fetchData = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
       const db = getFirestore();
-      const [leavesSnap, employeesSnap, branchesSnap] = await Promise.all([
+      const [leavesSnap, employeesSnap, branchesSnap, limitsSnap] = await Promise.all([
         getDocs(query(collection(db, 'leaves'), orderBy('createdAt', 'desc'))),
         getDocs(query(collection(db, 'employees'), orderBy('employeeName'))),
         getDocs(query(collection(db, 'branches'))),
+        getDocs(collection(db, 'leaveLimits')),
       ]);
       const allLeavesData: LeaveRecord[] = [];
       leavesSnap.forEach((d) => allLeavesData.push({ id: d.id, ...d.data() }));
@@ -179,6 +224,8 @@ export const LeavesPage: React.FC = () => {
       const weekOffsData = allLeavesData.filter(r => r.type === 'weekoff');
       const employeesData: any[] = [];
       employeesSnap.forEach((d) => employeesData.push({ id: d.id, ...d.data() }));
+      const limitData: LeaveLimitRecord[] = [];
+      limitsSnap.forEach((d) => limitData.push({ id: d.id, ...d.data() }));
       const filteredEmployees = employeesData.filter((e) => !e.employeeCodeInDevice?.startsWith('Del'));
 
       // Build branchesList
@@ -204,6 +251,7 @@ export const LeavesPage: React.FC = () => {
 
       setLeaves(leavesData);
       setWeekOffs(weekOffsData);
+      setLeaveLimits(limitData);
       setEmployees(filteredEmployees);
     } catch (e) {
       console.error('Error fetching data:', e);
@@ -214,8 +262,91 @@ export const LeavesPage: React.FC = () => {
 
   useEffect(() => { if (currentUser) fetchData(); }, [currentUser]);
 
+  const fetchLeaveValidationData = async () => {
+    const db = getFirestore();
+    const [leavesSnap, limitsSnap] = await Promise.all([
+      getDocs(collection(db, 'leaves')),
+      getDocs(collection(db, 'leaveLimits')),
+    ]);
+    const latestLeaves: LeaveRecord[] = [];
+    const latestLimits: LeaveLimitRecord[] = [];
+    leavesSnap.forEach((d) => latestLeaves.push({ id: d.id, ...d.data() }));
+    limitsSnap.forEach((d) => latestLimits.push({ id: d.id, ...d.data() }));
+    return { latestLeaves, latestLimits };
+  };
+
+  const getStoredLeaves = () => [...leaves, ...weekOffs];
+
+  const getBulkLeaveProposals = (
+    selectedIds: Set<string>,
+    selectedDates: string[],
+    form = bulkLeaveForm,
+  ): ProposedLeaveAssignment[] => {
+    if (!form.reason) return [];
+    return Array.from(selectedIds).flatMap((employeeId) => {
+      const employee = employees.find((e) => e.id === employeeId);
+      const employeeCode = employee?.employeeCode;
+      if (!employeeCode) return [];
+      return selectedDates.map((date) => ({
+        employeeCode,
+        employeeName: employee.employeeName,
+        date,
+        leaveType: form.reason,
+        duration: form.duration,
+      }));
+    });
+  };
+
+  const validateBulkLeaveSelection = (
+    selectedIds: Set<string>,
+    selectedDates: string[],
+    form = bulkLeaveForm,
+  ): boolean => {
+    const failures = validateLeaveAssignments(
+      getBulkLeaveProposals(selectedIds, selectedDates, form),
+      getStoredLeaves(),
+      leaveLimits,
+    );
+    setBulkLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const getEditLeaveProposals = (form = editLeaveForm): ProposedLeaveAssignment[] => {
+    const employeeCode = editingLeave?.employeeCode;
+    if (!employeeCode || !form.reason) return [];
+    return form.dates.map((date) => ({
+      employeeCode,
+      employeeName: editingLeave.employeeName,
+      date,
+      leaveType: form.reason,
+      duration: form.duration,
+    }));
+  };
+
+  const validateEditLeaveSelection = (form = editLeaveForm): boolean => {
+    const failures = validateLeaveAssignments(
+      getEditLeaveProposals(form),
+      getStoredLeaves(),
+      leaveLimits,
+      editingLeave?.id,
+    );
+    setEditLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const updateBulkLeaveForm = (form: typeof bulkLeaveForm) => {
+    if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, bulkLeaveSelectedDates, form)) return;
+    setBulkLeaveForm(form);
+  };
+
+  const updateEditLeaveForm = (form: typeof editLeaveForm) => {
+    if (!validateEditLeaveSelection(form)) return;
+    setEditLeaveForm(form);
+  };
+
   const openEditLeave = (leave: LeaveRecord, e: React.MouseEvent) => {
     e.stopPropagation();
+    setEditLeaveLimitErrors([]);
     setEditingLeave(leave);
     const dates = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
     setEditLeaveForm({ reason: leave.reason ?? '', dates, duration: leave.duration === 'half_day' ? 'half_day' : 'full_day', halfDayPeriod: leave.halfDayPeriod });
@@ -233,6 +364,18 @@ export const LeavesPage: React.FC = () => {
     setIsSavingEdit(true);
     try {
       const db = getFirestore();
+      const { latestLeaves, latestLimits } = await fetchLeaveValidationData();
+      const failures = validateLeaveAssignments(
+        getEditLeaveProposals(),
+        latestLeaves,
+        latestLimits,
+        editingLeave.id,
+      );
+      if (failures.length > 0) {
+        setEditLeaveLimitErrors(formatLeaveLimitFailures(failures));
+        return;
+      }
+
       const sorted = [...editLeaveForm.dates].sort();
       await updateDoc(doc(db, 'leaves', editingLeave.id), {
         dates: sorted,
@@ -280,14 +423,47 @@ export const LeavesPage: React.FC = () => {
     setBulkLeaveSelectedDates([]);
     setBulkLeaveCalendarMonth(new Date().getMonth());
     setBulkLeaveCalendarYear(new Date().getFullYear());
+    setBulkLeaveLimitErrors([]);
   };
 
   const toggleBulkLeaveEmployee = (id: string) => {
-    setBulkLeaveSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    const next = new Set(bulkLeaveSelectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+      setBulkLeaveSelectedIds(next);
+      validateBulkLeaveSelection(next, bulkLeaveSelectedDates);
+      return;
+    }
+
+    next.add(id);
+    if (!validateBulkLeaveSelection(next, bulkLeaveSelectedDates)) return;
+    setBulkLeaveSelectedIds(next);
+  };
+
+  const toggleBulkLeaveDate = (date: string) => {
+    const nextDates = bulkLeaveSelectedDates.includes(date)
+      ? bulkLeaveSelectedDates.filter((d) => d !== date)
+      : [...bulkLeaveSelectedDates, date];
+
+    if (bulkLeaveSelectedDates.includes(date)) {
+      setBulkLeaveSelectedDates(nextDates);
+      validateBulkLeaveSelection(bulkLeaveSelectedIds, nextDates);
+      return;
+    }
+
+    if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, nextDates)) return;
+    setBulkLeaveSelectedDates(nextDates);
+  };
+
+  const toggleEditLeaveDate = (date: string) => {
+    const selected = editLeaveForm.dates.includes(date);
+    const nextForm = {
+      ...editLeaveForm,
+      dates: selected ? editLeaveForm.dates.filter((d) => d !== date) : [...editLeaveForm.dates, date],
+    };
+    if (!selected && !validateEditLeaveSelection(nextForm)) return;
+    setEditLeaveForm(nextForm);
+    if (selected) validateEditLeaveSelection(nextForm);
   };
 
   const handleBulkLeaveSubmit = async (e: React.FormEvent) => {
@@ -296,6 +472,17 @@ export const LeavesPage: React.FC = () => {
     setIsSavingBulkLeave(true);
     try {
       const db = getFirestore();
+      const { latestLeaves, latestLimits } = await fetchLeaveValidationData();
+      const failures = validateLeaveAssignments(
+        getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveSelectedDates),
+        latestLeaves,
+        latestLimits,
+      );
+      if (failures.length > 0) {
+        setBulkLeaveLimitErrors(formatLeaveLimitFailures(failures));
+        return;
+      }
+
       const sorted = [...bulkLeaveSelectedDates].sort();
       for (const empId of bulkLeaveSelectedIds) {
         const employee = employees.find((e) => e.id === empId);
@@ -537,11 +724,8 @@ export const LeavesPage: React.FC = () => {
     ...weekOffs.map((w) => ({ type: 'weekoff' as const, data: w })),
   ].sort((a, b) => getLatestLeaveDate(b.data).localeCompare(getLatestLeaveDate(a.data)));
 
-  const filtered = allRecords.filter((r) => {
+  const filteredByControls = allRecords.filter((r) => {
     const data = r.data as any;
-    const name = data.employeeName?.toLowerCase() ?? '';
-    const code = data.employeeCode?.toLowerCase() ?? '';
-    const matchesSearch = name.includes(searchQuery.toLowerCase()) || code.includes(searchQuery.toLowerCase());
 
     // Branch filter (branches collection is the source of truth)
     if (branchFilter) {
@@ -566,16 +750,23 @@ export const LeavesPage: React.FC = () => {
 
     const dates = data.dates ?? [];
     if (dates.length > 0) {
-      return matchesSearch && dates.some((d: string) => d >= fromDateFilter && d <= toDateFilter);
+      return dates.some((d: string) => d >= fromDateFilter && d <= toDateFilter);
     }
 
     const from = data.fromDate;
     const to = data.toDate || from;
     if (from && to) {
-      return matchesSearch && from <= toDateFilter && to >= fromDateFilter;
+      return from <= toDateFilter && to >= fromDateFilter;
     }
 
-    return matchesSearch;
+    return true;
+  });
+
+  const searchLower = searchQuery.toLowerCase();
+  const filtered = filteredByControls.filter((record) => {
+    const name = record.data.employeeName?.toLowerCase() ?? '';
+    const code = record.data.employeeCode?.toLowerCase() ?? '';
+    return name.includes(searchLower) || code.includes(searchLower);
   });
 
   const employeeGroups = Array.from(
@@ -589,6 +780,91 @@ export const LeavesPage: React.FC = () => {
     }, new Map<string, { employeeCode: string; employeeName: string; records: typeof filtered }>())
       .values()
   ).sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+
+  const calendarRange = getMonthRange(calendarYear, calendarMonth);
+  const buildCalendarEntries = (records: typeof filtered) => {
+    const result = records.reduce((entries, record) => {
+      const data = record.data;
+      let dates = data.dates && data.dates.length > 0
+        ? data.dates
+        : data.fromDate
+          ? getDateRange(data.fromDate, data.toDate || data.fromDate)
+          : [];
+
+      if (dates.length === 0 && record.type === 'weekoff' && data.days?.length) {
+        dates = getDateRange(calendarRange.from, calendarRange.to).filter((date) => {
+          const [year, month, day] = date.split('-').map(Number);
+          return data.days?.includes(ALL_DAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]);
+        });
+      }
+
+      dates
+        .filter((date) => date >= calendarRange.from && date <= calendarRange.to)
+        .forEach((date) => {
+          const entry: CalendarEntry = {
+            key: `${data.id}:${date}`,
+            date,
+            employeeCode: data.employeeCode || '',
+            employeeName: data.employeeName || '',
+            type: record.type,
+            reason: record.type === 'weekoff' ? 'Week Off' : (data.reason || 'Leave'),
+            duration: data.duration,
+            halfDayPeriod: data.halfDayPeriod,
+          };
+          const existing = entries.get(date) || [];
+          if (!existing.some((item) => item.key === entry.key)) entries.set(date, [...existing, entry]);
+        });
+      return entries;
+    }, new Map<string, CalendarEntry[]>());
+
+    result.forEach((entries, date) => {
+      result.set(date, entries.sort((a, b) => a.employeeName.localeCompare(b.employeeName)));
+    });
+    return result;
+  };
+
+  const calendarEntries = buildCalendarEntries(filtered);
+  const colorScaleCalendarEntries = buildCalendarEntries(filteredByControls);
+  const populatedEntryCounts = Array.from(colorScaleCalendarEntries.values()).map((entries) => entries.length);
+  const minimumEntryCount = populatedEntryCounts.length > 0 ? Math.min(...populatedEntryCounts) : 0;
+  const maximumEntryCount = populatedEntryCounts.length > 0 ? Math.max(...populatedEntryCounts) : 0;
+  const heatmapStyles = [
+    { count: 'text-green-500' },
+    { count: 'text-lime-500' },
+    { count: 'text-yellow-500' },
+    { count: 'text-amber-500' },
+    { count: 'text-orange-700' },
+  ];
+  const getHeatmapStyle = (count: number) => {
+    if (count === 0) return null;
+    if (minimumEntryCount === maximumEntryCount) return heatmapStyles[4];
+    const normalized = (count - minimumEntryCount) / (maximumEntryCount - minimumEntryCount);
+    return heatmapStyles[Math.min(4, Math.floor(normalized * 5))];
+  };
+
+  const setCalendarPeriod = (year: number, month: number) => {
+    const range = getMonthRange(year, month);
+    setCalendarYear(year);
+    setCalendarMonth(month);
+    setFromDateFilter(range.from);
+    setToDateFilter(range.to);
+    setSelectedCalendarDate(null);
+  };
+
+  const changeCalendarMonth = (offset: number) => {
+    const date = new Date(calendarYear, calendarMonth + offset, 1);
+    setCalendarPeriod(date.getFullYear(), date.getMonth());
+  };
+
+  const handleFromDateChange = (value: string) => {
+    setFromDateFilter(value);
+    if (!value) return;
+    const [year, month] = value.split('-').map(Number);
+    setCalendarYear(year);
+    setCalendarMonth(month - 1);
+  };
+
+  const selectedCalendarEntries = selectedCalendarDate ? calendarEntries.get(selectedCalendarDate) || [] : [];
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -597,8 +873,8 @@ export const LeavesPage: React.FC = () => {
           <ArrowLeft size={20} className="text-secondary-600" />
         </button>
         <div className="flex-1">
-          <h1 className="text-base font-semibold text-secondary-900">Week Off / Leave</h1>
-          <p className="text-xs text-secondary-500">All employee leaves and week-off schedules</p>
+          <h1 className="text-xl font-semibold text-secondary-900">Week Off / Leave</h1>
+          <p className="text-sm text-secondary-500">All employee leaves and week-off schedules</p>
         </div>
         <button onClick={fetchData} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
           {loading ? <RedSpinner size="sm" /> : <RefreshCw size={18} className="text-secondary-500" />}
@@ -607,6 +883,22 @@ export const LeavesPage: React.FC = () => {
 
       {/* Search & Date Filter */}
       <div className="px-4 pt-3 pb-4">
+        <div className="flex items-center gap-5 mb-4">
+          {canManageLeaves && (
+            <button onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveModalOpen(true); }} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-indigo-600 border-2 border-indigo-500 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm">
+              <Umbrella size={20} />
+              Add Leaves
+            </button>
+          )}
+          <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-rose-600 border-2 border-rose-500 rounded-2xl hover:bg-rose-700 transition-colors disabled:opacity-70 shadow-sm">
+            {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={18} />}
+            Check Unauthorized Absence
+          </button>
+          <button onClick={() => navigate('/attendance/leave-counts')} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-teal-600 border-2 border-teal-500 rounded-2xl hover:bg-teal-700 transition-colors shadow-sm">
+            <BarChart3 size={20} />
+            Leave Counts
+          </button>
+        </div>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex-1 relative min-w-[200px]">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
@@ -622,7 +914,7 @@ export const LeavesPage: React.FC = () => {
             <input
               type="date"
               value={fromDateFilter}
-              onChange={(e) => setFromDateFilter(e.target.value)}
+              onChange={(e) => handleFromDateChange(e.target.value)}
               className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
             />
             <span className="text-sm text-secondary-500">→</span>
@@ -665,27 +957,89 @@ export const LeavesPage: React.FC = () => {
               <option value="maternity">Maternity/Paternity</option>
               <option value="earned">Earned Leave</option>
             </select>
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as ViewMode)}
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+            >
+              <option value="calendar">Calendar View</option>
+              <option value="cards">Card View</option>
+            </select>
           </div>
-        </div>
-        <div className="flex items-center gap-5 mt-4">
-          {canManageLeaves && (
-            <button onClick={() => setBulkLeaveModalOpen(true)} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-indigo-600 border-2 border-indigo-500 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm">
-              <Umbrella size={20} />
-              Add Leaves
-            </button>
-          )}
-          <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-rose-600 border-2 border-rose-500 rounded-2xl hover:bg-rose-700 transition-colors disabled:opacity-70 shadow-sm">
-            {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={18} />}
-            Check Unauthorized Absence
-          </button>
-          <button onClick={() => navigate('/attendance/leave-counts')} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-teal-600 border-2 border-teal-500 rounded-2xl hover:bg-teal-700 transition-colors shadow-sm">
-            <BarChart3 size={20} />
-            Leave Counts
-          </button>
         </div>
       </div>
 
       {/* Content */}
+      {viewMode === 'calendar' ? (
+        <div className="flex-1 overflow-y-auto px-4 pb-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <RedSpinner />
+            </div>
+          ) : (
+            <div className="bg-white/90 rounded-2xl shadow-lg border border-secondary-200 overflow-hidden">
+              <div className="flex items-center justify-between px-4 sm:px-6 py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100">
+                <button type="button" onClick={() => changeCalendarMonth(-1)} className="p-2 rounded-xl text-purple-700 bg-white border border-purple-100 shadow-sm hover:bg-purple-100 transition-colors" aria-label="Previous month">
+                  <ChevronLeft size={20} />
+                </button>
+                <div className="text-center">
+                  <h2 className="text-xl sm:text-2xl font-semibold text-secondary-900">
+                    {new Date(calendarYear, calendarMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                  </h2>
+                </div>
+                <button type="button" onClick={() => changeCalendarMonth(1)} className="p-2 rounded-xl text-purple-700 bg-white border border-purple-100 shadow-sm hover:bg-purple-100 transition-colors" aria-label="Next month">
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+              <div className="grid grid-cols-7 px-2 sm:px-4 pt-3 bg-white">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                  <div key={day} className={`py-2 text-center text-[11px] sm:text-xs font-semibold uppercase tracking-wide ${day === 'Sun' ? 'text-red-600' : 'text-black'}`}>{day}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1.5 sm:gap-2 p-2 sm:p-4 pt-1 sm:pt-1 bg-white">
+                {(() => {
+                  const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
+                  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+                  const cells: (number | null)[] = [
+                    ...Array(firstDay).fill(null),
+                    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+                  ];
+                  while (cells.length % 7 !== 0) cells.push(null);
+                  return cells.map((day, index) => {
+                    if (!day) return <div key={`empty-${index}`} className="min-h-20 sm:min-h-24 rounded-xl bg-secondary-50/60" />;
+                    const date = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const entries = calendarEntries.get(date) || [];
+                    const heatmapCount = colorScaleCalendarEntries.get(date)?.length || 0;
+                    const heatmapStyle = getHeatmapStyle(heatmapCount);
+                    const isSunday = index % 7 === 0;
+                    return (
+                      <button
+                        key={date}
+                        type="button"
+                        onClick={() => entries.length > 0 && setSelectedCalendarDate(date)}
+                        className={`relative min-h-20 sm:min-h-24 p-2 rounded-xl border border-secondary-100 bg-secondary-50 shadow-md flex flex-col items-center justify-center transition-all hover:bg-secondary-100 hover:shadow-lg hover:-translate-y-0.5 ${entries.length > 0 ? 'cursor-pointer' : 'cursor-default'}`}
+                      >
+                        {entries.length > 0 ? (
+                          <div className={`absolute top-1.5 right-2 flex items-baseline gap-1 ${heatmapStyle?.count}`}>
+                            <span className="text-sm sm:text-base font-bold leading-none">{entries.length}</span>
+                            <Users size={16} aria-hidden="true" />
+                          </div>
+                        ) : (
+                          <div className="absolute top-1.5 right-2 flex items-baseline gap-1">
+                            <span className="text-xs sm:text-sm font-bold text-secondary-400 leading-none">0</span>
+                            <Users size={16} className="text-secondary-400" aria-hidden="true" />
+                          </div>
+                        )}
+                        <span className={`mt-4 inline-flex w-10 h-10 items-center justify-center rounded-full text-xl sm:text-2xl font-bold ${isSunday ? 'text-red-600' : 'text-black'}`}>{day}</span>
+                      </button>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3 content-start">
         {loading ? (
           <div className="w-full flex items-center justify-center py-16">
@@ -787,6 +1141,43 @@ export const LeavesPage: React.FC = () => {
           })
         )}
       </div>
+      )}
+
+      {selectedCalendarDate && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedCalendarDate(null)}>
+          <div className="bg-white rounded-xl max-w-lg w-full max-h-[80vh] overflow-hidden shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
+              <div>
+                <h2 className="text-base font-semibold text-secondary-900">Leave / Off Details</h2>
+                <p className="text-sm text-secondary-500">{formatDate(selectedCalendarDate)}</p>
+              </div>
+              <button type="button" onClick={() => setSelectedCalendarDate(null)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors" aria-label="Close calendar details">
+                <X size={18} className="text-secondary-500" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[60vh] space-y-2">
+              {selectedCalendarEntries.map((entry) => {
+                const colors = entry.type === 'weekoff' ? { badge: 'bg-blue-100', text: 'text-blue-700' } : getLeaveColor(entry.reason);
+                const period = entry.duration === 'half_day'
+                  ? entry.halfDayPeriod === 'first_half' ? 'First Half' : 'Second Half'
+                  : 'Full Day';
+                return (
+                  <div key={entry.key} className="flex items-center justify-between gap-3 px-3 py-2.5 bg-secondary-50 rounded-lg">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-secondary-900 truncate">{entry.employeeName || 'Unnamed Employee'}</p>
+                      <p className="text-xs text-secondary-500">{entry.employeeCode || '—'}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className={`inline-flex text-xs font-medium px-2 py-1 rounded-full ${colors.badge} ${colors.text}`}>{entry.reason}</span>
+                      {entry.type === 'leave' && <p className="text-[11px] text-secondary-500 mt-1">{period}</p>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal for details */}
       {modalOpen && modalData && (
@@ -987,7 +1378,7 @@ export const LeavesPage: React.FC = () => {
                           const selected = bulkLeaveSelectedDates.includes(dateStr);
                           return (
                             <button key={i} type="button"
-                              onClick={() => setBulkLeaveSelectedDates(prev => selected ? prev.filter(d => d !== dateStr) : [...prev, dateStr])}
+                              onClick={() => toggleBulkLeaveDate(dateStr)}
                               className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
                                 selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
                               }`}>{day}</button>
@@ -1002,7 +1393,7 @@ export const LeavesPage: React.FC = () => {
               {/* Leave type */}
               <div className="border border-secondary-300 rounded-lg p-3">
                 <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
-                <select value={bulkLeaveForm.reason} onChange={(e) => setBulkLeaveForm((form) => ({ ...form, reason: e.target.value }))}
+                <select value={bulkLeaveForm.reason} onChange={(e) => updateBulkLeaveForm({ ...bulkLeaveForm, reason: e.target.value })}
                   className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
                   <option value="">Select leave type...</option>
                   <option value="Week Off">Week Off</option>
@@ -1013,13 +1404,22 @@ export const LeavesPage: React.FC = () => {
                 </select>
                 <label className="block text-sm font-medium text-secondary-700 mt-3 mb-2">Duration</label>
                 <select value={bulkLeaveForm.duration === 'full_day' ? 'full_day' : bulkLeaveForm.halfDayPeriod}
-                  onChange={(e) => setBulkLeaveForm((form) => e.target.value === 'full_day' ? { ...form, duration: 'full_day', halfDayPeriod: undefined } : { ...form, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
+                  onChange={(e) => updateBulkLeaveForm(e.target.value === 'full_day' ? { ...bulkLeaveForm, duration: 'full_day', halfDayPeriod: undefined } : { ...bulkLeaveForm, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
                   className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm">
                   <option value="full_day">Full Day</option>
                   <option value="first_half">Half Day (First)</option>
                   <option value="second_half">Half Day (Second)</option>
                 </select>
               </div>
+
+              {bulkLeaveLimitErrors.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                    {bulkLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                  </ul>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeBulkLeaveModal}
@@ -1073,7 +1473,7 @@ export const LeavesPage: React.FC = () => {
                           const selected = editLeaveForm.dates.includes(dateStr);
                           return (
                             <button key={i} type="button"
-                              onClick={() => setEditLeaveForm(f => ({ ...f, dates: selected ? f.dates.filter(d => d !== dateStr) : [...f.dates, dateStr] }))}
+                              onClick={() => toggleEditLeaveDate(dateStr)}
                               className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'}`}>{day}</button>
                           );
                         })}
@@ -1085,7 +1485,7 @@ export const LeavesPage: React.FC = () => {
               {/* Leave type */}
               <div className="border border-secondary-300 rounded-lg p-3">
                 <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
-                <select value={editLeaveForm.reason} onChange={(e) => setEditLeaveForm(f => ({ ...f, reason: e.target.value }))}
+                <select value={editLeaveForm.reason} onChange={(e) => updateEditLeaveForm({ ...editLeaveForm, reason: e.target.value })}
                   className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
                   <option value="">Select leave type...</option>
                   <option value="Week Off">Week Off</option>
@@ -1096,13 +1496,21 @@ export const LeavesPage: React.FC = () => {
                 </select>
                 <label className="block text-sm font-medium text-secondary-700 mt-3 mb-2">Duration</label>
                 <select value={editLeaveForm.duration === 'full_day' ? 'full_day' : editLeaveForm.halfDayPeriod}
-                  onChange={(e) => setEditLeaveForm((form) => e.target.value === 'full_day' ? { ...form, duration: 'full_day', halfDayPeriod: undefined } : { ...form, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
+                  onChange={(e) => updateEditLeaveForm(e.target.value === 'full_day' ? { ...editLeaveForm, duration: 'full_day', halfDayPeriod: undefined } : { ...editLeaveForm, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
                   className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm">
                   <option value="full_day">Full Day</option>
                   <option value="first_half">Half Day (First)</option>
                   <option value="second_half">Half Day (Second)</option>
                 </select>
               </div>
+              {editLeaveLimitErrors.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                    {editLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                  </ul>
+                </div>
+              )}
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setEditLeaveOpen(false)}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>

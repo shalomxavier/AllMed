@@ -8,6 +8,13 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
+import {
+  formatLeaveLimitFailures,
+  validateLeaveAssignments,
+  type LeaveLimitRecord,
+  type ProposedLeaveAssignment,
+  type StoredLeaveRecord,
+} from '@/utils/leaveLimits';
 
 interface RawPunch {
   id: string;
@@ -239,6 +246,27 @@ export const EmployeesPage: React.FC = () => {
   const [bulkLeaveCalendarMonth, setBulkLeaveCalendarMonth] = useState(new Date().getMonth());
   const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
   const [isSavingBulkLeave, setIsSavingBulkLeave] = useState(false);
+  const [allLeaveRecords, setAllLeaveRecords] = useState<StoredLeaveRecord[]>([]);
+  const [leaveLimits, setLeaveLimits] = useState<LeaveLimitRecord[]>([]);
+  const [bulkLeaveLimitErrors, setBulkLeaveLimitErrors] = useState<string[]>([]);
+  const [leaveFormLimitErrors, setLeaveFormLimitErrors] = useState<string[]>([]);
+  const [editLeaveLimitErrors, setEditLeaveLimitErrors] = useState<string[]>([]);
+  const [wizardLeaveLimitErrors, setWizardLeaveLimitErrors] = useState<string[]>([]);
+
+  const fetchLeaveValidationData = async () => {
+    const firestore = getFirestore();
+    const [leavesSnap, limitsSnap] = await Promise.all([
+      getDocs(collection(firestore, 'leaves')),
+      getDocs(collection(firestore, 'leaveLimits')),
+    ]);
+    const latestLeaves: StoredLeaveRecord[] = [];
+    const latestLimits: LeaveLimitRecord[] = [];
+    leavesSnap.forEach((d) => latestLeaves.push({ id: d.id, ...d.data() }));
+    limitsSnap.forEach((d) => latestLimits.push({ id: d.id, ...d.data() }));
+    setAllLeaveRecords(latestLeaves);
+    setLeaveLimits(latestLimits);
+    return { latestLeaves, latestLimits };
+  };
 
   const fetchEmployees = async () => {
     if (!currentUser) return;
@@ -300,6 +328,7 @@ export const EmployeesPage: React.FC = () => {
   useEffect(() => {
     if (!currentUser) return;
     fetchEmployees();
+    fetchLeaveValidationData().catch((error) => console.error('Error fetching leave limits:', error));
   }, [currentUser, userData]);
 
   useEffect(() => {
@@ -406,6 +435,170 @@ export const EmployeesPage: React.FC = () => {
   const handleShiftsClick = (employee: Employee) => {
     setSelectedEmployee(employee);
     setShiftModalOpen(true);
+  };
+
+  const proposalsFromDateMap = (
+    employee: Pick<Employee, 'employeeCode' | 'employeeName'>,
+    dateMap: Record<string, LeaveSelection>,
+  ): ProposedLeaveAssignment[] => {
+    if (!employee.employeeCode) return [];
+    return Object.entries(dateMap).map(([date, selection]) => ({
+      employeeCode: employee.employeeCode!,
+      employeeName: employee.employeeName,
+      date,
+      leaveType: selection.reason,
+      duration: selection.duration,
+    }));
+  };
+
+  const getBulkLeaveProposals = (
+    selectedIds: Set<string>,
+    dateMap: Record<string, LeaveSelection>,
+  ): ProposedLeaveAssignment[] =>
+    Array.from(selectedIds).flatMap((employeeId) => {
+      const employee = employees.find((e) => e.id === employeeId);
+      return employee ? proposalsFromDateMap(employee, dateMap) : [];
+    });
+
+  const getLeaveFormProposals = (dateMap: Record<string, LeaveSelection>): ProposedLeaveAssignment[] =>
+    leaveEmployee ? proposalsFromDateMap(leaveEmployee, dateMap) : [];
+
+  const getEditLeaveProposals = (
+    dates = editSelectedDates,
+    reason = editLeaveForm.reason,
+  ): ProposedLeaveAssignment[] => {
+    if (!editingLeave?.employeeCode || !reason) return [];
+    return dates.map((date) => ({
+      employeeCode: editingLeave.employeeCode,
+      employeeName: editingLeave.employeeName,
+      date,
+      leaveType: reason,
+      duration: editingLeave.duration,
+    }));
+  };
+
+  const getWizardLeaveProposals = (
+    entries = wizardEmpLeaves,
+    employee = wizardEmployee,
+  ): ProposedLeaveAssignment[] => {
+    if (!employee?.employeeCode) return [];
+    return entries.map((entry) => ({
+      employeeCode: employee.employeeCode,
+      employeeName: employee.employeeName,
+      date: entry.date,
+      leaveType: entry.type,
+      duration: entry.duration,
+    }));
+  };
+
+  const validateBulkLeaveSelection = (
+    selectedIds: Set<string>,
+    dateMap: Record<string, LeaveSelection>,
+  ): boolean => {
+    const failures = validateLeaveAssignments(getBulkLeaveProposals(selectedIds, dateMap), allLeaveRecords, leaveLimits);
+    setBulkLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const validateLeaveFormSelection = (dateMap: Record<string, LeaveSelection>): boolean => {
+    const failures = validateLeaveAssignments(getLeaveFormProposals(dateMap), allLeaveRecords, leaveLimits);
+    setLeaveFormLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const validateEditLeaveSelection = (
+    dates = editSelectedDates,
+    reason = editLeaveForm.reason,
+  ): boolean => {
+    const failures = validateLeaveAssignments(
+      getEditLeaveProposals(dates, reason),
+      allLeaveRecords,
+      leaveLimits,
+      editingLeave?.id,
+    );
+    setEditLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const validateWizardLeaveSelection = (entries = wizardEmpLeaves): boolean => {
+    const failures = validateLeaveAssignments(getWizardLeaveProposals(entries), allLeaveRecords, leaveLimits);
+    setWizardLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
+  };
+
+  const selectBulkLeaveDate = (date: string, selection: LeaveSelection) => {
+    const nextMap = { ...bulkLeaveDateMap, [date]: selection };
+    if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, nextMap)) return;
+    setBulkLeaveDateMap(nextMap);
+  };
+
+  const removeBulkLeaveDate = (date: string) => {
+    const nextMap = { ...bulkLeaveDateMap };
+    delete nextMap[date];
+    setBulkLeaveDateMap(nextMap);
+    validateBulkLeaveSelection(bulkLeaveSelectedIds, nextMap);
+  };
+
+  const selectEmployeeLeaveDate = (date: string, selection: LeaveSelection) => {
+    const nextMap = { ...leaveDateMap, [date]: selection };
+    if (!validateLeaveFormSelection(nextMap)) return;
+    setLeaveDateMap(nextMap);
+  };
+
+  const removeEmployeeLeaveDate = (date: string) => {
+    const nextMap = { ...leaveDateMap };
+    delete nextMap[date];
+    setLeaveDateMap(nextMap);
+    validateLeaveFormSelection(nextMap);
+  };
+
+  const selectWizardLeaveDate = (date: string, selection: LeaveSelection) => {
+    const nextEntries = [
+      ...wizardEmpLeaves.filter((leave) => leave.date !== date),
+      { date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod },
+    ];
+    if (!validateWizardLeaveSelection(nextEntries)) return;
+    setWizardEmpLeaves(nextEntries);
+  };
+
+  const selectWizardLeaveDates = (dates: string[], selection: LeaveSelection) => {
+    const nextEntries = [
+      ...wizardEmpLeaves.filter((leave) => !dates.includes(leave.date)),
+      ...dates.map((date) => ({ date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod })),
+    ];
+    if (!validateWizardLeaveSelection(nextEntries)) return;
+    setWizardEmpLeaves(nextEntries);
+    setWizardMultiSelectedDates([]);
+  };
+
+  const removeWizardLeaveDate = (date: string) => {
+    const nextEntries = wizardEmpLeaves.filter((leave) => leave.date !== date);
+    setWizardEmpLeaves(nextEntries);
+    validateWizardLeaveSelection(nextEntries);
+  };
+
+  const toggleEditLeaveDate = (date: string) => {
+    const selected = editSelectedDates.includes(date);
+    const nextDates = selected ? editSelectedDates.filter((d) => d !== date) : [...editSelectedDates, date];
+    if (!selected && !validateEditLeaveSelection(nextDates)) return;
+    setEditSelectedDates(nextDates);
+    if (selected) validateEditLeaveSelection(nextDates);
+  };
+
+  const updateEditLeaveReason = (reason: string) => {
+    if (!validateEditLeaveSelection(editSelectedDates, reason)) return;
+    setEditLeaveForm({ reason });
+  };
+
+  const validateFreshLeaveProposals = async (
+    proposals: ProposedLeaveAssignment[],
+    setErrors: React.Dispatch<React.SetStateAction<string[]>>,
+    excludeLeaveId?: string,
+  ): Promise<boolean> => {
+    const { latestLeaves, latestLimits } = await fetchLeaveValidationData();
+    const failures = validateLeaveAssignments(proposals, latestLeaves, latestLimits, excludeLeaveId);
+    setErrors(formatLeaveLimitFailures(failures));
+    return failures.length === 0;
   };
 
   const fetchAttendanceLeavesForMonth = async (employee: Employee, month: number, year: number) => {
@@ -538,6 +731,8 @@ export const EmployeesPage: React.FC = () => {
     setCalendarYear(new Date().getFullYear());
     setExistingWeekOff(null);
     setEmployeeLeaves([]);
+    setLeaveFormLimitErrors([]);
+    setEditLeaveLimitErrors([]);
     setShowAddLeaveForm(false);
     setLeaveModalOpen(true);
     fetchLeavesForEmployee(employee);
@@ -557,6 +752,7 @@ export const EmployeesPage: React.FC = () => {
 
   const handleEditLeaveClick = (leave: any) => {
     setEditingLeave(leave);
+    setEditLeaveLimitErrors([]);
     setEditLeaveForm({ reason: leave.reason ?? '' });
     const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
     setEditSelectedDates(dates);
@@ -575,6 +771,13 @@ export const EmployeesPage: React.FC = () => {
     if (!editingLeave || editSelectedDates.length === 0) return;
     setIsSavingEditLeave(true);
     try {
+      const isValid = await validateFreshLeaveProposals(
+        getEditLeaveProposals(),
+        setEditLeaveLimitErrors,
+        editingLeave.id,
+      );
+      if (!isValid) return;
+
       const db = getFirestore();
       const sorted = [...editSelectedDates].sort();
       await updateDoc(doc(db, 'leaves', editingLeave.id), {
@@ -616,14 +819,21 @@ export const EmployeesPage: React.FC = () => {
     setBulkLeaveTooltipDate(null);
     setBulkLeaveCalendarMonth(new Date().getMonth());
     setBulkLeaveCalendarYear(new Date().getFullYear());
+    setBulkLeaveLimitErrors([]);
   };
 
   const toggleBulkLeaveEmployee = (id: string) => {
-    setBulkLeaveSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    const next = new Set(bulkLeaveSelectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+      setBulkLeaveSelectedIds(next);
+      validateBulkLeaveSelection(next, bulkLeaveDateMap);
+      return;
+    }
+
+    next.add(id);
+    if (!validateBulkLeaveSelection(next, bulkLeaveDateMap)) return;
+    setBulkLeaveSelectedIds(next);
   };
 
   const handleBulkLeaveSubmit = async (e: React.FormEvent) => {
@@ -632,6 +842,10 @@ export const EmployeesPage: React.FC = () => {
     if (bulkLeaveSelectedIds.size === 0 || dateEntries.length === 0) return;
     setIsSavingBulkLeave(true);
     try {
+      const proposals = getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveDateMap);
+      const isValid = await validateFreshLeaveProposals(proposals, setBulkLeaveLimitErrors);
+      if (!isValid) return;
+
       const db = getFirestore();
       for (const empId of bulkLeaveSelectedIds) {
         const employee = employees.find((e) => e.id === empId);
@@ -670,6 +884,9 @@ export const EmployeesPage: React.FC = () => {
     if (!leaveEmployee || dateEntries.length === 0) return;
     setIsSavingLeave(true);
     try {
+      const isValid = await validateFreshLeaveProposals(getLeaveFormProposals(leaveDateMap), setLeaveFormLimitErrors);
+      if (!isValid) return;
+
       const db = getFirestore();
       for (const [date, selection] of dateEntries) {
         await addDoc(collection(db, 'leaves'), {
@@ -1441,7 +1658,7 @@ export const EmployeesPage: React.FC = () => {
           <div className="flex items-center gap-2">
             {canManageLeaves && (
               <button
-                onClick={() => setBulkLeaveModalOpen(true)}
+                onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveModalOpen(true); }}
                 className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600/90 backdrop-blur-sm rounded-xl hover:bg-purple-700 transition-colors"
               >
                 <Umbrella size={16} />
@@ -2196,12 +2413,12 @@ export const EmployeesPage: React.FC = () => {
                                     ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                     ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
                                     <LeaveOptionMenu onSelect={(selection) => {
-                                      setBulkLeaveDateMap(prev => ({ ...prev, [dateStr]: selection }));
+                                      selectBulkLeaveDate(dateStr, selection);
                                       setBulkLeaveTooltipDate(null);
                                     }} />
                                     {selected && (
                                       <button type="button"
-                                        onClick={() => { setBulkLeaveDateMap(prev => { const n = { ...prev }; delete n[dateStr]; return n; }); setBulkLeaveTooltipDate(null); }}
+                                        onClick={() => { removeBulkLeaveDate(dateStr); setBulkLeaveTooltipDate(null); }}
                                         className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
                                       >Remove</button>
                                     )}
@@ -2216,6 +2433,15 @@ export const EmployeesPage: React.FC = () => {
                   );
                 })()}
               </div>
+
+              {bulkLeaveLimitErrors.length > 0 && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                  <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                  <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                    {bulkLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                  </ul>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeBulkLeaveModal}
@@ -2622,7 +2848,7 @@ export const EmployeesPage: React.FC = () => {
                                           const dateStr = `${editCalendarYear}-${String(editCalendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                                           const selected = editSelectedDates.includes(dateStr);
                                           return (
-                                            <button key={i} type="button" onClick={() => setEditSelectedDates(prev => selected ? prev.filter(d => d !== dateStr) : [...prev, dateStr])}
+                                            <button key={i} type="button" onClick={() => toggleEditLeaveDate(dateStr)}
                                               className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
                                                 selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
                                               }`}>{day}</button>
@@ -2637,7 +2863,7 @@ export const EmployeesPage: React.FC = () => {
                                 )}
                                 <div>
                                   <label className="block text-xs font-medium text-secondary-600 mb-1">Leave Type</label>
-                                  <select value={editLeaveForm.reason} onChange={(e) => setEditLeaveForm({ reason: e.target.value })}
+                                  <select value={editLeaveForm.reason} onChange={(e) => updateEditLeaveReason(e.target.value)}
                                     className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
                                     <option value="">Select leave type...</option>
                                     <option value="Week Off">Week Off</option>
@@ -2647,6 +2873,14 @@ export const EmployeesPage: React.FC = () => {
                                     <option value="Overtime Off">Overtime Off</option>
                                   </select>
                                 </div>
+                                {editLeaveLimitErrors.length > 0 && (
+                                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                                    <p className="text-xs font-medium text-red-700 mb-1">Leave limit check failed</p>
+                                    <ul className="list-disc pl-4 space-y-1 text-xs text-red-700">
+                                      {editLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                                    </ul>
+                                  </div>
+                                )}
                                 <div className="flex gap-2">
                                   <button type="button" onClick={() => setEditingLeave(null)}
                                     className="flex-1 py-1.5 text-xs font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
@@ -2759,12 +2993,12 @@ export const EmployeesPage: React.FC = () => {
                                               ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                               ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
                                               <LeaveOptionMenu onSelect={(selection) => {
-                                                setLeaveDateMap(prev => ({ ...prev, [dateStr]: selection }));
+                                                selectEmployeeLeaveDate(dateStr, selection);
                                                 setLeaveTooltipDate(null);
                                               }} />
                                               {selected && (
                                                 <button type="button"
-                                                  onClick={() => { setLeaveDateMap(prev => { const n = { ...prev }; delete n[dateStr]; return n; }); setLeaveTooltipDate(null); }}
+                                                  onClick={() => { removeEmployeeLeaveDate(dateStr); setLeaveTooltipDate(null); }}
                                                   className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
                                                 >Remove</button>
                                               )}
@@ -2781,6 +3015,15 @@ export const EmployeesPage: React.FC = () => {
 
                           {Object.keys(leaveDateMap).length > 0 && (
                             <p className="text-xs text-purple-700 font-medium">{Object.keys(leaveDateMap).length} date{Object.keys(leaveDateMap).length > 1 ? 's' : ''} selected</p>
+                          )}
+
+                          {leaveFormLimitErrors.length > 0 && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                              <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                              <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                                {leaveFormLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                              </ul>
+                            </div>
                           )}
 
                           <div className="flex gap-2">
@@ -2802,7 +3045,7 @@ export const EmployeesPage: React.FC = () => {
                         </form>
                       ) : (
                         <button
-                          onClick={() => setShowAddLeaveForm(true)}
+                          onClick={() => { setLeaveFormLimitErrors([]); setShowAddLeaveForm(true); }}
                           disabled={!canManageLeaves}
                           className={`w-full py-2 text-sm font-medium text-purple-700 border border-purple-300 rounded-lg hover:bg-purple-50 transition-colors ${canManageLeaves ? '' : 'hidden'}`}
                         >
@@ -2849,6 +3092,7 @@ export const EmployeesPage: React.FC = () => {
                     });
                     setWizardEmpLeaves([]);
                     setWizardMultiSelectedDates([]);
+                    setWizardLeaveLimitErrors([]);
                     setWizardShowConfirm(false);
                     const d = new Date(lastAssignedShiftDates.fromDate);
                     setWizardCalYear(d.getFullYear());
@@ -2991,6 +3235,14 @@ export const EmployeesPage: React.FC = () => {
                         <p className="text-xs text-secondary-500">{emp.employeeCode}</p>
                       </div>
                     </div>
+                    {wizardLeaveLimitErrors.length > 0 && (
+                      <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                        <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                        <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                          {wizardLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                        </ul>
+                      </div>
+                    )}
                     {wizardEmpLeaves.length === 0 && shiftChangedDates.length === 0 ? (
                       <p className="text-xs text-secondary-400 italic">No leaves assigned</p>
                     ) : (
@@ -3025,6 +3277,9 @@ export const EmployeesPage: React.FC = () => {
                     onClick={async () => {
                       setIsSavingLeaves(true);
                       try {
+                        const isValid = await validateFreshLeaveProposals(getWizardLeaveProposals(), setWizardLeaveLimitErrors);
+                        if (!isValid) return;
+
                         const leaves = wizardEmpLeaves;
                         if (leaves.length > 0) {
                           const empSnap = await getDocs(query(collection(db, 'employees'), where('employeeCode', '==', emp.employeeCode)));
@@ -3168,10 +3423,7 @@ export const EmployeesPage: React.FC = () => {
                             <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
                               <LeaveOptionMenu onSelect={(selection) => {
-                                setWizardEmpLeaves(prev => {
-                                  const filtered = prev.filter(l => l.date !== ds);
-                                  return [...filtered, { date: ds, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod }];
-                                });
+                                selectWizardLeaveDate(ds, selection);
                                 setWizardTooltipDate(null); setWizardTooltipPos(null);
                               }} />
                               <button
@@ -3190,7 +3442,7 @@ export const EmployeesPage: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setWizardEmpLeaves(prev => prev.filter(l => l.date !== ds));
+                                    removeWizardLeaveDate(ds);
                                     setWizardTooltipDate(null); setWizardTooltipPos(null);
                                   }}
                                   className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
@@ -3210,13 +3462,7 @@ export const EmployeesPage: React.FC = () => {
                   <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
                     <div className="flex flex-wrap gap-2">
-                      <LeaveOptionMenu onSelect={(selection) => {
-                        setWizardEmpLeaves((prev) => {
-                          const remaining = prev.filter((leave) => !wizardMultiSelectedDates.includes(leave.date));
-                          return [...remaining, ...wizardMultiSelectedDates.map((date) => ({ date, type: selection.reason, duration: selection.duration, halfDayPeriod: selection.halfDayPeriod }))];
-                        });
-                        setWizardMultiSelectedDates([]);
-                      }} />
+                      <LeaveOptionMenu onSelect={(selection) => selectWizardLeaveDates(wizardMultiSelectedDates, selection)} />
                       <button
                         type="button"
                         onClick={() => setWizardMultiSelectedDates([])}
@@ -3229,6 +3475,14 @@ export const EmployeesPage: React.FC = () => {
                 )}
                 {selectedDates.length > 0 && (
                   <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
+                )}
+                {wizardLeaveLimitErrors.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                    <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
+                    <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
+                      {wizardLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                    </ul>
+                  </div>
                 )}
               </div>
 
