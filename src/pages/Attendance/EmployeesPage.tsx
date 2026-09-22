@@ -8,9 +8,13 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
+import { LeaveAvailabilitySummary } from '@/components/attendance/LeaveAvailabilitySummary';
 import {
+  formatLeaveCount,
   formatLeaveLimitFailures,
+  getLeaveAvailabilitySummaries,
   validateLeaveAssignments,
+  type LeaveAvailabilitySummary as Availability,
   type LeaveLimitRecord,
   type ProposedLeaveAssignment,
   type StoredLeaveRecord,
@@ -47,17 +51,23 @@ const leavePeriodLabel = (leave: { duration?: LeaveDuration; halfDayPeriod?: Hal
 
 const LEAVE_REASONS = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
 
-const LeaveOptionMenu: React.FC<{ onSelect: (selection: LeaveSelection) => void }> = ({ onSelect }) => {
+const LeaveOptionMenu: React.FC<{ onSelect: (selection: LeaveSelection) => void; availabilityByType?: Record<string, Availability | undefined> }> = ({ onSelect, availabilityByType }) => {
   const [halfDayPeriod, setHalfDayPeriod] = useState<HalfDayPeriod | null>(null);
 
   return (
     <>
       {!halfDayPeriod ? (
         <>
-          {LEAVE_REASONS.map((reason) => (
-            <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })}
-              className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">{reason}</button>
-          ))}
+          {LEAVE_REASONS.map((reason) => {
+            const availability = availabilityByType?.[reason];
+            return (
+              <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })}
+                className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">
+                <span>{reason}</span>
+                {availability && <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>}
+              </button>
+            );
+          })}
           <button type="button" onClick={() => setHalfDayPeriod('first_half')}
             className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (First)</span><ChevronRight size={14} /></button>
           <button type="button" onClick={() => setHalfDayPeriod('second_half')}
@@ -71,10 +81,16 @@ const LeaveOptionMenu: React.FC<{ onSelect: (selection: LeaveSelection) => void 
       {halfDayPeriod && (
         <div className="absolute left-full bottom-0 ml-1 z-20 w-48 bg-white border border-secondary-200 rounded-lg shadow-lg p-2">
           <p className="px-2 py-1 text-xs font-semibold text-secondary-500">Select leave type</p>
-          {LEAVE_REASONS.map((reason) => (
-            <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })}
-              className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">{reason}</button>
-          ))}
+          {LEAVE_REASONS.map((reason) => {
+            const availability = availabilityByType?.[reason];
+            return (
+              <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })}
+                className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">
+                <span>{reason}</span>
+                {availability && <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
     </>
@@ -490,6 +506,37 @@ export const EmployeesPage: React.FC = () => {
       duration: entry.duration,
     }));
   };
+
+  const getEmployeePickerAvailability = (employee: Pick<Employee, 'employeeCode' | 'employeeName'> | null, date: string) => {
+    if (!employee?.employeeCode) return {};
+    const summaries = getLeaveAvailabilitySummaries(
+      LEAVE_REASONS.map((leaveType) => ({ employeeCode: employee.employeeCode!, employeeName: employee.employeeName, date, leaveType, duration: 'full_day' })),
+      allLeaveRecords,
+      leaveLimits,
+    );
+    return Object.fromEntries(summaries.map((summary) => [summary.leaveType, summary]));
+  };
+
+  const getBulkPickerAvailability = (date: string) => {
+    const proposals = Array.from(bulkLeaveSelectedIds).flatMap((employeeId) => {
+      const employee = employees.find((item) => item.id === employeeId);
+      if (!employee?.employeeCode) return [];
+      return LEAVE_REASONS.map((leaveType) => ({ employeeCode: employee.employeeCode!, employeeName: employee.employeeName, date, leaveType, duration: 'full_day' }));
+    });
+    const summaries = getLeaveAvailabilitySummaries(proposals, allLeaveRecords, leaveLimits);
+    return Object.fromEntries(LEAVE_REASONS.map((leaveType) => {
+      const matching = summaries.filter((summary) => summary.leaveType === leaveType);
+      const configured = matching.filter((summary) => summary.status === 'configured');
+      if (configured.length === 0) return [leaveType, matching[0]];
+      return [leaveType, configured.reduce((lowest, summary) =>
+        (summary.remainingBeforeSelection ?? Infinity) < (lowest.remainingBeforeSelection ?? Infinity) ? summary : lowest)];
+    }));
+  };
+
+  const bulkLeaveAvailability = getLeaveAvailabilitySummaries(getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveDateMap), allLeaveRecords, leaveLimits);
+  const employeeLeaveAvailability = getLeaveAvailabilitySummaries(getLeaveFormProposals(leaveDateMap), allLeaveRecords, leaveLimits);
+  const editLeaveAvailability = getLeaveAvailabilitySummaries(getEditLeaveProposals(), allLeaveRecords, leaveLimits, editingLeave?.id);
+  const wizardLeaveAvailability = getLeaveAvailabilitySummaries(getWizardLeaveProposals(), allLeaveRecords, leaveLimits);
 
   const validateBulkLeaveSelection = (
     selectedIds: Set<string>,
@@ -2412,7 +2459,7 @@ export const EmployeesPage: React.FC = () => {
                                   <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
                                     ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                     ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
-                                    <LeaveOptionMenu onSelect={(selection) => {
+                                    <LeaveOptionMenu availabilityByType={getBulkPickerAvailability(dateStr)} onSelect={(selection) => {
                                       selectBulkLeaveDate(dateStr, selection);
                                       setBulkLeaveTooltipDate(null);
                                     }} />
@@ -2434,6 +2481,7 @@ export const EmployeesPage: React.FC = () => {
                 })()}
               </div>
 
+              {bulkLeaveAvailability.length > 0 && <LeaveAvailabilitySummary summaries={bulkLeaveAvailability} aggregate title="Selected Leave Availability" />}
               {bulkLeaveLimitErrors.length > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                   <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
@@ -2873,6 +2921,7 @@ export const EmployeesPage: React.FC = () => {
                                     <option value="Overtime Off">Overtime Off</option>
                                   </select>
                                 </div>
+                                {editLeaveAvailability.length > 0 && <LeaveAvailabilitySummary summaries={editLeaveAvailability} title="Updated Leave Availability" compact />}
                                 {editLeaveLimitErrors.length > 0 && (
                                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                                     <p className="text-xs font-medium text-red-700 mb-1">Leave limit check failed</p>
@@ -2992,7 +3041,7 @@ export const EmployeesPage: React.FC = () => {
                                             <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
                                               ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                               ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
-                                              <LeaveOptionMenu onSelect={(selection) => {
+                                              <LeaveOptionMenu availabilityByType={getEmployeePickerAvailability(leaveEmployee, dateStr)} onSelect={(selection) => {
                                                 selectEmployeeLeaveDate(dateStr, selection);
                                                 setLeaveTooltipDate(null);
                                               }} />
@@ -3017,6 +3066,7 @@ export const EmployeesPage: React.FC = () => {
                             <p className="text-xs text-purple-700 font-medium">{Object.keys(leaveDateMap).length} date{Object.keys(leaveDateMap).length > 1 ? 's' : ''} selected</p>
                           )}
 
+                          {employeeLeaveAvailability.length > 0 && <LeaveAvailabilitySummary summaries={employeeLeaveAvailability} title="Selected Leave Availability" />}
                           {leaveFormLimitErrors.length > 0 && (
                             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                               <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
@@ -3235,6 +3285,7 @@ export const EmployeesPage: React.FC = () => {
                         <p className="text-xs text-secondary-500">{emp.employeeCode}</p>
                       </div>
                     </div>
+                    {wizardLeaveAvailability.length > 0 && <LeaveAvailabilitySummary summaries={wizardLeaveAvailability} title="Selected Leave Availability" />}
                     {wizardLeaveLimitErrors.length > 0 && (
                       <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                         <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
@@ -3422,7 +3473,7 @@ export const EmployeesPage: React.FC = () => {
                             <div className="fixed inset-0 z-[99]" onClick={() => { setWizardTooltipDate(null); setWizardTooltipPos(null); }} />
                             <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
-                              <LeaveOptionMenu onSelect={(selection) => {
+                              <LeaveOptionMenu availabilityByType={getEmployeePickerAvailability(wizardEmployee, ds)} onSelect={(selection) => {
                                 selectWizardLeaveDate(ds, selection);
                                 setWizardTooltipDate(null); setWizardTooltipPos(null);
                               }} />
@@ -3462,7 +3513,7 @@ export const EmployeesPage: React.FC = () => {
                   <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
                     <div className="flex flex-wrap gap-2">
-                      <LeaveOptionMenu onSelect={(selection) => selectWizardLeaveDates(wizardMultiSelectedDates, selection)} />
+                      <LeaveOptionMenu availabilityByType={wizardMultiSelectedDates[0] ? getEmployeePickerAvailability(wizardEmployee, wizardMultiSelectedDates[0]) : {}} onSelect={(selection) => selectWizardLeaveDates(wizardMultiSelectedDates, selection)} />
                       <button
                         type="button"
                         onClick={() => setWizardMultiSelectedDates([])}
@@ -3476,6 +3527,7 @@ export const EmployeesPage: React.FC = () => {
                 {selectedDates.length > 0 && (
                   <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
                 )}
+                {wizardLeaveAvailability.length > 0 && <div className="mt-3"><LeaveAvailabilitySummary summaries={wizardLeaveAvailability} title="Selected Leave Availability" /></div>}
                 {wizardLeaveLimitErrors.length > 0 && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>

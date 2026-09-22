@@ -8,9 +8,13 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
+import { LeaveAvailabilitySummary } from '@/components/attendance/LeaveAvailabilitySummary';
 import {
+  formatLeaveCount,
   formatLeaveLimitFailures,
+  getLeaveAvailabilitySummaries,
   validateLeaveAssignments,
+  type LeaveAvailabilitySummary as Availability,
   type LeaveLimitRecord,
   type ProposedLeaveAssignment,
   type StoredLeaveRecord,
@@ -136,13 +140,16 @@ type WizardHalfDayPeriod = 'first_half' | 'second_half';
 interface WizardLeaveSelection { reason: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: WizardHalfDayPeriod; }
 const WIZARD_LEAVE_REASONS = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
 
-const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelection) => void }> = ({ onSelect }) => {
+const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelection) => void; availabilityByType?: Record<string, Availability | undefined> }> = ({ onSelect, availabilityByType }) => {
   const [halfDayPeriod, setHalfDayPeriod] = useState<WizardHalfDayPeriod | null>(null);
   return (
     <>
       {!halfDayPeriod ? (
         <>
-          {WIZARD_LEAVE_REASONS.map((reason) => <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">{reason}</button>)}
+          {WIZARD_LEAVE_REASONS.map((reason) => {
+            const availability = availabilityByType?.[reason];
+            return <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>{reason}</span>{availability && <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>}</button>;
+          })}
           <button type="button" onClick={() => setHalfDayPeriod('first_half')} className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (First)</span><ChevronRight size={14} /></button>
           <button type="button" onClick={() => setHalfDayPeriod('second_half')} className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (Second)</span><ChevronRight size={14} /></button>
         </>
@@ -154,7 +161,10 @@ const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelecti
       {halfDayPeriod && (
         <div className="absolute left-full bottom-0 ml-1 z-20 w-48 bg-white border border-secondary-200 rounded-lg shadow-lg p-2">
           <p className="px-2 py-1 text-xs font-semibold text-secondary-500">Select leave type</p>
-          {WIZARD_LEAVE_REASONS.map((reason) => <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50">{reason}</button>)}
+          {WIZARD_LEAVE_REASONS.map((reason) => {
+            const availability = availabilityByType?.[reason];
+            return <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>{reason}</span>{availability && <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>}</button>;
+          })}
         </div>
       )}
     </>
@@ -572,6 +582,21 @@ export const ShiftsPage: React.FC = () => {
       leaveType: leave.type,
       duration: leave.duration,
     })));
+
+  const getWizardPickerAvailability = (employee: EmpLeaveEntry, date: string) => {
+    const summaries = getLeaveAvailabilitySummaries(
+      WIZARD_LEAVE_REASONS.map((leaveType) => ({ employeeCode: employee.employeeCode, employeeName: employee.employeeName, date, leaveType, duration: 'full_day' })),
+      allLeaveRecords,
+      leaveLimits,
+    );
+    return Object.fromEntries(summaries.map((summary) => [summary.leaveType, summary]));
+  };
+
+  const wizardLeaveAvailability = getLeaveAvailabilitySummaries(getWizardLeaveProposals(), allLeaveRecords, leaveLimits);
+  const currentWizardEmployee = wizardEmployees[wizardEmpIndex];
+  const currentWizardAvailability = currentWizardEmployee
+    ? wizardLeaveAvailability.filter((summary) => summary.employeeCode === currentWizardEmployee.employeeCode)
+    : [];
 
   const validateWizardEmployeeSelection = (
     employee: EmpLeaveEntry,
@@ -1488,6 +1513,7 @@ export const ShiftsPage: React.FC = () => {
                   <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {wizardLeaveAvailability.length > 0 && <LeaveAvailabilitySummary summaries={wizardLeaveAvailability} aggregate title="Selected Leave Availability" />}
                   {wizardLeaveLimitErrors.length > 0 && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                       <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
@@ -1700,7 +1726,7 @@ export const ShiftsPage: React.FC = () => {
                             <div className="fixed inset-0 z-[99]" onClick={() => { setWizardTooltipDate(null); setWizardTooltipPos(null); }} />
                           <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
-                            <WizardLeaveOptionMenu onSelect={(selection) => {
+                            <WizardLeaveOptionMenu availabilityByType={getWizardPickerAvailability(emp, ds)} onSelect={(selection) => {
                               selectWizardLeaveDate(emp, ds, selection);
                               setWizardTooltipDate(null); setWizardTooltipPos(null);
                             }} />
@@ -1739,7 +1765,7 @@ export const ShiftsPage: React.FC = () => {
                   <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
                     <div className="flex flex-wrap gap-2">
-                      <WizardLeaveOptionMenu onSelect={(selection) => selectWizardLeaveDates(emp, wizardMultiSelectedDates, selection)} />
+                      <WizardLeaveOptionMenu availabilityByType={wizardMultiSelectedDates[0] ? getWizardPickerAvailability(emp, wizardMultiSelectedDates[0]) : {}} onSelect={(selection) => selectWizardLeaveDates(emp, wizardMultiSelectedDates, selection)} />
                       <button
                         type="button"
                         onClick={() => setWizardMultiSelectedDates([])}
@@ -1753,6 +1779,7 @@ export const ShiftsPage: React.FC = () => {
                 {selectedDates.length > 0 && (
                   <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
                 )}
+                {currentWizardAvailability.length > 0 && <div className="mt-3"><LeaveAvailabilitySummary summaries={currentWizardAvailability} title="Selected Leave Availability" /></div>}
                 {wizardLeaveLimitErrors.length > 0 && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>

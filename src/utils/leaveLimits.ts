@@ -39,6 +39,23 @@ interface ProposalGroup {
   dates: Set<string>;
 }
 
+export type LeaveAvailabilityStatus = 'configured' | 'no_limit' | 'overlapping_limits';
+
+export interface LeaveAvailabilitySummary {
+  status: LeaveAvailabilityStatus;
+  employeeCode: string;
+  employeeName?: string;
+  leaveType: string;
+  fromDate?: string;
+  toDate?: string;
+  assigned?: number;
+  used: number;
+  selected: number;
+  remainingBeforeSelection?: number;
+  remainingAfterSelection?: number;
+  dates: string[];
+}
+
 export interface LeaveLimitFailure {
   kind: 'limit_exceeded' | 'overlapping_limits';
   employeeCode: string;
@@ -187,6 +204,78 @@ const getConfiguredLimit = (limit: LeaveLimitRecord, leaveType: string): number 
   return entry?.[1];
 };
 
+export const getLeaveAvailabilitySummaries = (
+  proposals: ProposedLeaveAssignment[],
+  existingLeaves: StoredLeaveRecord[],
+  limits: LeaveLimitRecord[],
+  excludeLeaveId?: string,
+): LeaveAvailabilitySummary[] => {
+  const groups = new Map<string, {
+    status: LeaveAvailabilityStatus;
+    employeeCode: string;
+    employeeName?: string;
+    leaveType: string;
+    limit?: LeaveLimitRecord;
+    selected: number;
+    dates: Set<string>;
+  }>();
+
+  proposals.forEach((proposal) => {
+    const targetCode = normalizeLeaveEmployeeCode(proposal.employeeCode);
+    const matchingLimits = limits.filter((limit) =>
+      normalizeLeaveEmployeeCode(limit.employeeCode) === targetCode &&
+      isValidDate(limit.fromDate) &&
+      isValidDate(limit.toDate) &&
+      proposal.date >= limit.fromDate! &&
+      proposal.date <= limit.toDate!);
+    const configuredLimit = matchingLimits.length === 1 ? getConfiguredLimit(matchingLimits[0], proposal.leaveType) : undefined;
+    const status: LeaveAvailabilityStatus = matchingLimits.length > 1
+      ? 'overlapping_limits'
+      : configuredLimit === undefined ? 'no_limit' : 'configured';
+    const limit = matchingLimits.length === 1 ? matchingLimits[0] : undefined;
+    const periodKey = limit ? (limit.id || `${limit.fromDate}:${limit.toDate}`) : status;
+    const key = [targetCode, normalizeLeaveType(proposal.leaveType), status, periodKey].join('|');
+    const group = groups.get(key) ?? {
+      status,
+      employeeCode: proposal.employeeCode,
+      employeeName: proposal.employeeName,
+      leaveType: proposal.leaveType,
+      limit,
+      selected: 0,
+      dates: new Set<string>(),
+    };
+    group.selected += getLeaveDayValue(proposal.duration);
+    group.dates.add(proposal.date);
+    groups.set(key, group);
+  });
+
+  return [...groups.values()].map((group) => {
+    const assigned = group.limit ? getConfiguredLimit(group.limit, group.leaveType) : undefined;
+    const usage = group.limit?.fromDate && group.limit.toDate
+      ? getLeaveUsageByType(group.employeeCode, group.limit.fromDate, group.limit.toDate, existingLeaves, excludeLeaveId)
+      : {};
+    const usageEntry = Object.entries(usage).find(([type]) => normalizeLeaveType(type) === normalizeLeaveType(group.leaveType));
+    const used = usageEntry?.[1] ?? 0;
+    return {
+      status: group.status,
+      employeeCode: group.employeeCode,
+      employeeName: group.employeeName,
+      leaveType: group.leaveType,
+      fromDate: group.limit?.fromDate,
+      toDate: group.limit?.toDate,
+      assigned,
+      used,
+      selected: group.selected,
+      remainingBeforeSelection: assigned === undefined ? undefined : assigned - used,
+      remainingAfterSelection: assigned === undefined ? undefined : assigned - used - group.selected,
+      dates: [...group.dates].sort(),
+    };
+  }).sort((a, b) =>
+    (a.employeeName || a.employeeCode).localeCompare(b.employeeName || b.employeeCode) ||
+    a.leaveType.localeCompare(b.leaveType) ||
+    (a.fromDate || '').localeCompare(b.fromDate || ''));
+};
+
 export const validateLeaveAssignments = (
   proposals: ProposedLeaveAssignment[],
   existingLeaves: StoredLeaveRecord[],
@@ -281,7 +370,7 @@ export const validateLeaveAssignments = (
   return [...overlapGroups.values(), ...failures];
 };
 
-const formatCount = (value?: number): string => {
+export const formatLeaveCount = (value?: number): string => {
   if (value === undefined) return '—';
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 };
@@ -296,5 +385,5 @@ export const formatLeaveLimitFailures = (failures: LeaveLimitFailure[]): string[
       return `${employee}: overlapping limit periods cover ${failure.dates.join(', ')} (${periods}). Resolve the overlapping configuration before assigning.`;
     }
 
-    return `${employee}: ${failure.leaveType} would reach ${formatCount(failure.totalUsage)} / ${formatCount(failure.limit)} for ${failure.fromDate} → ${failure.toDate} (already used ${formatCount(failure.currentUsage)}, requested ${formatCount(failure.requestedUsage)}).`;
+    return `${employee}: ${failure.leaveType} would reach ${formatLeaveCount(failure.totalUsage)} / ${formatLeaveCount(failure.limit)} for ${failure.fromDate} → ${failure.toDate} (already used ${formatLeaveCount(failure.currentUsage)}, requested ${formatLeaveCount(failure.requestedUsage)}).`;
   });

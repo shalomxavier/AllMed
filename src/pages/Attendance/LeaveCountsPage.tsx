@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Calendar, User, Pencil, Eye, X, Trash2, Search } from 'lucide-react';
+import { ArrowLeft, Calendar, User, Pencil, Eye, X, Trash2, Search, Plus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import {
   findOverlappingLeaveLimits,
+  formatLeaveCount,
   getLeaveUsageByType,
   normalizeLeaveEmployeeCode,
   type LeaveLimitRecord,
@@ -30,10 +31,18 @@ type LeaveLimit = LeaveLimitRecord;
 
 const LEAVE_TYPES = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
 
+const formatLimitDate = (date?: string): string => {
+  if (!date) return '—';
+  const [year, month, day] = date.split('-');
+  return year && month && day ? `${day}-${month}-${year}` : date;
+};
+
 const formatDateRange = (from?: string, to?: string): string => {
-  if (!from || !to) return from || to || '—';
-  if (from === to) return from;
-  return `${from} → ${to}`;
+  const formattedFrom = formatLimitDate(from);
+  const formattedTo = formatLimitDate(to);
+  if (!from || !to) return formattedFrom !== '—' ? formattedFrom : formattedTo;
+  if (from === to) return formattedFrom;
+  return `${formattedFrom} → ${formattedTo}`;
 };
 
 const kebabCase = (value: string): string => value.toLowerCase().replace(/\s+/g, '-');
@@ -48,6 +57,9 @@ export const LeaveCountsPage: React.FC = () => {
   const [savingLimit, setSavingLimit] = useState(false);
   const [deletingLimit, setDeletingLimit] = useState<string | null>(null);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [editingLimit, setEditingLimit] = useState<LeaveLimit | null>(null);
+  const [managingEmployee, setManagingEmployee] = useState<Employee | null>(null);
+  const [returnToManage, setReturnToManage] = useState(false);
   const [viewingEmployee, setViewingEmployee] = useState<Employee | null>(null);
   const [limitForm, setLimitForm] = useState<{
     fromDate: string;
@@ -55,6 +67,10 @@ export const LeaveCountsPage: React.FC = () => {
     limits: Record<string, string>;
   }>({ fromDate: '', toDate: '', limits: {} });
   const [limitFormError, setLimitFormError] = useState('');
+  const [manageLimitError, setManageLimitError] = useState('');
+  const [limitOverlapWarning, setLimitOverlapWarning] = useState('');
+  const [expandedLimitId, setExpandedLimitId] = useState<string | null>(null);
+  const [expandedViewLimitId, setExpandedViewLimitId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
@@ -114,31 +130,63 @@ export const LeaveCountsPage: React.FC = () => {
     fetchData();
   }, [currentUser, userData]);
 
-  const openEditLimit = (employee: Employee) => {
+  const canManageLimits = userData?.designation === 'Director' || userData?.designation === 'HR';
+
+  const getEmployeeLimits = (employee?: Employee | null) => {
+    const employeeCode = normalizeLeaveEmployeeCode(employee?.employeeCode);
+    return limits
+      .filter((limit) => normalizeLeaveEmployeeCode(limit.employeeCode) === employeeCode)
+      .sort((a, b) => (a.fromDate || '').localeCompare(b.fromDate || ''));
+  };
+
+  const openAddLimit = (employee: Employee, fromManage = false) => {
+    if (!canManageLimits) return;
     setEditingEmployee(employee);
+    setEditingLimit(null);
+    setReturnToManage(fromManage);
+    setLimitForm({ fromDate: '', toDate: '', limits: {} });
     setLimitFormError('');
-    const latestLimit = (employee.limits ?? [])
-      .slice()
-      .sort((a, b) => (b.fromDate || '').localeCompare(a.fromDate || ''))[0];
-    if (latestLimit) {
-      const prefilledLimits: Record<string, string> = {};
-      Object.entries(latestLimit.limits || {}).forEach(([type, value]) => {
-        prefilledLimits[type] = String(value);
-      });
-      setLimitForm({
-        fromDate: latestLimit.fromDate || '',
-        toDate: latestLimit.toDate || '',
-        limits: prefilledLimits,
-      });
-    } else {
-      setLimitForm({ fromDate: '', toDate: '', limits: {} });
-    }
+    setLimitOverlapWarning('');
+    if (fromManage) setManagingEmployee(null);
+  };
+
+  const openViewLimits = (employee: Employee) => {
+    setViewingEmployee(employee);
+    setExpandedViewLimitId(null);
+  };
+
+  const openManageLimits = (employee: Employee) => {
+    if (!canManageLimits) return;
+    setManagingEmployee(employee);
+    setManageLimitError('');
+    setExpandedLimitId(null);
+  };
+
+  const openEditLimit = (employee: Employee, limit: LeaveLimit) => {
+    if (!canManageLimits) return;
+    const prefilledLimits: Record<string, string> = {};
+    Object.entries(limit.limits || {}).forEach(([type, value]) => {
+      prefilledLimits[type] = String(value);
+    });
+    setEditingEmployee(employee);
+    setEditingLimit(limit);
+    setReturnToManage(true);
+    setManagingEmployee(null);
+    setLimitForm({ fromDate: limit.fromDate || '', toDate: limit.toDate || '', limits: prefilledLimits });
+    setLimitFormError('');
+    setLimitOverlapWarning('');
   };
 
   const closeEditLimit = () => {
+    const employee = editingEmployee;
+    const shouldReturn = returnToManage;
     setEditingEmployee(null);
+    setEditingLimit(null);
+    setReturnToManage(false);
     setLimitForm({ fromDate: '', toDate: '', limits: {} });
     setLimitFormError('');
+    setLimitOverlapWarning('');
+    if (shouldReturn && employee) setManagingEmployee(employee);
   };
 
   const handleSaveLimit = async (e: React.FormEvent) => {
@@ -171,20 +219,31 @@ export const LeaveCountsPage: React.FC = () => {
         editingEmployee.employeeCode ?? '',
         limitForm.fromDate,
         limitForm.toDate,
+        editingLimit?.id,
       );
       if (overlaps.length > 0) {
         const periods = overlaps.map((limit) => formatDateRange(limit.fromDate, limit.toDate)).join(', ');
-        setLimitFormError(`A leave-limit period already exists for ${editingEmployee.employeeName || 'this employee'} covering ${periods}. Choose a non-overlapping date range.`);
+        setLimitOverlapWarning(`A leave-limit period already exists for ${editingEmployee.employeeName || 'this employee'} covering ${periods}. Choose a non-overlapping date range.`);
         return;
       }
 
-      await addDoc(collection(db, 'leaveLimits'), {
-        employeeCode: editingEmployee.employeeCode,
-        fromDate: limitForm.fromDate,
-        toDate: limitForm.toDate,
-        limits: limitsToSave,
-        createdAt: serverTimestamp(),
-      });
+      if (editingLimit) {
+        await updateDoc(doc(db, 'leaveLimits', editingLimit.id), {
+          employeeCode: editingEmployee.employeeCode,
+          fromDate: limitForm.fromDate,
+          toDate: limitForm.toDate,
+          limits: limitsToSave,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, 'leaveLimits'), {
+          employeeCode: editingEmployee.employeeCode,
+          fromDate: limitForm.fromDate,
+          toDate: limitForm.toDate,
+          limits: limitsToSave,
+          createdAt: serverTimestamp(),
+        });
+      }
       const snapshot = await getDocs(collection(db, 'leaveLimits'));
       const updated: LeaveLimit[] = [];
       snapshot.forEach((d) => updated.push({ id: d.id, ...d.data() } as LeaveLimit));
@@ -192,23 +251,23 @@ export const LeaveCountsPage: React.FC = () => {
       closeEditLimit();
     } catch (err) {
       console.error('Error saving leave limit:', err);
+      setLimitFormError('Unable to save this leave-limit period. Please try again.');
     } finally {
       setSavingLimit(false);
     }
   };
 
   const handleDeleteLimit = async (limitId: string) => {
+    if (!canManageLimits || !window.confirm('Delete this leave-limit period? This action cannot be undone.')) return;
     setDeletingLimit(limitId);
+    setManageLimitError('');
     try {
       const db = getFirestore();
       await deleteDoc(doc(db, 'leaveLimits', limitId));
       setLimits((prev) => prev.filter((l) => l.id !== limitId));
-      setViewingEmployee((prev) => {
-        if (!prev) return prev;
-        return { ...prev, limits: (prev.limits ?? []).filter((l) => l.id !== limitId) };
-      });
     } catch (err) {
       console.error('Error deleting leave limit:', err);
+      setManageLimitError('Unable to delete this leave-limit period. Please try again.');
     } finally {
       setDeletingLimit(null);
     }
@@ -315,11 +374,11 @@ export const LeaveCountsPage: React.FC = () => {
               key={emp.id}
               role="button"
               tabIndex={0}
-              onClick={() => setViewingEmployee(emp)}
+              onClick={() => openViewLimits(emp)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  setViewingEmployee(emp);
+                  openViewLimits(emp);
                 }
               }}
               className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg p-4 flex items-center gap-3 cursor-pointer hover:shadow-xl transition-shadow"
@@ -332,15 +391,26 @@ export const LeaveCountsPage: React.FC = () => {
                 <p className="text-xs text-secondary-500 truncate">{emp.employeeCode || '—'}</p>
               </div>
               <div className="flex items-center gap-1">
+                {canManageLimits && (
+                  <>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openAddLimit(emp); }}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                      aria-label="Add new limit"
+                    >
+                      <Plus size={16} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openManageLimits(emp); }}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      aria-label="Manage limits"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  </>
+                )}
                 <button
-                  onClick={(e) => { e.stopPropagation(); openEditLimit(emp); }}
-                  className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                  aria-label="Edit limits"
-                >
-                  <Pencil size={16} />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setViewingEmployee(emp); }}
+                  onClick={(e) => { e.stopPropagation(); openViewLimits(emp); }}
                   className="p-1.5 rounded-lg text-secondary-500 hover:text-teal-600 hover:bg-teal-50 transition-colors"
                   aria-label="View limits"
                 >
@@ -358,7 +428,7 @@ export const LeaveCountsPage: React.FC = () => {
           <div className="bg-white rounded-xl max-w-md w-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
               <div>
-                <h2 className="text-base font-semibold text-secondary-900">Assign Leave Limits</h2>
+                <h2 className="text-base font-semibold text-secondary-900">{editingLimit ? 'Edit Leave Limits' : 'Add Leave Limits'}</h2>
                 <p className="text-xs text-secondary-500">{editingEmployee.employeeName} · {editingEmployee.employeeCode}</p>
               </div>
               <button onClick={closeEditLimit} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
@@ -430,7 +500,7 @@ export const LeaveCountsPage: React.FC = () => {
                   disabled={savingLimit}
                   className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
                 >
-                  {savingLimit ? 'Saving...' : 'Save Limits'}
+                  {savingLimit ? 'Saving...' : editingLimit ? 'Update Limits' : 'Save Limits'}
                 </button>
               </div>
             </form>
@@ -438,94 +508,199 @@ export const LeaveCountsPage: React.FC = () => {
         </div>
       )}
 
-      {/* View Limits Modal */}
-      {viewingEmployee && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setViewingEmployee(null)}>
-          <div className="bg-white rounded-xl max-w-md w-full max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
-              <div>
-                <h2 className="text-base font-semibold text-secondary-900">Configured Limits</h2>
-                <p className="text-xs text-secondary-500">{viewingEmployee.employeeName} · {viewingEmployee.employeeCode}</p>
-              </div>
-              <button onClick={() => setViewingEmployee(null)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-                <X size={18} className="text-secondary-500" />
-              </button>
+      {limitOverlapWarning && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4" onClick={() => setLimitOverlapWarning('')}>
+          <div className="bg-white rounded-xl max-w-sm w-full p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-7 h-7 text-amber-600" />
             </div>
-            <div className="p-4 overflow-y-auto max-h-[60vh]">
-              {(viewingEmployee.limits ?? []).length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-sm font-medium text-secondary-700">No limits configured</p>
-                  <p className="text-xs text-secondary-500 mt-1">Use the Edit option to add leave/week-off limits.</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {(viewingEmployee.limits ?? [])
-                    .slice()
-                    .sort((a, b) => (a.fromDate || '').localeCompare(b.fromDate || ''))
-                    .map((limit) => {
-                      const usage = limit.fromDate && limit.toDate
-                        ? getLeaveUsageByType(
-                            viewingEmployee.employeeCode || '',
-                            limit.fromDate,
-                            limit.toDate,
-                            leaves,
-                          )
-                        : {};
-                      return (
-                        <div key={limit.id} className="bg-white rounded-xl shadow-sm border border-secondary-200 overflow-hidden">
-                          <div className="flex items-center justify-between px-4 py-2.5 bg-secondary-50 border-b border-secondary-100">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                                {formatDateRange(limit.fromDate, limit.toDate)}
-                              </span>
-                            </div>
-                            <button
-                              onClick={() => handleDeleteLimit(limit.id)}
-                              disabled={deletingLimit === limit.id}
-                              className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
-                              aria-label="Delete limit"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                          {limit.limits && Object.keys(limit.limits).length > 0 ? (
-                            <div className="grid grid-cols-2 gap-2 p-3">
-                              {Object.entries(limit.limits).map(([type, limitValue]) => {
-                                const used = usage[type] || 0;
-                                const remaining = (limitValue ?? 0) - used;
-                                const percentage = limitValue && limitValue > 0 ? Math.min(100, Math.round((used / limitValue) * 100)) : 0;
-                                const overused = remaining < 0;
-                                return (
-                                  <div key={type} className="p-2.5 rounded-lg bg-secondary-50 border border-secondary-100">
-                                    <p className="text-xs text-secondary-800 font-medium mb-1 truncate">{type}</p>
-                                    <div className="flex items-baseline gap-1 mb-1.5">
-                                      <span className="text-lg font-bold text-secondary-900">{used}</span>
-                                      <span className="text-xs text-secondary-700">/ {limitValue}</span>
-                                    </div>
-                                    <div className="w-full h-1.5 bg-secondary-200 rounded-full overflow-hidden">
-                                      <div
-                                        className={`h-full rounded-full ${overused ? 'bg-red-500' : percentage >= 80 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                                        style={{ width: `${overused ? 100 : percentage}%` }}
-                                      />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <div className="p-4">
-                              <p className="text-xs text-secondary-500">No limits set for this period.</p>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
+            <h3 className="text-lg font-semibold text-secondary-900 mb-2">Overlapping Limit Period</h3>
+            <p className="text-sm text-secondary-600 mb-6">{limitOverlapWarning}</p>
+            <button
+              type="button"
+              onClick={() => setLimitOverlapWarning('')}
+              className="w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+            >
+              Review Dates
+            </button>
           </div>
         </div>
       )}
+
+      {managingEmployee && (() => {
+        const employeeLimits = getEmployeeLimits(managingEmployee);
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setManagingEmployee(null)}>
+            <div className="bg-white rounded-xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
+                <div>
+                  <h2 className="text-base font-semibold text-secondary-900">Manage Leave Limits</h2>
+                  <p className="text-xs text-secondary-500">{managingEmployee.employeeName} · {managingEmployee.employeeCode}</p>
+                </div>
+                <button onClick={() => setManagingEmployee(null)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
+                  <X size={18} className="text-secondary-500" />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto space-y-3">
+                {manageLimitError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{manageLimitError}</div>}
+                {employeeLimits.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-sm font-medium text-secondary-700">No limits configured</p>
+                    <p className="text-xs text-secondary-500 mt-1">Add a leave/week-off limit period for this employee.</p>
+                  </div>
+                ) : employeeLimits.map((limit) => {
+                  const isExpanded = expandedLimitId === limit.id;
+                  const usage = limit.fromDate && limit.toDate
+                    ? getLeaveUsageByType(managingEmployee.employeeCode || '', limit.fromDate, limit.toDate, leaves)
+                    : {};
+                  const totalAssigned = Object.values(limit.limits || {}).reduce((total, value) => total + (value || 0), 0);
+                  const totalUsed = Object.entries(limit.limits || {}).reduce((total, [type]) => total + (usage[type] || 0), 0);
+                  const totalRemaining = totalAssigned - totalUsed;
+                  return (
+                    <div key={limit.id} className="rounded-xl border border-secondary-200 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2.5 bg-secondary-50 border-b border-secondary-100">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
+                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button type="button" onClick={() => setExpandedLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
+                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </button>
+                          <button type="button" onClick={() => openEditLimit(managingEmployee, limit)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50" aria-label="Edit limit period"><Pencil size={16} /></button>
+                          <button type="button" onClick={() => handleDeleteLimit(limit.id)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50" aria-label="Delete limit period"><Trash2 size={16} /></button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[360px] text-sm">
+                            <thead>
+                              <tr className="bg-purple-50 border-b border-purple-100 text-purple-700">
+                                <th className="px-3 py-2 text-left font-medium">Leave/Off</th>
+                                <th className="px-3 py-2 text-center font-medium">Assigned</th>
+                                <th className="px-3 py-2 text-center font-medium">Used</th>
+                                <th className="px-3 py-2 text-center font-medium">Remaining</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(limit.limits || {}).map(([type, assigned]) => {
+                                const used = usage[type] || 0;
+                                const remaining = assigned - used;
+                                return (
+                                  <tr key={type} className="border-b border-secondary-100 last:border-0">
+                                    <td className="px-3 py-2 font-medium text-secondary-800">{type}</td>
+                                    <td className="px-3 py-2 text-center font-bold text-secondary-900">{formatLeaveCount(assigned)}</td>
+                                    <td className="px-3 py-2 text-center font-bold text-secondary-900">{formatLeaveCount(used)}</td>
+                                    <td className={`px-3 py-2 text-center font-bold ${remaining < 0 ? 'text-red-700' : 'text-green-700'}`}>{formatLeaveCount(remaining)}</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr className="bg-purple-50 border-t border-purple-100 font-semibold">
+                                <td className="px-3 py-2 text-purple-800">Total</td>
+                                <td className="px-3 py-2 text-center text-purple-900">{formatLeaveCount(totalAssigned)}</td>
+                                <td className="px-3 py-2 text-center text-purple-900">{formatLeaveCount(totalUsed)}</td>
+                                <td className={`px-3 py-2 text-center ${totalRemaining < 0 ? 'text-red-700' : 'text-purple-900'}`}>{formatLeaveCount(totalRemaining)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="p-4 border-t border-secondary-200">
+                <button type="button" onClick={() => openAddLimit(managingEmployee, true)} className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">
+                  <Plus size={16} /> Add another limit period
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* View Limits Modal */}
+      {viewingEmployee && (() => {
+        const employeeLimits = getEmployeeLimits(viewingEmployee);
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setViewingEmployee(null)}>
+            <div className="bg-white rounded-xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
+                <div>
+                  <h2 className="text-base font-semibold text-secondary-900">Configured Limits</h2>
+                  <p className="text-xs text-secondary-500">{viewingEmployee.employeeName} · {viewingEmployee.employeeCode}</p>
+                </div>
+                <button onClick={() => setViewingEmployee(null)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
+                  <X size={18} className="text-secondary-500" />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto space-y-3">
+                {employeeLimits.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-sm font-medium text-secondary-700">No limits configured</p>
+                    <p className="text-xs text-secondary-500 mt-1">No leave/week-off limit period has been assigned.</p>
+                  </div>
+                ) : employeeLimits.map((limit) => {
+                  const isExpanded = expandedViewLimitId === limit.id;
+                  const usage = limit.fromDate && limit.toDate
+                    ? getLeaveUsageByType(viewingEmployee.employeeCode || '', limit.fromDate, limit.toDate, leaves)
+                    : {};
+                  const totalAssigned = Object.values(limit.limits || {}).reduce((total, value) => total + (value || 0), 0);
+                  const totalUsed = Object.entries(limit.limits || {}).reduce((total, [type]) => total + (usage[type] || 0), 0);
+                  const totalRemaining = totalAssigned - totalUsed;
+                  return (
+                    <div key={limit.id} className="rounded-xl border border-secondary-200 overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-2.5 bg-secondary-50 border-b border-secondary-100">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
+                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
+                        </div>
+                        <button type="button" onClick={() => setExpandedViewLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
+                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                      </div>
+                      {isExpanded && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[360px] text-sm">
+                            <thead>
+                              <tr className="bg-purple-50 border-b border-purple-100 text-purple-700">
+                                <th className="px-3 py-2 text-left font-medium">Leave/Off</th>
+                                <th className="px-3 py-2 text-center font-medium">Assigned</th>
+                                <th className="px-3 py-2 text-center font-medium">Used</th>
+                                <th className="px-3 py-2 text-center font-medium">Remaining</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(limit.limits || {}).map(([type, assigned]) => {
+                                const used = usage[type] || 0;
+                                const remaining = assigned - used;
+                                return (
+                                  <tr key={type} className="border-b border-secondary-100 last:border-0">
+                                    <td className="px-3 py-2 font-medium text-secondary-800">{type}</td>
+                                    <td className="px-3 py-2 text-center font-bold text-secondary-900">{formatLeaveCount(assigned)}</td>
+                                    <td className="px-3 py-2 text-center font-bold text-secondary-900">{formatLeaveCount(used)}</td>
+                                    <td className={`px-3 py-2 text-center font-bold ${remaining < 0 ? 'text-red-700' : 'text-green-700'}`}>{formatLeaveCount(remaining)}</td>
+                                  </tr>
+                                );
+                              })}
+                              <tr className="bg-purple-50 border-t border-purple-100 font-semibold">
+                                <td className="px-3 py-2 text-purple-800">Total</td>
+                                <td className="px-3 py-2 text-center text-purple-900">{formatLeaveCount(totalAssigned)}</td>
+                                <td className="px-3 py-2 text-center text-purple-900">{formatLeaveCount(totalUsed)}</td>
+                                <td className={`px-3 py-2 text-center ${totalRemaining < 0 ? 'text-red-700' : 'text-purple-900'}`}>{formatLeaveCount(totalRemaining)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -10,8 +10,10 @@ import {
   resolveShiftAssignment,
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
+import { LeaveAvailabilitySummary } from '@/components/attendance/LeaveAvailabilitySummary';
 import {
   formatLeaveLimitFailures,
+  getLeaveAvailabilitySummaries,
   validateLeaveAssignments,
   type LeaveLimitRecord,
   type ProposedLeaveAssignment,
@@ -333,6 +335,18 @@ export const LeavesPage: React.FC = () => {
     setEditLeaveLimitErrors(formatLeaveLimitFailures(failures));
     return failures.length === 0;
   };
+
+  const bulkLeaveAvailability = getLeaveAvailabilitySummaries(
+    getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveSelectedDates),
+    getStoredLeaves(),
+    leaveLimits,
+  );
+  const editLeaveAvailability = getLeaveAvailabilitySummaries(
+    getEditLeaveProposals(),
+    getStoredLeaves(),
+    leaveLimits,
+    editingLeave?.id,
+  );
 
   const updateBulkLeaveForm = (form: typeof bulkLeaveForm) => {
     if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, bulkLeaveSelectedDates, form)) return;
@@ -1412,6 +1426,12 @@ export const LeavesPage: React.FC = () => {
                 </select>
               </div>
 
+              {bulkLeaveAvailability.length > 0 ? (
+                <LeaveAvailabilitySummary summaries={bulkLeaveAvailability} aggregate title="Selected Leave Availability" />
+              ) : (
+                <p className="text-xs text-secondary-500">Select employees, dates, and a leave type to view assigned, used, and remaining counts.</p>
+              )}
+
               {bulkLeaveLimitErrors.length > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                   <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
@@ -1503,6 +1523,9 @@ export const LeavesPage: React.FC = () => {
                   <option value="second_half">Half Day (Second)</option>
                 </select>
               </div>
+              {editLeaveAvailability.length > 0 && (
+                <LeaveAvailabilitySummary summaries={editLeaveAvailability} title="Updated Leave Availability" />
+              )}
               {editLeaveLimitErrors.length > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                   <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>

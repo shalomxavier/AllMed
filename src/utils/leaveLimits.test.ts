@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   findOverlappingLeaveLimits,
   formatLeaveLimitFailures,
+  getLeaveAvailabilitySummaries,
   getLeaveUsageByType,
   getStoredLeaveDates,
   validateLeaveAssignments,
@@ -144,6 +145,50 @@ describe('leave limit accounting', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0].kind).toBe('overlapping_limits');
     expect(formatLeaveLimitFailures(failures)[0]).toContain('overlapping limit periods');
+  });
+});
+
+describe('leave availability summaries', () => {
+  it('returns assigned, used, selected, and remaining values', () => {
+    const summaries = getLeaveAvailabilitySummaries([
+      { employeeCode: 'EMP-1', date: '2026-09-10', leaveType: 'Casual Leave', duration: 'half_day' },
+    ], [{ employeeCode: 'EMP-1', reason: 'Casual Leave', dates: ['2026-09-02'] }], limits);
+
+    expect(summaries[0]).toMatchObject({
+      status: 'configured', assigned: 2, used: 1, selected: 0.5,
+      remainingBeforeSelection: 1, remainingAfterSelection: 0.5,
+    });
+  });
+
+  it('returns no-limit summaries for uncovered dates and unconfigured types', () => {
+    const summaries = getLeaveAvailabilitySummaries([
+      { employeeCode: 'EMP-1', date: '2026-10-10', leaveType: 'Casual Leave' },
+      { employeeCode: 'EMP-1', date: '2026-09-10', leaveType: 'Earned Leave' },
+    ], [], limits);
+
+    expect(summaries).toHaveLength(2);
+    expect(summaries.every((summary) => summary.status === 'no_limit')).toBe(true);
+  });
+
+  it('groups selections by employee and configured period and supports edit exclusion', () => {
+    const twoPeriods = [...limits, {
+      id: 'limit-2', employeeCode: 'EMP-1', fromDate: '2026-10-01', toDate: '2026-10-31', limits: { 'Casual Leave': 3 },
+    }];
+    const summaries = getLeaveAvailabilitySummaries([
+      { employeeCode: 'EMP-1', date: '2026-09-10', leaveType: 'Casual Leave' },
+      { employeeCode: 'EMP-1', date: '2026-10-10', leaveType: 'Casual Leave' },
+    ], [{ id: 'edit-me', employeeCode: 'EMP-1', reason: 'Casual Leave', dates: ['2026-09-02'] }], twoPeriods, 'edit-me');
+
+    expect(summaries).toHaveLength(2);
+    expect(summaries.map((summary) => summary.used)).toEqual([0, 0]);
+  });
+
+  it('reports overlapping configured periods', () => {
+    const summaries = getLeaveAvailabilitySummaries([
+      { employeeCode: 'EMP-1', date: '2026-09-20', leaveType: 'Casual Leave' },
+    ], [], [...limits, { id: 'overlap', employeeCode: 'EMP-1', fromDate: '2026-09-15', toDate: '2026-09-25', limits: { 'Casual Leave': 5 } }]);
+
+    expect(summaries[0].status).toBe('overlapping_limits');
   });
 });
 
