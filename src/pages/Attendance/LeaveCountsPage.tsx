@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ArrowLeft, Calendar, User, Pencil, Eye, X, Trash2, Search, Plus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { addDays, intervalToDuration, parseISO } from 'date-fns';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
@@ -43,6 +44,16 @@ const formatDateRange = (from?: string, to?: string): string => {
   if (!from || !to) return formattedFrom !== '—' ? formattedFrom : formattedTo;
   if (from === to) return formattedFrom;
   return `${formattedFrom} → ${formattedTo}`;
+};
+
+const formatPeriodDuration = (from?: string, to?: string): string => {
+  if (!from || !to || from > to) return '';
+  const duration = intervalToDuration({ start: parseISO(from), end: addDays(parseISO(to), 1) });
+  return [
+    duration.years ? `${duration.years} year${duration.years === 1 ? '' : 's'}` : '',
+    duration.months ? `${duration.months} month${duration.months === 1 ? '' : 's'}` : '',
+    duration.days ? `${duration.days} day${duration.days === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' ');
 };
 
 const kebabCase = (value: string): string => value.toLowerCase().replace(/\s+/g, '-');
@@ -443,7 +454,11 @@ export const LeaveCountsPage: React.FC = () => {
                     type="date"
                     required
                     value={limitForm.fromDate}
-                    onChange={(e) => { setLimitFormError(''); setLimitForm((f) => ({ ...f, fromDate: e.target.value })); }}
+                    onChange={(e) => {
+                      const fromDate = e.target.value;
+                      setLimitFormError('');
+                      setLimitForm((f) => ({ ...f, fromDate, toDate: f.toDate && f.toDate < fromDate ? '' : f.toDate }));
+                    }}
                     className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
                   />
                 </div>
@@ -453,8 +468,10 @@ export const LeaveCountsPage: React.FC = () => {
                     type="date"
                     required
                     value={limitForm.toDate}
+                    min={limitForm.fromDate || undefined}
+                    disabled={!limitForm.fromDate}
                     onChange={(e) => { setLimitFormError(''); setLimitForm((f) => ({ ...f, toDate: e.target.value })); }}
-                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:bg-secondary-100 disabled:cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -560,10 +577,14 @@ export const LeaveCountsPage: React.FC = () => {
                     <div key={limit.id} className="rounded-xl border border-secondary-200 overflow-hidden">
                       <div className="flex items-center justify-between px-3 py-2.5 bg-secondary-50 border-b border-secondary-100">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
-                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
+                          <div className="flex flex-col items-start gap-0.5">
+                            <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
+                            <span className="ml-3 text-sm font-semibold text-secondary-700 whitespace-nowrap">{formatPeriodDuration(limit.fromDate, limit.toDate)}</span>
+                          </div>
                         </div>
                         <div className="flex items-center gap-1">
+                          <span className="text-sm font-medium text-secondary-600 whitespace-nowrap">Leave/Off:</span>
+                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
                           <button type="button" onClick={() => setExpandedLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
                             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                           </button>
@@ -652,12 +673,18 @@ export const LeaveCountsPage: React.FC = () => {
                     <div key={limit.id} className="rounded-xl border border-secondary-200 overflow-hidden">
                       <div className="flex items-center justify-between px-3 py-2.5 bg-secondary-50 border-b border-secondary-100">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
-                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
+                          <div className="flex flex-col items-start gap-0.5">
+                            <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
+                            <span className="ml-3 text-sm font-semibold text-secondary-700 whitespace-nowrap">{formatPeriodDuration(limit.fromDate, limit.toDate)}</span>
+                          </div>
                         </div>
-                        <button type="button" onClick={() => setExpandedViewLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm font-medium text-secondary-600 whitespace-nowrap">Leave/Off:</span>
+                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
+                          <button type="button" onClick={() => setExpandedViewLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
                           {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </button>
+                      </div>
                       </div>
                       {isExpanded && (
                         <div className="overflow-x-auto">

@@ -74,27 +74,43 @@ export interface LeaveLimitFailure {
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 const DAY_NAME_ALIASES: Record<string, string> = {
+  '0': 'sunday',
+  su: 'sunday',
   sun: 'sunday',
   sunday: 'sunday',
+  '1': 'monday',
+  mo: 'monday',
   mon: 'monday',
   monday: 'monday',
+  '2': 'tuesday',
+  tu: 'tuesday',
   tue: 'tuesday',
   tues: 'tuesday',
   tuesday: 'tuesday',
+  '3': 'wednesday',
+  we: 'wednesday',
   wed: 'wednesday',
   wednesday: 'wednesday',
+  '4': 'thursday',
+  th: 'thursday',
   thu: 'thursday',
   thur: 'thursday',
   thurs: 'thursday',
   thursday: 'thursday',
+  '5': 'friday',
+  fr: 'friday',
   fri: 'friday',
   friday: 'friday',
+  '6': 'saturday',
+  sa: 'saturday',
   sat: 'saturday',
   saturday: 'saturday',
 };
 
 export const normalizeLeaveEmployeeCode = (value?: string): string => (value ?? '').trim().toLowerCase();
 export const normalizeLeaveType = (value?: string): string => (value ?? '').trim().toLowerCase();
+const isWeekOffRecord = (leave: StoredLeaveRecord): boolean =>
+  ['weekoff', 'week_off', 'week off'].includes(normalizeLeaveType(leave.type));
 
 const isValidDate = (date?: string): date is string => Boolean(date && /^\d{4}-\d{2}-\d{2}$/.test(date));
 
@@ -138,7 +154,7 @@ export const findOverlappingLeaveLimits = (
 };
 
 const getStoredLeaveType = (leave: StoredLeaveRecord): string =>
-  leave.type === 'weekoff' ? 'Week Off' : (leave.reason || 'Other');
+  isWeekOffRecord(leave) ? 'Week Off' : (leave.reason || 'Other');
 
 const getRecurringWeekOffDates = (leave: StoredLeaveRecord, rangeFrom?: string, rangeTo?: string): string[] => {
   const days = new Set(
@@ -160,7 +176,7 @@ const getRecurringWeekOffDates = (leave: StoredLeaveRecord, rangeFrom?: string, 
 
 export const getStoredLeaveDates = (leave: StoredLeaveRecord, rangeFrom?: string, rangeTo?: string): string[] => {
   let dates: string[];
-  if (leave.type === 'weekoff' && leave.days?.length) {
+  if (isWeekOffRecord(leave) && leave.days?.length) {
     dates = getRecurringWeekOffDates(leave, rangeFrom, rangeTo);
   } else if (leave.dates?.length) {
     dates = leave.dates.filter(isValidDate);
@@ -186,7 +202,7 @@ export const getLeaveUsageByType = (
   leaves.forEach((leave) => {
     if (excludeLeaveId && leave.id === excludeLeaveId) return;
     if (normalizeLeaveEmployeeCode(leave.employeeCode) !== targetCode) return;
-    if (leave.status && leave.status !== 'approved') return;
+    if (leave.status && normalizeLeaveType(leave.status) !== 'approved') return;
 
     const dates = getStoredLeaveDates(leave, fromDate, toDate);
     if (dates.length === 0) return;
@@ -385,5 +401,8 @@ export const formatLeaveLimitFailures = (failures: LeaveLimitFailure[]): string[
       return `${employee}: overlapping limit periods cover ${failure.dates.join(', ')} (${periods}). Resolve the overlapping configuration before assigning.`;
     }
 
-    return `${employee}: ${failure.leaveType} would reach ${formatLeaveCount(failure.totalUsage)} / ${formatLeaveCount(failure.limit)} for ${failure.fromDate} → ${failure.toDate} (already used ${formatLeaveCount(failure.currentUsage)}, requested ${formatLeaveCount(failure.requestedUsage)}).`;
+    const available = failure.limit !== undefined && failure.currentUsage !== undefined
+      ? Math.max(0, failure.limit - failure.currentUsage)
+      : undefined;
+    return `${employee}:\nOnly ${formatLeaveCount(available)} out of ${formatLeaveCount(failure.limit)} ${failure.leaveType} Available`;
   });

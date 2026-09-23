@@ -51,6 +51,7 @@ describe('leave limit accounting', () => {
 
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatchObject({ kind: 'limit_exceeded', currentUsage: 1, requestedUsage: 2, totalUsage: 3, limit: 2 });
+    expect(formatLeaveLimitFailures(failures)[0]).toBe('Employee (EMP-1):\nOnly 1 out of 2 Casual Leave Available');
   });
 
   it('rejects additional leave when the configured limit is already reached', () => {
@@ -112,6 +113,16 @@ describe('leave limit accounting', () => {
 
     const usage = getLeaveUsageByType('EMP-1', '2026-09-01', '2026-09-30', existing);
     expect(usage['Week Off']).toBe(5);
+  });
+
+  it('counts abbreviated and numeric recurring Week Off days and normalized approval status', () => {
+    const existing: StoredLeaveRecord[] = [
+      { id: 'abbreviated', type: 'week_off', employeeCode: 'EMP-1', days: ['Su'], status: 'Approved' },
+      { id: 'numeric', type: 'weekoff', employeeCode: 'EMP-1', days: ['1'], status: 'approved' },
+    ];
+
+    const usage = getLeaveUsageByType('EMP-1', '2026-09-01', '2026-09-30', existing);
+    expect(usage['Week Off']).toBe(8);
   });
 
   it('excludes the edited record before validating its replacement', () => {

@@ -8,7 +8,6 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
-import { LeaveAvailabilitySummary } from '@/components/attendance/LeaveAvailabilitySummary';
 import {
   formatLeaveCount,
   formatLeaveLimitFailures,
@@ -592,11 +591,6 @@ export const ShiftsPage: React.FC = () => {
     return Object.fromEntries(summaries.map((summary) => [summary.leaveType, summary]));
   };
 
-  const wizardLeaveAvailability = getLeaveAvailabilitySummaries(getWizardLeaveProposals(), allLeaveRecords, leaveLimits);
-  const currentWizardEmployee = wizardEmployees[wizardEmpIndex];
-  const currentWizardAvailability = currentWizardEmployee
-    ? wizardLeaveAvailability.filter((summary) => summary.employeeCode === currentWizardEmployee.employeeCode)
-    : [];
 
   const validateWizardEmployeeSelection = (
     employee: EmpLeaveEntry,
@@ -1513,12 +1507,11 @@ export const ShiftsPage: React.FC = () => {
                   <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  {wizardLeaveAvailability.length > 0 && <LeaveAvailabilitySummary summaries={wizardLeaveAvailability} aggregate title="Selected Leave Availability" />}
                   {wizardLeaveLimitErrors.length > 0 && (
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                       <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                       <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                        {wizardLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                        {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
                       </ul>
                     </div>
                   )}
@@ -1779,12 +1772,11 @@ export const ShiftsPage: React.FC = () => {
                 {selectedDates.length > 0 && (
                   <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
                 )}
-                {currentWizardAvailability.length > 0 && <div className="mt-3"><LeaveAvailabilitySummary summaries={currentWizardAvailability} title="Selected Leave Availability" /></div>}
                 {wizardLeaveLimitErrors.length > 0 && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                     <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                      {wizardLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                      {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
                     </ul>
                   </div>
                 )}

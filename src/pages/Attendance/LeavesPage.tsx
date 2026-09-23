@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2, BarChart3, Users } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, ChevronRight, Pencil, Trash2, BarChart3, Users, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
@@ -10,10 +10,9 @@ import {
   resolveShiftAssignment,
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
-import { LeaveAvailabilitySummary } from '@/components/attendance/LeaveAvailabilitySummary';
+import { LeaveOptionMenu, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
 import {
   formatLeaveLimitFailures,
-  getLeaveAvailabilitySummaries,
   validateLeaveAssignments,
   type LeaveLimitRecord,
   type ProposedLeaveAssignment,
@@ -186,11 +185,12 @@ export const LeavesPage: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
   const [bulkLeaveSelectedIds, setBulkLeaveSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLeaveSearchQuery, setBulkLeaveSearchQuery] = useState('');
-  const [bulkLeaveForm, setBulkLeaveForm] = useState<{ reason: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: 'first_half' | 'second_half' }>({ reason: '', duration: 'full_day' });
-  const [bulkLeaveSelectedDates, setBulkLeaveSelectedDates] = useState<string[]>([]);
+  const [bulkLeaveDateMap, setBulkLeaveDateMap] = useState<Record<string, LeaveSelection>>({});
+  const [bulkLeaveTooltipDate, setBulkLeaveTooltipDate] = useState<string | null>(null);
   const [bulkLeaveCalendarMonth, setBulkLeaveCalendarMonth] = useState(new Date().getMonth());
   const [bulkLeaveCalendarYear, setBulkLeaveCalendarYear] = useState(new Date().getFullYear());
   const [isSavingBulkLeave, setIsSavingBulkLeave] = useState(false);
+  const [bulkLeaveLimitDialogOpen, setBulkLeaveLimitDialogOpen] = useState(false);
 
   const [editLeaveOpen, setEditLeaveOpen] = useState(false);
   const [editingLeave, setEditingLeave] = useState<LeaveRecord | null>(null);
@@ -281,35 +281,33 @@ export const LeavesPage: React.FC = () => {
 
   const getBulkLeaveProposals = (
     selectedIds: Set<string>,
-    selectedDates: string[],
-    form = bulkLeaveForm,
-  ): ProposedLeaveAssignment[] => {
-    if (!form.reason) return [];
-    return Array.from(selectedIds).flatMap((employeeId) => {
+    dateMap: Record<string, LeaveSelection>,
+  ): ProposedLeaveAssignment[] =>
+    Array.from(selectedIds).flatMap((employeeId) => {
       const employee = employees.find((e) => e.id === employeeId);
       const employeeCode = employee?.employeeCode;
       if (!employeeCode) return [];
-      return selectedDates.map((date) => ({
+      return Object.entries(dateMap).map(([date, selection]) => ({
         employeeCode,
         employeeName: employee.employeeName,
         date,
-        leaveType: form.reason,
-        duration: form.duration,
+        leaveType: selection.reason,
+        duration: selection.duration,
       }));
     });
-  };
 
   const validateBulkLeaveSelection = (
     selectedIds: Set<string>,
-    selectedDates: string[],
-    form = bulkLeaveForm,
+    dateMap: Record<string, LeaveSelection>,
   ): boolean => {
     const failures = validateLeaveAssignments(
-      getBulkLeaveProposals(selectedIds, selectedDates, form),
+      getBulkLeaveProposals(selectedIds, dateMap),
       getStoredLeaves(),
       leaveLimits,
     );
-    setBulkLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    const messages = formatLeaveLimitFailures(failures);
+    setBulkLeaveLimitErrors(messages);
+    setBulkLeaveLimitDialogOpen(messages.length > 0);
     return failures.length === 0;
   };
 
@@ -336,24 +334,7 @@ export const LeavesPage: React.FC = () => {
     return failures.length === 0;
   };
 
-  const bulkLeaveAvailability = getLeaveAvailabilitySummaries(
-    getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveSelectedDates),
-    getStoredLeaves(),
-    leaveLimits,
-  );
-  const editLeaveAvailability = getLeaveAvailabilitySummaries(
-    getEditLeaveProposals(),
-    getStoredLeaves(),
-    leaveLimits,
-    editingLeave?.id,
-  );
-
-  const updateBulkLeaveForm = (form: typeof bulkLeaveForm) => {
-    if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, bulkLeaveSelectedDates, form)) return;
-    setBulkLeaveForm(form);
-  };
-
-  const updateEditLeaveForm = (form: typeof editLeaveForm) => {
+   const updateEditLeaveForm = (form: typeof editLeaveForm) => {
     if (!validateEditLeaveSelection(form)) return;
     setEditLeaveForm(form);
   };
@@ -433,11 +414,26 @@ export const LeavesPage: React.FC = () => {
     setBulkLeaveModalOpen(false);
     setBulkLeaveSelectedIds(new Set());
     setBulkLeaveSearchQuery('');
-    setBulkLeaveForm({ reason: '', duration: 'full_day' });
-    setBulkLeaveSelectedDates([]);
+    setBulkLeaveDateMap({});
+    setBulkLeaveTooltipDate(null);
     setBulkLeaveCalendarMonth(new Date().getMonth());
     setBulkLeaveCalendarYear(new Date().getFullYear());
     setBulkLeaveLimitErrors([]);
+    setBulkLeaveLimitDialogOpen(false);
+  };
+
+  const openBulkLeaveForDate = (date: string) => {
+    const [year, month] = date.split('-').map(Number);
+    setBulkLeaveSelectedIds(new Set());
+    setBulkLeaveSearchQuery('');
+    setBulkLeaveDateMap({});
+    setBulkLeaveTooltipDate(null);
+    setBulkLeaveCalendarMonth(month - 1);
+    setBulkLeaveCalendarYear(year);
+    setBulkLeaveLimitErrors([]);
+    setBulkLeaveLimitDialogOpen(false);
+    setSelectedCalendarDate(null);
+    setBulkLeaveModalOpen(true);
   };
 
   const toggleBulkLeaveEmployee = (id: string) => {
@@ -445,28 +441,26 @@ export const LeavesPage: React.FC = () => {
     if (next.has(id)) {
       next.delete(id);
       setBulkLeaveSelectedIds(next);
-      validateBulkLeaveSelection(next, bulkLeaveSelectedDates);
+      validateBulkLeaveSelection(next, bulkLeaveDateMap);
       return;
     }
 
     next.add(id);
-    if (!validateBulkLeaveSelection(next, bulkLeaveSelectedDates)) return;
+    if (!validateBulkLeaveSelection(next, bulkLeaveDateMap)) return;
     setBulkLeaveSelectedIds(next);
   };
 
-  const toggleBulkLeaveDate = (date: string) => {
-    const nextDates = bulkLeaveSelectedDates.includes(date)
-      ? bulkLeaveSelectedDates.filter((d) => d !== date)
-      : [...bulkLeaveSelectedDates, date];
+  const selectBulkLeaveDate = (date: string, selection: LeaveSelection) => {
+    const nextMap = { ...bulkLeaveDateMap, [date]: selection };
+    if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, nextMap)) return;
+    setBulkLeaveDateMap(nextMap);
+  };
 
-    if (bulkLeaveSelectedDates.includes(date)) {
-      setBulkLeaveSelectedDates(nextDates);
-      validateBulkLeaveSelection(bulkLeaveSelectedIds, nextDates);
-      return;
-    }
-
-    if (!validateBulkLeaveSelection(bulkLeaveSelectedIds, nextDates)) return;
-    setBulkLeaveSelectedDates(nextDates);
+  const removeBulkLeaveDate = (date: string) => {
+    const nextMap = { ...bulkLeaveDateMap };
+    delete nextMap[date];
+    setBulkLeaveDateMap(nextMap);
+    validateBulkLeaveSelection(bulkLeaveSelectedIds, nextMap);
   };
 
   const toggleEditLeaveDate = (date: string) => {
@@ -482,26 +476,27 @@ export const LeavesPage: React.FC = () => {
 
   const handleBulkLeaveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (bulkLeaveSelectedIds.size === 0 || bulkLeaveSelectedDates.length === 0 || !bulkLeaveForm.reason) return;
+    if (bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0) return;
     setIsSavingBulkLeave(true);
     try {
       const db = getFirestore();
       const { latestLeaves, latestLimits } = await fetchLeaveValidationData();
       const failures = validateLeaveAssignments(
-        getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveSelectedDates),
+        getBulkLeaveProposals(bulkLeaveSelectedIds, bulkLeaveDateMap),
         latestLeaves,
         latestLimits,
       );
       if (failures.length > 0) {
         setBulkLeaveLimitErrors(formatLeaveLimitFailures(failures));
+        setBulkLeaveLimitDialogOpen(true);
         return;
       }
 
-      const sorted = [...bulkLeaveSelectedDates].sort();
+      const sortedEntries = Object.entries(bulkLeaveDateMap).sort(([a], [b]) => a.localeCompare(b));
       for (const empId of bulkLeaveSelectedIds) {
         const employee = employees.find((e) => e.id === empId);
         if (!employee) continue;
-        for (const date of sorted) {
+        for (const [date, selection] of sortedEntries) {
           await addDoc(collection(db, 'leaves'), {
             type: 'leave',
             employeeId: employee.id,
@@ -510,10 +505,10 @@ export const LeavesPage: React.FC = () => {
             dates: [date],
             fromDate: date,
             toDate: date,
-            reason: bulkLeaveForm.reason,
-            duration: bulkLeaveForm.duration,
-            ...(bulkLeaveForm.halfDayPeriod ? { halfDayPeriod: bulkLeaveForm.halfDayPeriod } : {}),
-            dayValue: bulkLeaveForm.duration === 'half_day' ? 0.5 : 1,
+            reason: selection.reason,
+            duration: selection.duration,
+            ...(selection.halfDayPeriod ? { halfDayPeriod: selection.halfDayPeriod } : {}),
+            dayValue: selection.duration === 'half_day' ? 0.5 : 1,
             createdAt: serverTimestamp(),
             createdBy: currentUser?.uid,
           });
@@ -899,7 +894,7 @@ export const LeavesPage: React.FC = () => {
       <div className="px-4 pt-3 pb-4">
         <div className="flex items-center gap-5 mb-4">
           {canManageLeaves && (
-            <button onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveModalOpen(true); }} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-indigo-600 border-2 border-indigo-500 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm">
+            <button onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveLimitDialogOpen(false); setBulkLeaveModalOpen(true); }} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-indigo-600 border-2 border-indigo-500 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm">
               <Umbrella size={20} />
               Add Leaves
             </button>
@@ -1030,8 +1025,8 @@ export const LeavesPage: React.FC = () => {
                       <button
                         key={date}
                         type="button"
-                        onClick={() => entries.length > 0 && setSelectedCalendarDate(date)}
-                        className={`relative min-h-20 sm:min-h-24 p-2 rounded-xl border border-secondary-100 bg-secondary-50 shadow-md flex flex-col items-center justify-center transition-all hover:bg-secondary-100 hover:shadow-lg hover:-translate-y-0.5 ${entries.length > 0 ? 'cursor-pointer' : 'cursor-default'}`}
+                        onClick={() => setSelectedCalendarDate(date)}
+                        className="relative min-h-20 sm:min-h-24 p-2 rounded-xl border border-secondary-100 bg-secondary-50 shadow-md flex flex-col items-center justify-center transition-all hover:bg-secondary-100 hover:shadow-lg hover:-translate-y-0.5 cursor-pointer"
                       >
                         {entries.length > 0 ? (
                           <div className={`absolute top-1.5 right-2 flex items-baseline gap-1 ${heatmapStyle?.count}`}>
@@ -1169,8 +1164,21 @@ export const LeavesPage: React.FC = () => {
                 <X size={18} className="text-secondary-500" />
               </button>
             </div>
+            {canManageLeaves && (
+              <div className="px-4 py-3 border-b border-secondary-100">
+                <button type="button" onClick={() => openBulkLeaveForDate(selectedCalendarDate)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-700 bg-white border border-purple-300 rounded-lg hover:bg-purple-50 transition-colors">
+                  <Plus size={16} /> Add Leave
+                </button>
+              </div>
+            )}
             <div className="p-4 overflow-y-auto max-h-[60vh] space-y-2">
-              {selectedCalendarEntries.map((entry) => {
+              {selectedCalendarEntries.length === 0 ? (
+                <div className="text-center py-10">
+                  <Users size={32} className="mx-auto text-secondary-300 mb-3" />
+                  <p className="text-sm font-medium text-secondary-700">0 entries</p>
+                  <p className="text-xs text-secondary-500 mt-1">No employees are on leave or off on this date.</p>
+                </div>
+              ) : selectedCalendarEntries.map((entry) => {
                 const colors = entry.type === 'weekoff' ? { badge: 'bg-blue-100', text: 'text-blue-700' } : getLeaveColor(entry.reason);
                 const period = entry.duration === 'half_day'
                   ? entry.halfDayPeriod === 'first_half' ? 'First Half' : 'Second Half'
@@ -1367,7 +1375,7 @@ export const LeavesPage: React.FC = () => {
 
               {/* Calendar */}
               <div className="border border-secondary-300 rounded-lg p-3">
-                <label className="block text-sm font-medium text-secondary-700 mb-2">Select Leave Dates ({bulkLeaveSelectedDates.length} selected)</label>
+                <label className="block text-sm font-medium text-secondary-700 mb-2">Select Leave Dates ({Object.keys(bulkLeaveDateMap).length} selected)</label>
                 {(() => {
                   const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
                   const DAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
@@ -1376,7 +1384,7 @@ export const LeavesPage: React.FC = () => {
                   const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_, i) => i + 1)];
                   while (cells.length % 7 !== 0) cells.push(null);
                   return (
-                    <div className="border border-secondary-200 rounded-lg overflow-hidden">
+                    <div className="border border-secondary-200 rounded-lg overflow-visible">
                       <div className="flex items-center justify-between px-3 py-2 bg-purple-50">
                         <button type="button" onClick={() => { if (bulkLeaveCalendarMonth === 0) { setBulkLeaveCalendarMonth(11); setBulkLeaveCalendarYear(y => y - 1); } else setBulkLeaveCalendarMonth(m => m - 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronLeft size={14}/></button>
                         <span className="text-sm font-semibold text-secondary-800">{MONTHS[bulkLeaveCalendarMonth]} {bulkLeaveCalendarYear}</span>
@@ -1389,13 +1397,48 @@ export const LeavesPage: React.FC = () => {
                         {cells.map((day, i) => {
                           if (!day) return <div key={i} />;
                           const dateStr = `${bulkLeaveCalendarYear}-${String(bulkLeaveCalendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                          const selected = bulkLeaveSelectedDates.includes(dateStr);
+                          const leaveSelection = bulkLeaveDateMap[dateStr];
+                          const leaveType = leaveSelection?.reason;
+                          const selected = !!leaveSelection;
+                          const isTooltipOpen = bulkLeaveTooltipDate === dateStr;
+                          const getBulkLeaveColor = (type: string) => {
+                            const value = type.toLowerCase();
+                            if (value.includes('week off')) return 'bg-blue-600';
+                            if (value.includes('casual')) return 'bg-green-600';
+                            if (value.includes('earned') || value.includes('privilege')) return 'bg-indigo-600';
+                            if (value.includes('holiday') || value.includes('festival')) return 'bg-yellow-500';
+                            if (value.includes('overtime')) return 'bg-orange-500';
+                            return 'bg-purple-600';
+                          };
                           return (
-                            <button key={i} type="button"
-                              onClick={() => toggleBulkLeaveDate(dateStr)}
-                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
-                              }`}>{day}</button>
+                            <div key={i} className="relative">
+                              <button key={i} type="button"
+                                onClick={() => setBulkLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
+                                className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
+                                  selected ? `${getBulkLeaveColor(leaveType ?? '')} text-white font-semibold` : 'hover:bg-purple-100 text-secondary-800'
+                                }`}
+                                title={leaveSelection ? `${leaveSelection.reason} · ${leavePeriodLabel(leaveSelection)}` : undefined}
+                              >{day}</button>
+                              {isTooltipOpen && (
+                                <>
+                                  <div className="fixed inset-0 z-[9]" onClick={() => setBulkLeaveTooltipDate(null)} />
+                                  <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                    ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
+                                    ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
+                                    {selected && (
+                                      <button type="button"
+                                        onClick={() => { removeBulkLeaveDate(dateStr); setBulkLeaveTooltipDate(null); }}
+                                        className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                                      >Remove</button>
+                                    )}
+                                    <LeaveOptionMenu onSelect={(selection) => {
+                                      selectBulkLeaveDate(dateStr, selection);
+                                      setBulkLeaveTooltipDate(null);
+                                    }} />
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
@@ -1404,52 +1447,43 @@ export const LeavesPage: React.FC = () => {
                 })()}
               </div>
 
-              {/* Leave type */}
-              <div className="border border-secondary-300 rounded-lg p-3">
-                <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
-                <select value={bulkLeaveForm.reason} onChange={(e) => updateBulkLeaveForm({ ...bulkLeaveForm, reason: e.target.value })}
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
-                  <option value="">Select leave type...</option>
-                  <option value="Week Off">Week Off</option>
-                  <option value="Casual Leave">Casual Leave</option>
-                  <option value="Earned Leave">Earned Leave</option>
-                  <option value="Holiday Off">Holiday Off</option>
-                  <option value="Overtime Off">Overtime Off</option>
-                </select>
-                <label className="block text-sm font-medium text-secondary-700 mt-3 mb-2">Duration</label>
-                <select value={bulkLeaveForm.duration === 'full_day' ? 'full_day' : bulkLeaveForm.halfDayPeriod}
-                  onChange={(e) => updateBulkLeaveForm(e.target.value === 'full_day' ? { ...bulkLeaveForm, duration: 'full_day', halfDayPeriod: undefined } : { ...bulkLeaveForm, duration: 'half_day', halfDayPeriod: e.target.value as 'first_half' | 'second_half' })}
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm">
-                  <option value="full_day">Full Day</option>
-                  <option value="first_half">Half Day (First)</option>
-                  <option value="second_half">Half Day (Second)</option>
-                </select>
-              </div>
-
-              {bulkLeaveAvailability.length > 0 ? (
-                <LeaveAvailabilitySummary summaries={bulkLeaveAvailability} aggregate title="Selected Leave Availability" />
-              ) : (
-                <p className="text-xs text-secondary-500">Select employees, dates, and a leave type to view assigned, used, and remaining counts.</p>
-              )}
-
-              {bulkLeaveLimitErrors.length > 0 && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-                  <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
-                  <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                    {bulkLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
-                  </ul>
-                </div>
-              )}
-
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeBulkLeaveModal}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || bulkLeaveSelectedDates.length === 0}
+                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
                   className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
                   {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {bulkLeaveModalOpen && bulkLeaveLimitDialogOpen && bulkLeaveLimitErrors.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={() => setBulkLeaveLimitDialogOpen(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-200">
+              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center">
+                <AlertTriangle size={18} className="text-red-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-secondary-900">Leave limit check failed</h2>
+                <p className="text-xs text-secondary-500">Review the selected leave type or choose another date.</p>
+              </div>
+            </div>
+            <div className="p-4">
+              <ul className="list-disc pl-5 space-y-1.5 text-sm text-secondary-800">
+                {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+              </ul>
+              <button
+                type="button"
+                onClick={() => setBulkLeaveLimitDialogOpen(false)}
+                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                Review Selection
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1523,14 +1557,11 @@ export const LeavesPage: React.FC = () => {
                   <option value="second_half">Half Day (Second)</option>
                 </select>
               </div>
-              {editLeaveAvailability.length > 0 && (
-                <LeaveAvailabilitySummary summaries={editLeaveAvailability} title="Updated Leave Availability" />
-              )}
               {editLeaveLimitErrors.length > 0 && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                   <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                   <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                    {editLeaveLimitErrors.map((message) => <li key={message}>{message}</li>)}
+                    {editLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
                   </ul>
                 </div>
               )}
