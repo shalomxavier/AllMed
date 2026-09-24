@@ -11,7 +11,7 @@ import {
   resolveShiftAssignment,
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
-import { LeaveOptionMenu, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveOptionMenu, leaveDotClass, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import {
   formatLeaveLimitFailures,
@@ -1405,21 +1405,12 @@ export const LeavesPage: React.FC = () => {
                           const leaveType = leaveSelection?.reason;
                           const selected = !!leaveSelection;
                           const isTooltipOpen = bulkLeaveTooltipDate === dateStr;
-                          const getBulkLeaveColor = (type: string) => {
-                            const value = type.toLowerCase();
-                            if (value.includes('week off')) return 'bg-blue-600';
-                            if (value.includes('casual')) return 'bg-green-600';
-                            if (value.includes('earned') || value.includes('privilege')) return 'bg-indigo-600';
-                            if (value.includes('holiday') || value.includes('festival')) return 'bg-yellow-500';
-                            if (value.includes('overtime')) return 'bg-orange-500';
-                            return 'bg-purple-600';
-                          };
                           return (
                             <div key={i} className="relative">
                               <button key={i} type="button"
                                 onClick={() => setBulkLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
                                 className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                  selected ? `${getBulkLeaveColor(leaveType ?? '')} text-white font-semibold` : 'hover:bg-purple-100 text-secondary-800'
+                                  selected ? `${leaveDotClass(leaveType ?? '', leaveSelection?.duration === 'half_day')} text-white font-semibold` : 'hover:bg-purple-100 text-secondary-800'
                                 }`}
                                 title={leaveSelection ? `${leaveSelection.reason} · ${leavePeriodLabel(leaveSelection)}` : undefined}
                               >{day}</button>
@@ -1434,7 +1425,7 @@ export const LeavesPage: React.FC = () => {
                                         className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
                                       >Remove</button>
                                     )}
-                                    <LeaveOptionMenu onSelect={(selection) => {
+                                    <LeaveOptionMenu current={leaveSelection} onSelect={(selection) => {
                                       selectBulkLeaveDate(dateStr, selection);
                                       setBulkLeaveTooltipDate(null);
                                     }} />

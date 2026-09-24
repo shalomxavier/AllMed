@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Eye, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
@@ -8,6 +8,7 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
+import { leaveDotClass } from '@/components/attendance/LeaveOptionMenu';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 import {
@@ -141,18 +142,24 @@ type WizardHalfDayPeriod = 'first_half' | 'second_half';
 interface WizardLeaveSelection { reason: string; duration: 'full_day' | 'half_day'; halfDayPeriod?: WizardHalfDayPeriod; }
 const WIZARD_LEAVE_REASONS = ['Week Off', 'Casual Leave', 'Earned Leave', 'Holiday Off', 'Overtime Off'];
 
-const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelection) => void; availabilityByType?: Record<string, Availability | undefined> }> = ({ onSelect, availabilityByType }) => {
-  const [halfDayPeriod, setHalfDayPeriod] = useState<WizardHalfDayPeriod | null>(null);
+const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelection) => void; availabilityByType?: Record<string, Availability | undefined>; current?: WizardLeaveSelection | null }> = ({ onSelect, availabilityByType, current }) => {
+  const [halfDayPeriod, setHalfDayPeriod] = useState<WizardHalfDayPeriod | null>(
+    current?.duration === 'half_day' ? current?.halfDayPeriod ?? null : null
+  );
+  const optionClass = (isCurrent: boolean) => `w-full flex items-center justify-between px-2 py-1.5 text-sm rounded hover:bg-secondary-50 ${isCurrent ? 'bg-purple-50 text-purple-700 font-semibold' : 'text-secondary-700'}`;
+  const availabilityText = (availability: Availability | undefined) => availability && (
+    <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>
+  );
   return (
     <>
       {!halfDayPeriod ? (
         <>
           {WIZARD_LEAVE_REASONS.map((reason) => {
-            const availability = availabilityByType?.[reason];
-            return <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>{reason}</span>{availability && <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>}</button>;
+            const isCurrent = current?.duration !== 'half_day' && current?.reason === reason;
+            return <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'full_day' })} className={optionClass(isCurrent)}><span className="text-left">{reason}{availabilityText(availabilityByType?.[reason])}</span>{isCurrent && <Check size={14} className="text-purple-600 shrink-0" />}</button>;
           })}
-          <button type="button" onClick={() => setHalfDayPeriod('first_half')} className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (First)</span><ChevronRight size={14} /></button>
-          <button type="button" onClick={() => setHalfDayPeriod('second_half')} className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>Half Day (Second)</span><ChevronRight size={14} /></button>
+          <button type="button" onClick={() => setHalfDayPeriod('first_half')} className={optionClass(current?.duration === 'half_day' && current?.halfDayPeriod === 'first_half')}><span>Half Day (First)</span><ChevronRight size={14} /></button>
+          <button type="button" onClick={() => setHalfDayPeriod('second_half')} className={optionClass(current?.duration === 'half_day' && current?.halfDayPeriod === 'second_half')}><span>Half Day (Second)</span><ChevronRight size={14} /></button>
         </>
       ) : (
         <button type="button" className="w-full flex items-center justify-between px-2 py-1.5 text-sm rounded bg-secondary-50 text-secondary-700">
@@ -163,8 +170,8 @@ const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelecti
         <div className="absolute left-full bottom-0 ml-1 z-20 w-48 bg-white border border-secondary-200 rounded-lg shadow-lg p-2">
           <p className="px-2 py-1 text-xs font-semibold text-secondary-500">Select leave type</p>
           {WIZARD_LEAVE_REASONS.map((reason) => {
-            const availability = availabilityByType?.[reason];
-            return <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })} className="w-full text-left px-2 py-1.5 text-sm rounded text-secondary-700 hover:bg-secondary-50"><span>{reason}</span>{availability && <span className="block text-[10px] text-secondary-500">{availability.status === 'configured' ? `Assigned ${formatLeaveCount(availability.assigned)} · Used ${formatLeaveCount(availability.used)} · Remaining ${formatLeaveCount(availability.remainingBeforeSelection)}` : 'No limit assigned'}</span>}</button>;
+            const isCurrent = current?.duration === 'half_day' && current?.halfDayPeriod === halfDayPeriod && current?.reason === reason;
+            return <button key={reason} type="button" onClick={() => onSelect({ reason, duration: 'half_day', halfDayPeriod })} className={optionClass(isCurrent)}><span className="text-left">{reason}{availabilityText(availabilityByType?.[reason])}</span>{isCurrent && <Check size={14} className="text-purple-600 shrink-0" />}</button>;
           })}
         </div>
       )}
@@ -1718,7 +1725,7 @@ export const ShiftsPage: React.FC = () => {
                             ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
                               wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
                               (shiftChangedDates[emp.employeeCode] ?? []).some(sc => sc.date === ds) ? 'bg-orange-500 text-white font-semibold' :
-                              isSelected ? `${getLeaveColor(leaveType ?? '').dot} text-white font-semibold` :
+                              isSelected ? `${leaveDotClass(leaveType ?? '', empLeaves.find(l => l.date === ds)?.duration === 'half_day')} text-white font-semibold` :
                               'hover:bg-secondary-100 text-secondary-800'}`}
                           title={(shiftChangedDates[emp.employeeCode] ?? []).some(sc => sc.date === ds) ? 'Shift Changed' : leaveType ?? undefined}
                         >
@@ -1741,7 +1748,9 @@ export const ShiftsPage: React.FC = () => {
                                 Remove
                               </button>
                             )}
-                            <WizardLeaveOptionMenu availabilityByType={getWizardPickerAvailability(emp, ds)} onSelect={(selection) => {
+                            <WizardLeaveOptionMenu availabilityByType={getWizardPickerAvailability(emp, ds)}
+                              current={(() => { const l = empLeaves.find(l => l.date === ds); return l ? { reason: l.type, duration: l.duration, halfDayPeriod: l.halfDayPeriod } : null; })()}
+                              onSelect={(selection) => {
                               selectWizardLeaveDate(emp, ds, selection);
                               setWizardTooltipDate(null); setWizardTooltipPos(null);
                             }} />

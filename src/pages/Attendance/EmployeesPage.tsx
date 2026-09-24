@@ -9,7 +9,7 @@ import { RedSpinner } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
-import { LeaveOptionMenu, leavePeriodLabel, type HalfDayPeriod, type LeaveDuration, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveOptionMenu, leaveDotClass, leavePeriodLabel, type HalfDayPeriod, type LeaveDuration, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import {
   formatLeaveLimitFailures,
@@ -176,7 +176,6 @@ export const EmployeesPage: React.FC = () => {
 
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [leaveEmployee, setLeaveEmployee] = useState<Employee | null>(null);
-  const [leaveTab, setLeaveTab] = useState<'upcoming' | 'past'>('upcoming');
   const [weekOffDays, setWeekOffDays] = useState<string[]>([]); // Used for week-off functionality
   const [leaveDateMap, setLeaveDateMap] = useState<Record<string, LeaveSelection>>({});
   const [leaveTooltipDate, setLeaveTooltipDate] = useState<string | null>(null);
@@ -186,14 +185,6 @@ export const EmployeesPage: React.FC = () => {
   const [existingWeekOff, setExistingWeekOff] = useState<any | null>(null); // Used for week-off functionality
   const [employeeLeaves, setEmployeeLeaves] = useState<any[]>([]);
   const [leavesLoading, setLeavesLoading] = useState(false);
-  const [showAddLeaveForm, setShowAddLeaveForm] = useState(false);
-  const [editingLeave, setEditingLeave] = useState<any | null>(null);
-  const [editLeaveForm, setEditLeaveForm] = useState({ reason: '' });
-  const [editSelectedDates, setEditSelectedDates] = useState<string[]>([]);
-  const [editCalendarMonth, setEditCalendarMonth] = useState(new Date().getMonth());
-  const [editCalendarYear, setEditCalendarYear] = useState(new Date().getFullYear());
-  const [isSavingEditLeave, setIsSavingEditLeave] = useState(false);
-  const [deletingLeaveId, setDeletingLeaveId] = useState<string | null>(null);
   const [bulkLeaveModalOpen, setBulkLeaveModalOpen] = useState(false);
   const [bulkLeaveSelectedIds, setBulkLeaveSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLeaveSearchQuery, setBulkLeaveSearchQuery] = useState('');
@@ -208,18 +199,9 @@ export const EmployeesPage: React.FC = () => {
   const [bulkLeaveLimitDialogOpen, setBulkLeaveLimitDialogOpen] = useState(false);
   const [leaveFormLimitErrors, setLeaveFormLimitErrors] = useState<string[]>([]);
   const [leaveFormLimitDialogOpen, setLeaveFormLimitDialogOpen] = useState(false);
-  const [editLeaveLimitErrors, setEditLeaveLimitErrors] = useState<string[]>([]);
   const [wizardLeaveLimitErrors, setWizardLeaveLimitErrors] = useState<string[]>([]);
 
   const wizardScrollTopRef = useRef(0);
-  const leaveListScrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (showAddLeaveForm) {
-      const el = leaveListScrollRef.current;
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    }
-  }, [showAddLeaveForm]);
 
   usePopupDismiss(bulkLeaveTooltipDate !== null, () => setBulkLeaveTooltipDate(null));
   usePopupDismiss(leaveTooltipDate !== null, () => setLeaveTooltipDate(null));
@@ -435,20 +417,6 @@ export const EmployeesPage: React.FC = () => {
   const getLeaveFormProposals = (dateMap: Record<string, LeaveSelection>): ProposedLeaveAssignment[] =>
     leaveEmployee ? proposalsFromDateMap(leaveEmployee, dateMap) : [];
 
-  const getEditLeaveProposals = (
-    dates = editSelectedDates,
-    reason = editLeaveForm.reason,
-  ): ProposedLeaveAssignment[] => {
-    if (!editingLeave?.employeeCode || !reason) return [];
-    return dates.map((date) => ({
-      employeeCode: editingLeave.employeeCode,
-      employeeName: editingLeave.employeeName,
-      date,
-      leaveType: reason,
-      duration: editingLeave.duration,
-    }));
-  };
-
   const getWizardLeaveProposals = (
     entries = wizardEmpLeaves,
     employee = wizardEmployee,
@@ -479,20 +447,6 @@ export const EmployeesPage: React.FC = () => {
     const messages = formatLeaveLimitFailures(failures);
     setLeaveFormLimitErrors(messages);
     setLeaveFormLimitDialogOpen(messages.length > 0);
-    return failures.length === 0;
-  };
-
-  const validateEditLeaveSelection = (
-    dates = editSelectedDates,
-    reason = editLeaveForm.reason,
-  ): boolean => {
-    const failures = validateLeaveAssignments(
-      getEditLeaveProposals(dates, reason),
-      allLeaveRecords,
-      leaveLimits,
-      editingLeave?.id,
-    );
-    setEditLeaveLimitErrors(formatLeaveLimitFailures(failures));
     return failures.length === 0;
   };
 
@@ -553,17 +507,78 @@ export const EmployeesPage: React.FC = () => {
     validateWizardLeaveSelection(nextEntries);
   };
 
-  const toggleEditLeaveDate = (date: string) => {
-    const selected = editSelectedDates.includes(date);
-    const nextDates = selected ? editSelectedDates.filter((d) => d !== date) : [...editSelectedDates, date];
-    if (!selected && !validateEditLeaveSelection(nextDates)) return;
-    setEditSelectedDates(nextDates);
-    if (selected) validateEditLeaveSelection(nextDates);
+  const expandLeaveDates = (leave: any): string[] => {
+    const dates: string[] = [...(leave.dates ?? [])];
+    if (dates.length === 0 && leave.fromDate) {
+      const cur = new Date(leave.fromDate + 'T00:00:00');
+      const end = new Date((leave.toDate ?? leave.fromDate) + 'T00:00:00');
+      while (cur <= end) {
+        dates.push(cur.toLocaleDateString('en-CA'));
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+    return dates;
   };
 
-  const updateEditLeaveReason = (reason: string) => {
-    if (!validateEditLeaveSelection(editSelectedDates, reason)) return;
-    setEditLeaveForm({ reason });
+  const removeDateFromLeaveRecord = async (leave: any, dateStr: string) => {
+    const firestore = getFirestore();
+    const next = expandLeaveDates(leave).filter((d) => d !== dateStr).sort();
+    if (next.length === 0) {
+      await deleteDoc(doc(firestore, 'leaves', leave.id));
+    } else {
+      await updateDoc(doc(firestore, 'leaves', leave.id), { dates: next, fromDate: next[0], toDate: next[next.length - 1] });
+    }
+  };
+
+  const handleRemoveSavedLeaveDate = async (leave: any, dateStr: string) => {
+    if (!window.confirm('Remove this leave?')) return;
+    setLeaveTooltipDate(null);
+    try {
+      await removeDateFromLeaveRecord(leave, dateStr);
+      if (leaveEmployee) fetchLeavesForEmployee(leaveEmployee);
+    } catch (e) {
+      console.error('Error removing leave date:', e);
+    }
+  };
+
+  const handleChangeSavedLeaveDate = async (leave: any, dateStr: string, selection: LeaveSelection) => {
+    setLeaveTooltipDate(null);
+    const isValid = await validateFreshLeaveProposals(
+      [{
+        employeeCode: leave.employeeCode ?? leaveEmployee?.employeeCode,
+        employeeName: leave.employeeName ?? leaveEmployee?.employeeName,
+        date: dateStr,
+        leaveType: selection.reason,
+        duration: selection.duration,
+      }],
+      setLeaveFormLimitErrors,
+      leave.id,
+    );
+    if (!isValid) {
+      setLeaveFormLimitDialogOpen(true);
+      return;
+    }
+    try {
+      await removeDateFromLeaveRecord(leave, dateStr);
+      await addDoc(collection(getFirestore(), 'leaves'), {
+        type: 'leave',
+        employeeId: leave.employeeId ?? leaveEmployee?.id,
+        employeeCode: leave.employeeCode ?? leaveEmployee?.employeeCode,
+        employeeName: leave.employeeName ?? leaveEmployee?.employeeName,
+        dates: [dateStr],
+        fromDate: dateStr,
+        toDate: dateStr,
+        reason: selection.reason,
+        duration: selection.duration,
+        ...(selection.halfDayPeriod ? { halfDayPeriod: selection.halfDayPeriod } : {}),
+        dayValue: selection.duration === 'half_day' ? 0.5 : 1,
+        createdAt: serverTimestamp(),
+        createdBy: currentUser?.uid
+      });
+      if (leaveEmployee) fetchLeavesForEmployee(leaveEmployee);
+    } catch (e) {
+      console.error('Error updating leave date:', e);
+    }
   };
 
   const validateFreshLeaveProposals = async (
@@ -699,7 +714,6 @@ export const EmployeesPage: React.FC = () => {
 
   const handleLeaveClick = async (employee: Employee) => {
     setLeaveEmployee(employee);
-    setLeaveTab('upcoming');
     setWeekOffDays([]);
     setLeaveDateMap({});
     setLeaveTooltipDate(null);
@@ -709,8 +723,6 @@ export const EmployeesPage: React.FC = () => {
     setEmployeeLeaves([]);
     setLeaveFormLimitErrors([]);
     setLeaveFormLimitDialogOpen(false);
-    setEditLeaveLimitErrors([]);
-    setShowAddLeaveForm(false);
     setLeaveModalOpen(true);
     fetchLeavesForEmployee(employee);
     try {
@@ -724,67 +736,6 @@ export const EmployeesPage: React.FC = () => {
       }
     } catch (e) {
       console.error('Error fetching week off:', e);
-    }
-  };
-
-  const handleEditLeaveClick = (leave: any) => {
-    setEditingLeave(leave);
-    setEditLeaveLimitErrors([]);
-    setEditLeaveForm({ reason: leave.reason ?? '' });
-    const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-    setEditSelectedDates(dates);
-    if (dates.length > 0) {
-      const [y, m] = dates[0].split('-').map(Number);
-      setEditCalendarMonth(m - 1);
-      setEditCalendarYear(y);
-    } else {
-      setEditCalendarMonth(new Date().getMonth());
-      setEditCalendarYear(new Date().getFullYear());
-    }
-  };
-
-  const handleSaveEditLeave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingLeave || editSelectedDates.length === 0) return;
-    setIsSavingEditLeave(true);
-    try {
-      const isValid = await validateFreshLeaveProposals(
-        getEditLeaveProposals(),
-        setEditLeaveLimitErrors,
-        editingLeave.id,
-      );
-      if (!isValid) return;
-
-      const db = getFirestore();
-      const sorted = [...editSelectedDates].sort();
-      await updateDoc(doc(db, 'leaves', editingLeave.id), {
-        dates: sorted,
-        fromDate: sorted[0],
-        toDate: sorted[sorted.length - 1],
-        reason: editLeaveForm.reason,
-      });
-      setEditingLeave(null);
-      setSuccessMessage('Leave Updated Successfully');
-      setShowSuccessDialog(true);
-      if (leaveEmployee) fetchLeavesForEmployee(leaveEmployee);
-    } catch (e) {
-      console.error('Error updating leave:', e);
-    } finally {
-      setIsSavingEditLeave(false);
-    }
-  };
-
-  const handleDeleteLeave = async (leaveId: string) => {
-    if (!window.confirm('Delete this leave record?')) return;
-    setDeletingLeaveId(leaveId);
-    try {
-      const db = getFirestore();
-      await deleteDoc(doc(db, 'leaves', leaveId));
-      if (leaveEmployee) fetchLeavesForEmployee(leaveEmployee);
-    } catch (e) {
-      console.error('Error deleting leave:', e);
-    } finally {
-      setDeletingLeaveId(null);
     }
   };
 
@@ -893,7 +844,6 @@ export const EmployeesPage: React.FC = () => {
       setShowSuccessDialog(true);
       setLeaveDateMap({});
       setLeaveTooltipDate(null);
-      setShowAddLeaveForm(false);
       fetchLeavesForEmployee(leaveEmployee);
     } catch (e) {
       console.error('Error saving leave:', e);
@@ -2372,21 +2322,12 @@ export const EmployeesPage: React.FC = () => {
                           const leaveType = leaveSelection?.reason;
                           const selected = !!leaveSelection;
                           const isTooltipOpen = bulkLeaveTooltipDate === dateStr;
-                          const getBulkLeaveColor = (t: string) => {
-                            const tl = t.toLowerCase();
-                            if (tl.includes('week off')) return 'bg-blue-600';
-                            if (tl.includes('casual')) return 'bg-green-600';
-                            if (tl.includes('earned') || tl.includes('privilege')) return 'bg-indigo-600';
-                            if (tl.includes('holiday') || tl.includes('festival')) return 'bg-yellow-500';
-                            if (tl.includes('overtime')) return 'bg-orange-500';
-                            return 'bg-purple-600';
-                          };
                           return (
                             <div key={i} className="relative">
                               <button type="button"
                                 onClick={() => setBulkLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
                                 className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                  selected ? `${getBulkLeaveColor(leaveType)} text-white font-semibold` : 'hover:bg-purple-100 text-secondary-800'
+                                  selected ? `${leaveDotClass(leaveType, leaveSelection?.duration === 'half_day')} text-white font-semibold` : 'hover:bg-purple-100 text-secondary-800'
                                 }`}
                                 title={leaveSelection ? `${leaveSelection.reason} · ${leavePeriodLabel(leaveSelection)}` : undefined}
                               >{day}</button>
@@ -2401,7 +2342,7 @@ export const EmployeesPage: React.FC = () => {
                                         className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
                                       >Remove</button>
                                     )}
-                                    <LeaveOptionMenu onSelect={(selection) => {
+                                    <LeaveOptionMenu current={leaveSelection} onSelect={(selection) => {
                                       selectBulkLeaveDate(dateStr, selection);
                                       setBulkLeaveTooltipDate(null);
                                     }} />
@@ -2766,11 +2707,11 @@ export const EmployeesPage: React.FC = () => {
       {/* Leave / Week Off Modal */}
       {leaveModalOpen && leaveEmployee && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col max-h-[95vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b border-secondary-200">
               <div>
                 <h2 className="text-base font-semibold text-secondary-900">Leave / Week Off</h2>
-                <p className="text-xs text-purple-600">{leaveEmployee.employeeName}</p>
+                <p className="text-sm font-medium text-purple-600">{leaveEmployee.employeeName}</p>
               </div>
               <button
                 onClick={() => setLeaveModalOpen(false)}
@@ -2780,28 +2721,96 @@ export const EmployeesPage: React.FC = () => {
               </button>
             </div>
 
-            {/* Tabs */}
-            <div className="flex border-b border-secondary-200">
-              <button
-                onClick={() => setLeaveTab('past')}
-                className={`flex-1 py-2.5 text-sm font-medium transition-colors ${leaveTab === 'past' ? 'text-purple-700 border-b-2 border-purple-600' : 'text-secondary-500 hover:text-secondary-700'}`}
-              >
-                Past
-              </button>
-              <button
-                onClick={() => setLeaveTab('upcoming')}
-                className={`flex-1 py-2.5 text-sm font-medium transition-colors ${leaveTab === 'upcoming' ? 'text-purple-700 border-b-2 border-purple-600' : 'text-secondary-500 hover:text-secondary-700'}`}
-              >
-                Upcoming
-              </button>
-            </div>
-
-            <div ref={leaveListScrollRef} className="p-4 max-h-[60vh] overflow-y-auto">
+            <div className="p-4">
               {(() => {
-                const today = new Date().toLocaleDateString('en-CA');
-                const upcomingLeaves = employeeLeaves.filter((l) => l.toDate >= today);
-                const pastLeaves = employeeLeaves.filter((l) => l.toDate < today);
-                const list = leaveTab === 'upcoming' ? upcomingLeaves : pastLeaves;
+                const MONTH_NAMES_CAL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                const DAY_HEADERS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+                const todayStr = new Date().toLocaleDateString('en-CA');
+                const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
+                const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+                const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_, i) => i + 1)];
+                while (cells.length % 7 !== 0) cells.push(null);
+
+                const savedLeaveByDate: Record<string, any> = {};
+                employeeLeaves.forEach((leave) => {
+                  expandLeaveDates(leave).forEach((d) => { savedLeaveByDate[d] = leave; });
+                });
+
+                const renderLeaveCalendar = (interactive: boolean) => (
+                  <div className="border border-secondary-200 rounded-lg overflow-visible">
+                    <div className="flex items-center justify-between px-3 py-2 bg-purple-50">
+                      <button type="button" onClick={() => { if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(y => y - 1); } else setCalendarMonth(m => m - 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronLeft size={16}/></button>
+                      <span className="text-sm font-semibold text-secondary-800">{MONTH_NAMES_CAL[calendarMonth]} {calendarYear}</span>
+                      <button type="button" onClick={() => { if (calendarMonth === 11) { setCalendarMonth(0); setCalendarYear(y => y + 1); } else setCalendarMonth(m => m + 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronRight size={16}/></button>
+                    </div>
+                    <div className="grid grid-cols-7 border-b border-secondary-100">
+                      {DAY_HEADERS.map(d => <div key={d} className="text-center text-xs font-medium text-secondary-500 py-1">{d}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 p-1 gap-0.5">
+                      {cells.map((day, i) => {
+                        if (!day) return <div key={i} />;
+                        const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                        const staged = leaveDateMap[dateStr];
+                        const saved = savedLeaveByDate[dateStr];
+                        const isTooltipOpen = leaveTooltipDate === dateStr;
+                        const dayName = new Date(calendarYear, calendarMonth, day).toLocaleDateString('en-US', { weekday: 'long' });
+                        const isWeekOff = weekOffDays.includes(dayName) || weekOffDays.includes(dayName.toLowerCase());
+                        const cellColor = staged ? leaveDotClass(staged.reason, staged.duration === 'half_day') : saved ? leaveDotClass(saved.reason, saved.duration === 'half_day') : null;
+                        const cellTitle = staged ? `${staged.reason} · ${leavePeriodLabel(staged)}` : saved ? `${saved.reason ?? 'Leave'} · ${leavePeriodLabel(saved)}` : isWeekOff ? 'Week off' : undefined;
+                        const cellClass = `w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
+                          cellColor ? `${cellColor} text-white font-semibold` : isWeekOff ? 'bg-green-100 text-green-700 font-semibold' : interactive ? 'hover:bg-purple-100 text-secondary-800' : 'text-secondary-800'
+                        }${dateStr === todayStr ? ' ring-2 ring-purple-300 ring-offset-1' : ''}`;
+                        if (!interactive) {
+                          return <div key={i} className={cellClass} title={cellTitle}>{day}</div>;
+                        }
+                        return (
+                          <div key={i} className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
+                              className={cellClass}
+                              title={cellTitle}
+                            >
+                              {day}
+                            </button>
+                            {isTooltipOpen && (
+                              <div data-popup-root className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
+                                ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
+                                {staged && (
+                                  <button type="button"
+                                    onClick={() => { removeEmployeeLeaveDate(dateStr); setLeaveTooltipDate(null); }}
+                                    className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                                  >Remove</button>
+                                )}
+                                {!staged && saved && (
+                                  <button type="button"
+                                    onClick={() => handleRemoveSavedLeaveDate(saved, dateStr)}
+                                    className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                                  >Remove</button>
+                                )}
+                                <LeaveOptionMenu
+                                  current={staged ?? (saved ? { reason: saved.reason ?? '', duration: saved.duration ?? 'full_day', halfDayPeriod: saved.halfDayPeriod } : null)}
+                                  onSelect={(selection) => {
+                                  if (saved && !staged) {
+                                    handleChangeSavedLeaveDate(saved, dateStr, selection);
+                                  } else {
+                                    selectEmployeeLeaveDate(dateStr, selection);
+                                    setLeaveTooltipDate(null);
+                                  }
+                                }} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+
+                const legendReasons = Array.from(new Set(
+                  Object.values(savedLeaveByDate).map((leave: any) => leave.reason).filter(Boolean)
+                )) as string[];
 
                 return (
                   <>
@@ -2809,240 +2818,53 @@ export const EmployeesPage: React.FC = () => {
                       <div className="flex items-center justify-center py-8">
                         <RedSpinner size="sm" />
                       </div>
-                    ) : list.length === 0 && !showAddLeaveForm ? (
-                      <p className="text-sm text-secondary-500 text-center py-6">
-                        No {leaveTab} leaves found.
-                      </p>
                     ) : (
-                      <div className="space-y-2 mb-4">
-                        {list.map((leave) => {
-                          const formatDate = (d: string) => {
-                            const dt = new Date(d + 'T00:00:00');
-                            return dt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-                          };
-                          const dates: string[] = leave.dates ?? (leave.fromDate ? [leave.fromDate] : []);
-                          return (
-                          <div key={leave.id} className="border border-secondary-200 rounded-lg p-3">
-                            {editingLeave?.id === leave.id ? (
-                              <form onSubmit={handleSaveEditLeave} className="space-y-2">
-                                <p className="text-xs font-medium text-secondary-700 mb-1">Edit Leave Dates</p>
-                                {(() => {
-                                  const MONTH_NAMES_E = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-                                  const DAY_HEADERS_E = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-                                  const firstDay = new Date(editCalendarYear, editCalendarMonth, 1).getDay();
-                                  const daysInMonth = new Date(editCalendarYear, editCalendarMonth + 1, 0).getDate();
-                                  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_, i) => i + 1)];
-                                  while (cells.length % 7 !== 0) cells.push(null);
-                                  return (
-                                    <div className="border border-secondary-200 rounded-lg overflow-hidden">
-                                      <div className="flex items-center justify-between px-3 py-2 bg-purple-50">
-                                        <button type="button" onClick={() => { if (editCalendarMonth === 0) { setEditCalendarMonth(11); setEditCalendarYear(y => y - 1); } else setEditCalendarMonth(m => m - 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronLeft size={14}/></button>
-                                        <span className="text-xs font-semibold text-secondary-800">{MONTH_NAMES_E[editCalendarMonth]} {editCalendarYear}</span>
-                                        <button type="button" onClick={() => { if (editCalendarMonth === 11) { setEditCalendarMonth(0); setEditCalendarYear(y => y + 1); } else setEditCalendarMonth(m => m + 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronRight size={14}/></button>
-                                      </div>
-                                      <div className="grid grid-cols-7 border-b border-secondary-100">
-                                        {DAY_HEADERS_E.map(d => <div key={d} className="text-center text-xs font-medium text-secondary-500 py-1">{d}</div>)}
-                                      </div>
-                                      <div className="grid grid-cols-7 p-1 gap-0.5">
-                                        {cells.map((day, i) => {
-                                          if (!day) return <div key={i} />;
-                                          const dateStr = `${editCalendarYear}-${String(editCalendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                                          const selected = editSelectedDates.includes(dateStr);
-                                          return (
-                                            <button key={i} type="button" onClick={() => toggleEditLeaveDate(dateStr)}
-                                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                                selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'
-                                              }`}>{day}</button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-                                {editSelectedDates.length > 0 && (
-                                  <p className="text-xs text-purple-700 font-medium">{editSelectedDates.length} date{editSelectedDates.length > 1 ? 's' : ''} selected</p>
-                                )}
-                                <div>
-                                  <label className="block text-xs font-medium text-secondary-600 mb-1">Leave Type</label>
-                                  <select value={editLeaveForm.reason} onChange={(e) => updateEditLeaveReason(e.target.value)}
-                                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
-                                    <option value="">Select leave type...</option>
-                                    <option value="Week Off">Week Off</option>
-                                    <option value="Casual Leave">Casual Leave</option>
-                                    <option value="Earned Leave">Earned Leave</option>
-                                    <option value="Holiday Off">Holiday Off</option>
-                                    <option value="Overtime Off">Overtime Off</option>
-                                  </select>
-                                </div>
-                                {editLeaveLimitErrors.length > 0 && (
-                                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-                                    <p className="text-xs font-medium text-red-700 mb-1">Leave limit check failed</p>
-                                    <ul className="list-disc pl-4 space-y-1 text-xs text-red-700">
-                                      {editLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
-                                    </ul>
-                                  </div>
-                                )}
-                                <div className="flex gap-2">
-                                  <button type="button" onClick={() => setEditingLeave(null)}
-                                    className="flex-1 py-1.5 text-xs font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                                  <button type="submit" disabled={isSavingEditLeave}
-                                    className="flex-1 py-1.5 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
-                                    {isSavingEditLeave ? 'Saving...' : 'Save'}
-                                  </button>
-                                </div>
-                              </form>
-                            ) : (
-                              <>
-                                <div className="flex items-start justify-between mb-1 gap-2">
-                                  <div className="flex flex-col gap-0.5">
-                                    {dates.length > 0 ? dates.map((d: string) => (
-                                      <span key={d} className="text-sm font-medium text-secondary-900">{formatDate(d)}</span>
-                                    )) : (
-                                      <>
-                                        <span className="text-sm font-medium text-secondary-900">{formatDate(leave.fromDate)}</span>
-                                        {leave.toDate !== leave.fromDate && (
-                                          <span className="text-sm font-medium text-secondary-900">{formatDate(leave.toDate)}</span>
-                                        )}
-                                      </>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <button type="button" onClick={() => handleEditLeaveClick(leave)}
-                                      className="p-1.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors" title="Edit">
-                                      <Edit size={16} />
-                                    </button>
-                                    <button type="button" onClick={() => handleDeleteLeave(leave.id)}
-                                      disabled={deletingLeaveId === leave.id}
-                                      className="p-1.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50" title="Delete">
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </div>
-                                </div>
-                                {leave.reason && (
-                                  <span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${getLeaveColor(leave.reason).badge} ${getLeaveColor(leave.reason).text}`}>{leave.reason}</span>
-                                )}
-                              </>
+                      <form onSubmit={handleSaveLeave} className="space-y-3">
+                        {weekOffDays.length > 0 && (
+                          <p className="text-xs text-secondary-600">
+                            Week off: {weekOffDays.join(', ')}{existingWeekOff ? ' (saved)' : ''}
+                          </p>
+                        )}
+                        {canManageLeaves && (
+                          <p className="text-xs text-secondary-500">Click a date to assign, change, or remove leave.</p>
+                        )}
+
+                        {renderLeaveCalendar(canManageLeaves)}
+
+                        {(legendReasons.length > 0 || weekOffDays.length > 0) && (
+                          <div className="flex flex-wrap gap-x-3 gap-y-1">
+                            {legendReasons.map((reason) => (
+                              <span key={reason} className="flex items-center gap-1 text-xs text-secondary-600"><span className={`w-2.5 h-2.5 rounded-full ${leaveDotClass(reason)}`} />{reason}</span>
+                            ))}
+                            {weekOffDays.length > 0 && (
+                              <span className="flex items-center gap-1 text-xs text-secondary-600"><span className="w-2.5 h-2.5 rounded-full bg-green-100 ring-1 ring-green-300" />Week off</span>
                             )}
                           </div>
-                        ); })}
-                      </div>
-                    )}
+                        )}
 
-                    {showAddLeaveForm ? (
-                        <form onSubmit={handleSaveLeave} className="space-y-3 border-t border-secondary-200 pt-3">
-                          <p className="text-sm font-medium text-secondary-700">Select Leave Dates</p>
-
-                          {weekOffDays.length > 0 && (
-                            <p className="text-xs text-secondary-600">
-                              Week off: {weekOffDays.join(', ')}{existingWeekOff ? ' (saved)' : ''}
-                            </p>
-                          )}
-
-                          {/* Custom Calendar */}
-                          {(() => {
-                            const MONTH_NAMES_CAL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-                            const DAY_HEADERS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-                            const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
-                            const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
-                            const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_, i) => i + 1)];
-                            while (cells.length % 7 !== 0) cells.push(null);
-                            return (
-                              <div className="border border-secondary-200 rounded-lg overflow-visible">
-                                <div className="flex items-center justify-between px-3 py-2 bg-purple-50">
-                                  <button type="button" onClick={() => { if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(y => y - 1); } else setCalendarMonth(m => m - 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronLeft size={16}/></button>
-                                  <span className="text-sm font-semibold text-secondary-800">{MONTH_NAMES_CAL[calendarMonth]} {calendarYear}</span>
-                                  <button type="button" onClick={() => { if (calendarMonth === 11) { setCalendarMonth(0); setCalendarYear(y => y + 1); } else setCalendarMonth(m => m + 1); }} className="p-1 rounded hover:bg-purple-100 text-purple-700"><ChevronRight size={16}/></button>
-                                </div>
-                                <div className="grid grid-cols-7 border-b border-secondary-100">
-                                  {DAY_HEADERS.map(d => <div key={d} className="text-center text-xs font-medium text-secondary-500 py-1">{d}</div>)}
-                                </div>
-                                <div className="grid grid-cols-7 p-1 gap-0.5">
-                                  {cells.map((day, i) => {
-                                    if (!day) return <div key={i} />;
-                                    const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                                    const leaveSelection = leaveDateMap[dateStr];
-                                    const leaveType = leaveSelection?.reason;
-                                    const selected = !!leaveSelection;
-                                    const isTooltipOpen = leaveTooltipDate === dateStr;
-                                    const dayName = new Date(calendarYear, calendarMonth, day).toLocaleDateString('en-US', { weekday: 'long' });
-                                    const isWeekOff = weekOffDays.includes(dayName) || weekOffDays.includes(dayName.toLowerCase());
-                                    const getAddLeaveColor = (t: string) => {
-                                      const tl = t.toLowerCase();
-                                      if (tl.includes('week off')) return 'bg-blue-600';
-                                      if (tl.includes('casual')) return 'bg-green-600';
-                                      if (tl.includes('earned') || tl.includes('privilege')) return 'bg-indigo-600';
-                                      if (tl.includes('holiday') || tl.includes('festival')) return 'bg-yellow-500';
-                                      if (tl.includes('overtime')) return 'bg-orange-500';
-                                      return 'bg-purple-600';
-                                    };
-                                    return (
-                                      <div key={i} className="relative">
-                                        <button
-                                          type="button"
-                                          onClick={() => setLeaveTooltipDate(isTooltipOpen ? null : dateStr)}
-                                          className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${
-                                            selected ? `${getAddLeaveColor(leaveType)} text-white font-semibold` : isWeekOff ? 'bg-green-100 text-green-700 font-semibold' : 'hover:bg-purple-100 text-secondary-800'
-                                          }`}
-                                          title={leaveSelection ? `${leaveSelection.reason} · ${leavePeriodLabel(leaveSelection)}` : isWeekOff ? 'Week off' : undefined}
-                                        >
-                                          {day}
-                                        </button>
-                                        {isTooltipOpen && (
-                                          <>
-                                            <div data-popup-root className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
-                                              ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
-                                              ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
-                                              {selected && (
-                                                <button type="button"
-                                                  onClick={() => { removeEmployeeLeaveDate(dateStr); setLeaveTooltipDate(null); }}
-                                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
-                                                >Remove</button>
-                                              )}
-                                              <LeaveOptionMenu onSelect={(selection) => {
-                                                selectEmployeeLeaveDate(dateStr, selection);
-                                                setLeaveTooltipDate(null);
-                                              }} />
-                                            </div>
-                                          </>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })()}
-
-                          {Object.keys(leaveDateMap).length > 0 && (
+                        {canManageLeaves && Object.keys(leaveDateMap).length > 0 && (
+                          <>
                             <p className="text-xs text-purple-700 font-medium">{Object.keys(leaveDateMap).length} date{Object.keys(leaveDateMap).length > 1 ? 's' : ''} selected</p>
-                          )}
-
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => { setLeaveFormLimitErrors([]); setLeaveFormLimitDialogOpen(false); setShowAddLeaveForm(false); }}
-                              className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              disabled={isSavingLeave || Object.keys(leaveDateMap).length === 0}
-                              className="flex-1 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
-                            >
-                              {isSavingLeave ? 'Saving...' : 'Save'}
-                            </button>
-                          </div>
-                        </form>
-                      ) : (
-                        <button
-                          onClick={() => { setLeaveFormLimitErrors([]); setLeaveFormLimitDialogOpen(false); setShowAddLeaveForm(true); }}
-                          disabled={!canManageLeaves}
-                          className={`w-full py-2 text-sm font-medium text-purple-700 border border-purple-300 rounded-lg hover:bg-purple-50 transition-colors ${canManageLeaves ? '' : 'hidden'}`}
-                        >
-                          + Add Leave
-                        </button>
-                      )}
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => { setLeaveDateMap({}); setLeaveTooltipDate(null); }}
+                                className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
+                              >
+                                Clear
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={isSavingLeave}
+                                className="flex-1 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
+                              >
+                                {isSavingLeave ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </form>
+                    )}
                   </>
                 );
               })()}
@@ -3435,7 +3257,7 @@ export const EmployeesPage: React.FC = () => {
                             ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
                               wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
                               shiftChangedDates.some(sc => sc.date === ds) ? 'bg-orange-500 text-white font-semibold' :
-                              isSelected ? `${getLeaveColor(leaveType ?? '').dot} text-white font-semibold` :
+                              isSelected ? `${leaveDotClass(leaveType ?? '', wizardEmpLeaves.find(l => l.date === ds)?.duration === 'half_day')} text-white font-semibold` :
                               'hover:bg-secondary-100 text-secondary-800'}`}
                           title={shiftChangedDates.some(sc => sc.date === ds) ? 'Shift Changed' : leaveType ?? undefined}
                         >
@@ -3457,7 +3279,9 @@ export const EmployeesPage: React.FC = () => {
                                   Remove
                                 </button>
                               )}
-                              <LeaveOptionMenu onSelect={(selection) => {
+                              <LeaveOptionMenu
+                                current={(() => { const l = wizardEmpLeaves.find(l => l.date === ds); return l ? { reason: l.type, duration: l.duration, halfDayPeriod: l.halfDayPeriod } : null; })()}
+                                onSelect={(selection) => {
                                 selectWizardLeaveDate(ds, selection);
                                 setWizardTooltipDate(null); setWizardTooltipPos(null);
                               }} />
