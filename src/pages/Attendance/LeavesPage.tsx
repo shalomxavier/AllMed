@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import {
   flattenShiftAssignments,
   normalizeEmployeeCode,
@@ -11,6 +12,7 @@ import {
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
 import { LeaveOptionMenu, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import {
   formatLeaveLimitFailures,
   validateLeaveAssignments,
@@ -208,6 +210,8 @@ export const LeavesPage: React.FC = () => {
   const [leaveLimits, setLeaveLimits] = useState<LeaveLimitRecord[]>([]);
   const [bulkLeaveLimitErrors, setBulkLeaveLimitErrors] = useState<string[]>([]);
   const [editLeaveLimitErrors, setEditLeaveLimitErrors] = useState<string[]>([]);
+
+  usePopupDismiss(bulkLeaveTooltipDate !== null, () => setBulkLeaveTooltipDate(null));
 
   const fetchData = async () => {
     if (!currentUser) return;
@@ -698,7 +702,7 @@ export const LeavesPage: React.FC = () => {
             }
           }
 
-          if (missingIn || missingOut) {
+          if (missingIn && missingOut) {
             results.push({
               employeeCode: empCode,
               employeeName: empName,
@@ -1285,7 +1289,7 @@ export const LeavesPage: React.FC = () => {
                     <AlertTriangle size={20} className="text-green-600" />
                   </div>
                   <p className="text-sm font-medium text-secondary-700">No unauthorized absences found</p>
-                  <p className="text-xs text-secondary-500 mt-1">All scheduled workdays have clock-in and clock-out records</p>
+                  <p className="text-xs text-secondary-500 mt-1">No workdays are missing both clock-in and clock-out records</p>
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1421,8 +1425,7 @@ export const LeavesPage: React.FC = () => {
                               >{day}</button>
                               {isTooltipOpen && (
                                 <>
-                                  <div className="fixed inset-0 z-[9]" onClick={() => setBulkLeaveTooltipDate(null)} />
-                                  <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                  <div data-popup-root className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
                                     ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                     ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
                                     {selected && (
@@ -1474,7 +1477,7 @@ export const LeavesPage: React.FC = () => {
             </div>
             <div className="p-4">
               <ul className="list-disc pl-5 space-y-1.5 text-sm text-secondary-800">
-                {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
               </ul>
               <button
                 type="button"
@@ -1561,7 +1564,7 @@ export const LeavesPage: React.FC = () => {
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                   <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                   <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                    {editLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                    {editLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
                   </ul>
                 </div>
               )}

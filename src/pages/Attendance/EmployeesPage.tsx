@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Search, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc } from 'firebase/firestore';
@@ -6,9 +6,11 @@ import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updat
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 import { LeaveOptionMenu, leavePeriodLabel, type HalfDayPeriod, type LeaveDuration, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import {
   formatLeaveLimitFailures,
   validateLeaveAssignments,
@@ -208,6 +210,20 @@ export const EmployeesPage: React.FC = () => {
   const [leaveFormLimitDialogOpen, setLeaveFormLimitDialogOpen] = useState(false);
   const [editLeaveLimitErrors, setEditLeaveLimitErrors] = useState<string[]>([]);
   const [wizardLeaveLimitErrors, setWizardLeaveLimitErrors] = useState<string[]>([]);
+
+  const wizardScrollTopRef = useRef(0);
+  const leaveListScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showAddLeaveForm) {
+      const el = leaveListScrollRef.current;
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+  }, [showAddLeaveForm]);
+
+  usePopupDismiss(bulkLeaveTooltipDate !== null, () => setBulkLeaveTooltipDate(null));
+  usePopupDismiss(leaveTooltipDate !== null, () => setLeaveTooltipDate(null));
+  usePopupDismiss(wizardTooltipDate !== null, () => { setWizardTooltipDate(null); setWizardTooltipPos(null); });
 
   const fetchLeaveValidationData = async () => {
     const firestore = getFirestore();
@@ -2376,20 +2392,19 @@ export const EmployeesPage: React.FC = () => {
                               >{day}</button>
                               {isTooltipOpen && (
                                 <>
-                                  <div className="fixed inset-0 z-[9]" onClick={() => setBulkLeaveTooltipDate(null)} />
-                                  <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                  <div data-popup-root className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
                                     ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                     ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
+                                    {selected && (
+                                      <button type="button"
+                                        onClick={() => { removeBulkLeaveDate(dateStr); setBulkLeaveTooltipDate(null); }}
+                                        className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                                      >Remove</button>
+                                    )}
                                     <LeaveOptionMenu onSelect={(selection) => {
                                       selectBulkLeaveDate(dateStr, selection);
                                       setBulkLeaveTooltipDate(null);
                                     }} />
-                                    {selected && (
-                                      <button type="button"
-                                        onClick={() => { removeBulkLeaveDate(dateStr); setBulkLeaveTooltipDate(null); }}
-                                        className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
-                                      >Remove</button>
-                                    )}
                                   </div>
                                 </>
                               )}
@@ -2428,7 +2443,7 @@ export const EmployeesPage: React.FC = () => {
             </div>
             <div className="p-4">
               <ul className="list-disc pl-5 space-y-1.5 text-sm text-secondary-800">
-                {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
               </ul>
               <button
                 type="button"
@@ -2751,7 +2766,7 @@ export const EmployeesPage: React.FC = () => {
       {/* Leave / Week Off Modal */}
       {leaveModalOpen && leaveEmployee && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-secondary-200">
               <div>
                 <h2 className="text-base font-semibold text-secondary-900">Leave / Week Off</h2>
@@ -2781,7 +2796,7 @@ export const EmployeesPage: React.FC = () => {
               </button>
             </div>
 
-            <div className={`p-4 max-h-[60vh] ${leaveTooltipDate ? 'overflow-visible' : 'overflow-y-auto'}`}>
+            <div ref={leaveListScrollRef} className="p-4 max-h-[60vh] overflow-y-auto">
               {(() => {
                 const today = new Date().toLocaleDateString('en-CA');
                 const upcomingLeaves = employeeLeaves.filter((l) => l.toDate >= today);
@@ -2863,7 +2878,7 @@ export const EmployeesPage: React.FC = () => {
                                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                                     <p className="text-xs font-medium text-red-700 mb-1">Leave limit check failed</p>
                                     <ul className="list-disc pl-4 space-y-1 text-xs text-red-700">
-                                      {editLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                                      {editLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
                                     </ul>
                                   </div>
                                 )}
@@ -2974,20 +2989,19 @@ export const EmployeesPage: React.FC = () => {
                                         </button>
                                         {isTooltipOpen && (
                                           <>
-                                            <div className="fixed inset-0 z-[9]" onClick={() => setLeaveTooltipDate(null)} />
-                                            <div className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
+                                            <div data-popup-root className={`absolute z-10 bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48
                                               ${Math.floor(i / 7) >= Math.ceil(cells.length / 7) / 2 ? 'bottom-full mb-1' : 'top-full mt-1'}
                                               ${i % 7 >= 5 ? 'right-0' : i % 7 <= 1 ? 'left-0' : 'left-1/2 -translate-x-1/2'}`}>
+                                              {selected && (
+                                                <button type="button"
+                                                  onClick={() => { removeEmployeeLeaveDate(dateStr); setLeaveTooltipDate(null); }}
+                                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                                                >Remove</button>
+                                              )}
                                               <LeaveOptionMenu onSelect={(selection) => {
                                                 selectEmployeeLeaveDate(dateStr, selection);
                                                 setLeaveTooltipDate(null);
                                               }} />
-                                              {selected && (
-                                                <button type="button"
-                                                  onClick={() => { removeEmployeeLeaveDate(dateStr); setLeaveTooltipDate(null); }}
-                                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
-                                                >Remove</button>
-                                              )}
                                             </div>
                                           </>
                                         )}
@@ -3050,7 +3064,7 @@ export const EmployeesPage: React.FC = () => {
             </div>
             <div className="p-4">
               <ul className="list-disc pl-5 space-y-1.5 text-sm text-secondary-800">
-                {leaveFormLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                {leaveFormLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
               </ul>
               <button
                 type="button"
@@ -3243,7 +3257,7 @@ export const EmployeesPage: React.FC = () => {
                       <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                         <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                         <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                          {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                          {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
                         </ul>
                       </div>
                     )}
@@ -3352,7 +3366,13 @@ export const EmployeesPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex-1 overflow-y-auto p-4" onScroll={(e) => {
+                const top = e.currentTarget.scrollTop;
+                const prev = wizardScrollTopRef.current;
+                wizardScrollTopRef.current = top;
+                const delta = top - prev;
+                if (delta !== 0) setWizardTooltipPos((p) => (p ? { ...p, y: p.y - delta } : p));
+              }}>
                 <div className="flex items-center justify-between mb-3">
                   <button
                     type="button"
@@ -3423,9 +3443,20 @@ export const EmployeesPage: React.FC = () => {
                         </button>
                         {isTooltipOpen && wizardTooltipPos && (
                           <>
-                            <div className="fixed inset-0 z-[99]" onClick={() => { setWizardTooltipDate(null); setWizardTooltipPos(null); }} />
-                            <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
+                            <div data-popup-root className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
+                              {isSelected && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    removeWizardLeaveDate(ds);
+                                    setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                                >
+                                  Remove
+                                </button>
+                              )}
                               <LeaveOptionMenu onSelect={(selection) => {
                                 selectWizardLeaveDate(ds, selection);
                                 setWizardTooltipDate(null); setWizardTooltipPos(null);
@@ -3442,18 +3473,6 @@ export const EmployeesPage: React.FC = () => {
                               >
                                 Change Shift
                               </button>
-                              {isSelected && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    removeWizardLeaveDate(ds);
-                                    setWizardTooltipDate(null); setWizardTooltipPos(null);
-                                  }}
-                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
-                                >
-                                  Remove
-                                </button>
-                              )}
                             </div>
                           </>
                         )}
@@ -3484,7 +3503,7 @@ export const EmployeesPage: React.FC = () => {
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                     <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                      {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                      {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
                     </ul>
                   </div>
                 )}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
@@ -6,6 +6,8 @@ import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, ser
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
+import { usePopupDismiss } from '@/hooks/usePopupDismiss';
+import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 import {
@@ -226,6 +228,9 @@ export const ShiftsPage: React.FC = () => {
   const [allLeaveRecords, setAllLeaveRecords] = useState<StoredLeaveRecord[]>([]);
   const [leaveLimits, setLeaveLimits] = useState<LeaveLimitRecord[]>([]);
   const [wizardLeaveLimitErrors, setWizardLeaveLimitErrors] = useState<string[]>([]);
+
+  const wizardScrollTopRef = useRef(0);
+  usePopupDismiss(wizardTooltipDate !== null, () => { setWizardTooltipDate(null); setWizardTooltipPos(null); });
 
   const fetchLeaveValidationData = async () => {
     const [leavesSnap, limitsSnap] = await Promise.all([
@@ -1511,7 +1516,7 @@ export const ShiftsPage: React.FC = () => {
                     <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                       <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                       <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                        {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                        {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
                       </ul>
                     </div>
                   )}
@@ -1641,7 +1646,13 @@ export const ShiftsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex-1 overflow-y-auto p-4" onScroll={(e) => {
+                const top = e.currentTarget.scrollTop;
+                const prev = wizardScrollTopRef.current;
+                wizardScrollTopRef.current = top;
+                const delta = top - prev;
+                if (delta !== 0) setWizardTooltipPos((p) => (p ? { ...p, y: p.y - delta } : p));
+              }}>
                 {/* Calendar header */}
                 <div className="flex items-center justify-between mb-3">
                   <button
@@ -1716,9 +1727,20 @@ export const ShiftsPage: React.FC = () => {
                         {/* Tooltip popover */}
                         {isTooltipOpen && wizardTooltipPos && (
                           <>
-                            <div className="fixed inset-0 z-[99]" onClick={() => { setWizardTooltipDate(null); setWizardTooltipPos(null); }} />
-                          <div className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
+                          <div data-popup-root className="fixed z-[100] bg-white border border-secondary-200 rounded-lg shadow-lg p-2 w-48"
                               style={{ top: wizardTooltipPos.y, left: Math.min(wizardTooltipPos.x, window.innerWidth - 200) }}>
+                            {isSelected && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  removeWizardLeaveDate(emp, ds);
+                                  setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                }}
+                                className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
+                              >
+                                Remove
+                              </button>
+                            )}
                             <WizardLeaveOptionMenu availabilityByType={getWizardPickerAvailability(emp, ds)} onSelect={(selection) => {
                               selectWizardLeaveDate(emp, ds, selection);
                               setWizardTooltipDate(null); setWizardTooltipPos(null);
@@ -1734,18 +1756,6 @@ export const ShiftsPage: React.FC = () => {
                             >
                               Change Shift
                             </button>
-                            {isSelected && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  removeWizardLeaveDate(emp, ds);
-                                  setWizardTooltipDate(null); setWizardTooltipPos(null);
-                                }}
-                                className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
-                              >
-                                Remove
-                              </button>
-                            )}
                           </div>
                           </>
                         )}
@@ -1776,7 +1786,7 @@ export const ShiftsPage: React.FC = () => {
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>
                     <ul className="list-disc pl-5 space-y-1 text-xs text-red-700">
-                      {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message}</li>)}
+                      {wizardLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
                     </ul>
                   </div>
                 )}

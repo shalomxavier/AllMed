@@ -371,7 +371,7 @@ export const LeaveCountsPage: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3 content-start">
+      <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 content-start">
         {employeeStats.length === 0 ? (
           <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
@@ -587,7 +587,7 @@ export const LeaveCountsPage: React.FC = () => {
                           <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
                           <button type="button" onClick={() => openEditLimit(managingEmployee, limit)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50" aria-label="Edit limit period"><Pencil size={16} /></button>
                           <button type="button" onClick={() => handleDeleteLimit(limit.id)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50" aria-label="Delete limit period"><Trash2 size={16} /></button>
-                          <button type="button" onClick={() => setExpandedLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
+                          <button type="button" onClick={() => setExpandedLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-700 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
                             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                           </button>
                         </div>
@@ -681,7 +681,7 @@ export const LeaveCountsPage: React.FC = () => {
                         <div className="flex items-center gap-1">
                           <span className="text-sm font-medium text-secondary-600 whitespace-nowrap">Leave/Off:</span>
                           <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
-                          <button type="button" onClick={() => setExpandedViewLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
+                          <button type="button" onClick={() => setExpandedViewLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-700 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
                           {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                         </button>
                       </div>
