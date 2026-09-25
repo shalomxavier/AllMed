@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { User, Briefcase } from 'lucide-react';
+import { User, Briefcase, Menu } from 'lucide-react';
 import { Sidebar } from './Sidebar';
+import { ToastProvider } from '@/components/common';
 import { useAuthContext } from '@/contexts/AuthContext';
 
 export const DashboardLayout: React.FC = () => {
@@ -16,16 +17,28 @@ export const DashboardLayout: React.FC = () => {
     setIsSidebarOpen(false);
   };
 
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setIsSidebarOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isSidebarOpen]);
+
   // WhatsApp Messager gets a simplified layout - just the WhatsApp interface
   if (isWhatsAppMessager && isWhatsAppEnquiryPage) {
     return (
-      <div className="min-h-screen bg-secondary-50">
-        <Outlet />
-      </div>
+      <ToastProvider>
+        <div className="min-h-screen bg-secondary-50">
+          <Outlet />
+        </div>
+      </ToastProvider>
     );
   }
 
   return (
+    <ToastProvider>
     <div
       className="min-h-screen flex"
       style={
@@ -43,8 +56,15 @@ export const DashboardLayout: React.FC = () => {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <header className="flex items-center justify-between px-4 lg:px-6 h-16">
+          <button
+            onClick={() => setIsSidebarOpen(true)}
+            className="lg:hidden p-2 rounded-lg text-secondary-600 bg-white border border-secondary-200 shadow-sm hover:bg-secondary-50 transition-colors"
+            aria-label="Open menu"
+          >
+            <Menu size={20} />
+          </button>
           {userData && (
-            <div className="flex items-center gap-3 px-4 py-2 bg-white/80 backdrop-blur-sm rounded-full shadow-lg ml-auto">
+            <div className="flex items-center gap-3 px-4 py-2 bg-white border border-secondary-200 rounded-full shadow-sm ml-auto">
               <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
                 <User size={16} className="text-primary-600" />
               </div>
@@ -63,5 +83,6 @@ export const DashboardLayout: React.FC = () => {
         </main>
       </div>
     </div>
+    </ToastProvider>
   );
 };

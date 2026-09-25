@@ -678,7 +678,7 @@ export const InsightsPage: React.FC = () => {
 
   return (
     <PageContainer>
-      <div className="mt-4 flex items-center gap-3 px-4 py-3">
+      <div className="mt-4 flex items-center gap-3 py-3">
         <button
           onClick={() => navigate('/attendance')}
           className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
@@ -713,7 +713,7 @@ export const InsightsPage: React.FC = () => {
                 type="date"
                 value={selectedDate}
                 onChange={(event) => setSelectedDate(event.target.value)}
-                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
             <div>
@@ -725,7 +725,7 @@ export const InsightsPage: React.FC = () => {
                 value={branchFilter}
                 onChange={(event) => setBranchFilter(event.target.value)}
                 disabled={userData?.designation === 'Branch Manager' || branchesLoading}
-                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
               >
                 {branchesLoading ? (
                   <option value="">Loading branches...</option>

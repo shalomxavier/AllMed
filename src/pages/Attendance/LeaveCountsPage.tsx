@@ -324,7 +324,7 @@ export const LeaveCountsPage: React.FC = () => {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-200">
+      <div className="flex items-center gap-3 py-3 border-b border-secondary-200">
         <button
           onClick={() => navigate('/attendance/leaves')}
           className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors"
@@ -332,13 +332,13 @@ export const LeaveCountsPage: React.FC = () => {
           <ArrowLeft size={20} className="text-secondary-600" />
         </button>
         <div className="flex-1">
-          <h1 className="text-base font-semibold text-secondary-900">Leave Counts</h1>
+          <h1 className="page-title">Leave Counts</h1>
           <p className="text-xs text-secondary-500">Employee-wise leave limits</p>
         </div>
       </div>
 
       {/* Search & Branch Filter */}
-      <div className="px-4 pt-3 pb-4">
+      <div className="pt-3 pb-4">
         <div className="flex items-center justify-start gap-3 flex-wrap">
           <div className="relative w-full sm:w-1/2">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary-400" />
@@ -347,14 +347,14 @@ export const LeaveCountsPage: React.FC = () => {
               placeholder="Search employees by name, code, or ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <select
             value={branchFilter}
             onChange={(e) => setBranchFilter(e.target.value)}
             disabled={userData?.designation === 'Branch Manager'}
-            className="w-full sm:w-56 px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:bg-secondary-100 disabled:cursor-not-allowed"
+            className="w-full sm:w-56 px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
           >
             {userData?.designation === 'Branch Manager' ? (
               <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
@@ -371,7 +371,7 @@ export const LeaveCountsPage: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 content-start">
+      <div className="flex-1 overflow-y-auto pb-4 grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 content-start">
         {employeeStats.length === 0 ? (
           <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
@@ -392,7 +392,7 @@ export const LeaveCountsPage: React.FC = () => {
                   openViewLimits(emp);
                 }
               }}
-              className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg p-4 flex items-center gap-3 cursor-pointer hover:shadow-xl transition-shadow"
+              className="card p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
             >
               <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
                 <User className="w-5 h-5 text-purple-600" />
@@ -413,7 +413,7 @@ export const LeaveCountsPage: React.FC = () => {
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); openManageLimits(emp); }}
-                      className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
                       aria-label="Manage limits"
                     >
                       <Pencil size={16} />
@@ -459,7 +459,7 @@ export const LeaveCountsPage: React.FC = () => {
                       setLimitFormError('');
                       setLimitForm((f) => ({ ...f, fromDate, toDate: f.toDate && f.toDate < fromDate ? '' : f.toDate }));
                     }}
-                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                   />
                 </div>
                 <div>
@@ -471,7 +471,7 @@ export const LeaveCountsPage: React.FC = () => {
                     min={limitForm.fromDate || undefined}
                     disabled={!limitForm.fromDate}
                     onChange={(e) => { setLimitFormError(''); setLimitForm((f) => ({ ...f, toDate: e.target.value })); }}
-                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
                   />
                 </div>
               </div>
@@ -494,7 +494,7 @@ export const LeaveCountsPage: React.FC = () => {
                           limits: { ...f.limits, [type]: value },
                         }));
                       }}
-                      className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+                      className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                     />
                   </div>
                 ))}
@@ -515,7 +515,7 @@ export const LeaveCountsPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={savingLimit}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60"
                 >
                   {savingLimit ? 'Saving...' : editingLimit ? 'Update Limits' : 'Save Limits'}
                 </button>
@@ -536,7 +536,7 @@ export const LeaveCountsPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setLimitOverlapWarning('')}
-              className="w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+              className="w-full py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
             >
               Review Dates
             </button>
@@ -585,7 +585,7 @@ export const LeaveCountsPage: React.FC = () => {
                         <div className="flex items-center gap-1">
                           <span className="text-sm font-medium text-secondary-600 whitespace-nowrap">Leave/Off:</span>
                           <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
-                          <button type="button" onClick={() => openEditLimit(managingEmployee, limit)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 disabled:opacity-50" aria-label="Edit limit period"><Pencil size={16} /></button>
+                          <button type="button" onClick={() => openEditLimit(managingEmployee, limit)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 disabled:opacity-50" aria-label="Edit limit period"><Pencil size={16} /></button>
                           <button type="button" onClick={() => handleDeleteLimit(limit.id)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50" aria-label="Delete limit period"><Trash2 size={16} /></button>
                           <button type="button" onClick={() => setExpandedLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-700 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
                             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -631,7 +631,7 @@ export const LeaveCountsPage: React.FC = () => {
                 })}
               </div>
               <div className="p-4 border-t border-secondary-200">
-                <button type="button" onClick={() => openAddLimit(managingEmployee, true)} className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">
+                <button type="button" onClick={() => openAddLimit(managingEmployee, true)} className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700">
                   <Plus size={16} /> Add another limit period
                 </button>
               </div>

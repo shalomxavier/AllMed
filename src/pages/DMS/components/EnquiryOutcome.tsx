@@ -77,7 +77,7 @@ export const EnquiryOutcome: React.FC<EnquiryOutcomeProps> = ({ data, onChange }
               name="enquiryOutcome"
               checked={data.outcome === 'completed'}
               onChange={() => handleOutcomeChange('completed')}
-              className="w-4 h-4 text-green-600 focus:ring-green-500"
+              className="w-4 h-4 text-green-600 focus:ring-primary-500"
             />
             <span className="text-sm font-medium text-secondary-900">Purchase Completed</span>
           </label>
@@ -88,7 +88,7 @@ export const EnquiryOutcome: React.FC<EnquiryOutcomeProps> = ({ data, onChange }
               name="enquiryOutcome"
               checked={data.outcome === 'not_completed'}
               onChange={() => handleOutcomeChange('not_completed')}
-              className="w-4 h-4 text-red-600 focus:ring-red-500"
+              className="w-4 h-4 text-red-600 focus:ring-primary-500"
             />
             <span className="text-sm font-medium text-secondary-900">Purchase Not Completed</span>
           </label>
@@ -105,7 +105,7 @@ export const EnquiryOutcome: React.FC<EnquiryOutcomeProps> = ({ data, onChange }
             <select
               value={data.lostReason || ''}
               onChange={(e) => handleLostReasonChange(e.target.value as LostReason)}
-              className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             >
               <option value="">Select a reason</option>
               {lostReasons.map((reason) => (
@@ -126,7 +126,7 @@ export const EnquiryOutcome: React.FC<EnquiryOutcomeProps> = ({ data, onChange }
                 onChange={(e) => handleOtherReasonChange(e.target.value)}
                 placeholder="Please specify the reason..."
                 rows={3}
-                className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
               />
             </div>
           )}
@@ -140,7 +140,7 @@ export const EnquiryOutcome: React.FC<EnquiryOutcomeProps> = ({ data, onChange }
               onChange={(e) => handleInternalNotesChange(e.target.value)}
               placeholder="Add any additional notes..."
               rows={3}
-              className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+              className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
             />
           </div>
         </div>

@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { X, Plus, Briefcase, Eye, Pencil, Trash2 } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp, updateDoc, deleteDoc, doc } from 'firebase/firestore';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useToast } from '@/components/common';
 
 export const DesignationsPage: React.FC = () => {
+  const { showToast } = useToast();
   const { currentUser } = useAuthContext();
   const [modalOpen, setModalOpen] = useState(false);
   const [designation, setDesignation] = useState('');
@@ -91,8 +92,10 @@ export const DesignationsPage: React.FC = () => {
       setDeleteModalOpen(false);
       setDesignationToDelete(null);
       fetchDesignations();
+      showToast('success', 'Designation deleted');
     } catch (e) {
       console.error('Error deleting designation:', e);
+      showToast('error', 'Failed to delete designation. Please try again.');
     }
   };
 
@@ -116,8 +119,10 @@ export const DesignationsPage: React.FC = () => {
       }
       closeModal();
       fetchDesignations();
+      showToast('success', 'Designation saved successfully');
     } catch (e) {
       console.error('Error saving designation:', e);
+      showToast('error', 'Failed to save designation. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -129,19 +134,19 @@ export const DesignationsPage: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-secondary-900">Designations</h1>
         </div>
         <button
           onClick={openAddModal}
-          className="px-5 py-2.5 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors"
+          className="px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
         >
           Add Designation
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto py-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RedSpinner />
@@ -174,7 +179,7 @@ export const DesignationsPage: React.FC = () => {
                   </button>
                   <button
                     onClick={() => openEditModal(item)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
                     aria-label="Edit"
                   >
                     <Pencil size={16} />
@@ -210,7 +215,7 @@ export const DesignationsPage: React.FC = () => {
                   value={designation}
                   onChange={(e) => setDesignation(e.target.value)}
                   placeholder="Enter designation name"
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -224,13 +229,13 @@ export const DesignationsPage: React.FC = () => {
                         onChange={(e) => handleSubChange(idx, e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') handleAddSub(); }}
                         placeholder="Enter a sub designation"
-                        className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                        className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                       />
                       {idx === subDesignations.length - 1 ? (
                         <button
                           type="button"
                           onClick={handleAddSub}
-                          className="px-3 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors"
+                          className="px-3 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
                         >
                           <Plus size={16} />
                         </button>
@@ -257,7 +262,7 @@ export const DesignationsPage: React.FC = () => {
                 <button
                   onClick={handleSave}
                   disabled={saving || !designation.trim() || !subDesignations.some((s) => s.trim())}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-70"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
                 >
                   {saving ? 'Saving...' : editingDesignation ? 'Update' : 'Save'}
                 </button>

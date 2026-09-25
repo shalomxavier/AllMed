@@ -19,7 +19,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         <select
           value={selectedStore}
           onChange={(e) => onStoreChange(e.target.value)}
-          className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           disabled
         >
           <option value="all">All Stores</option>
@@ -32,7 +32,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         <select
           value={selectedDateRange}
           onChange={(e) => onDateRangeChange(e.target.value as any)}
-          className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          className="w-full px-3 py-2 bg-white border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
         >
           <option value="today">Today</option>
           <option value="yesterday">Yesterday</option>

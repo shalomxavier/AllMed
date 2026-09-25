@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Plus, Smile, Mic } from 'lucide-react';
+import { Send } from 'lucide-react';
 
 interface MessageInputProps {
   onSendMessage: (content: string) => void;
@@ -13,7 +13,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   placeholder = 'Type a message',
 }) => {
   const [message, setMessage] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSend = useCallback(() => {
@@ -50,26 +49,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   return (
     <div className="px-4 py-3">
       <div className="flex items-end gap-2 bg-white rounded-full shadow-sm px-3 py-1">
-        {/* Attachment Button */}
-        <button
-          className="p-2.5 rounded-full text-black hover:bg-secondary-200 transition-colors flex-shrink-0"
-          aria-label="Attach file"
-          title="Attach file"
-          disabled={disabled}
-        >
-          <Plus size={20} />
-        </button>
-
-        {/* Emoji Button */}
-        <button
-          className="p-2.5 rounded-full text-black hover:bg-secondary-200 transition-colors flex-shrink-0"
-          aria-label="Add emoji"
-          title="Add emoji"
-          disabled={disabled}
-        >
-          <Smile size={20} />
-        </button>
-
         {/* Message Input */}
         <div className="flex-1 min-w-0">
           <textarea
@@ -84,8 +63,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           />
         </div>
 
-        {/* Send / Record Button */}
-        {showSendButton ? (
+        {/* Send Button */}
+        {showSendButton && (
           <button
             onClick={handleSend}
             disabled={disabled}
@@ -93,19 +72,6 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             aria-label="Send message"
           >
             <Send size={20} />
-          </button>
-        ) : (
-          <button
-            onClick={() => setIsRecording(!isRecording)}
-            disabled={disabled}
-            className={`p-2.5 rounded-full transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
-              isRecording
-                ? 'text-primary-600 hover:bg-primary-100'
-                : 'text-black hover:bg-secondary-200'
-            }`}
-            aria-label={isRecording ? 'Stop recording' : 'Record voice message'}
-          >
-            <Mic size={20} />
           </button>
         )}
       </div>

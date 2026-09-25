@@ -26,11 +26,6 @@ export interface SidebarProps {
   onClose: () => void;
 }
 
-export interface HeaderProps {
-  onMenuClick: () => void;
-  user?: User | null;
-}
-
 // WhatsApp Types
 export type MessageStatus = 'sent' | 'delivered' | 'read' | 'failed';
 export type MessageType = 'text' | 'image' | 'document' | 'audio' | 'video' | 'location';

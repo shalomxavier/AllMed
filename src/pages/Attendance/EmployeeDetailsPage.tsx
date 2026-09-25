@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, X, Edit } from 'lucide-react';
 import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useToast } from '@/components/common';
 
 interface Employee {
   id: string;
@@ -50,6 +50,7 @@ const employmentFields: Array<{ key: keyof Employee; label: string; type?: strin
 ];
 
 export const EmployeeDetailsPage: React.FC = () => {
+  const { showToast } = useToast();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -209,9 +210,11 @@ export const EmployeeDetailsPage: React.FC = () => {
         }
       }
       
+      showToast('success', 'Employee updated successfully');
       navigate('/attendance/employees');
     } catch (error) {
       console.error('Error updating employee:', error);
+      showToast('error', 'Failed to update employee. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -224,7 +227,7 @@ export const EmployeeDetailsPage: React.FC = () => {
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance/employees')}
@@ -245,7 +248,7 @@ export const EmployeeDetailsPage: React.FC = () => {
         {!isEditing && employee && (
           <button
             onClick={() => setSearchParams({ edit: 'true' })}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+            className="btn-primary"
           >
             <Edit size={16} />
             Edit
@@ -253,7 +256,7 @@ export const EmployeeDetailsPage: React.FC = () => {
         )}
       </div>
 
-      <div className="p-6">
+      <div className="py-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RedSpinner />
@@ -267,7 +270,7 @@ export const EmployeeDetailsPage: React.FC = () => {
             Employee not found.
           </div>
         ) : isEditing ? (
-          <form onSubmit={handleSave} className="max-w-2xl bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+          <form onSubmit={handleSave} className="max-w-2xl card p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Employee Name</label>
@@ -316,7 +319,7 @@ export const EmployeeDetailsPage: React.FC = () => {
                           }
                         }}
                         disabled={key === 'employmentType' && subDesignationOptions.length === 0}
-                        className="w-full px-3 py-2 text-sm text-secondary-900 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:text-secondary-400"
+                        className="w-full px-3 py-2 text-sm text-secondary-900 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:text-secondary-400"
                       >
                         <option value="">{key === 'employmentType' && subDesignationOptions.length === 0 ? 'No options' : `Select ${label}`}</option>
                         {(
@@ -343,7 +346,7 @@ export const EmployeeDetailsPage: React.FC = () => {
                         type={type}
                         value={employmentDetails[key] || ''}
                         onChange={(e) => setEmploymentDetails({ ...employmentDetails, [key]: e.target.value })}
-                        className="w-full px-3 py-2 text-sm text-secondary-900 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full px-3 py-2 text-sm text-secondary-900 border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                         placeholder={`Enter ${label.toLowerCase()}`}
                       />
                     )}
@@ -363,7 +366,7 @@ export const EmployeeDetailsPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={saving}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save size={16} className="inline mr-1" />
                 {saving ? 'Saving...' : 'Save'}
@@ -371,7 +374,7 @@ export const EmployeeDetailsPage: React.FC = () => {
             </div>
           </form>
         ) : (
-          <div className="max-w-2xl bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+          <div className="max-w-2xl card p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <p className="text-sm font-medium text-secondary-500 mb-1">Employee Name</p>

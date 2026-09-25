@@ -5,7 +5,7 @@ import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updat
 
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useModalBehavior, useToast } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
@@ -95,8 +95,6 @@ export const EmployeesPage: React.FC = () => {
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddShiftForm, setShowAddShiftForm] = useState(false);
-  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('Shift Saved Successfully');
   const [showOverlapDialog, setShowOverlapDialog] = useState(false);
   const [overlappingShifts, setOverlappingShifts] = useState<any[]>([]);
   const [isSavingShift, setIsSavingShift] = useState(false);
@@ -207,6 +205,22 @@ export const EmployeesPage: React.FC = () => {
   usePopupDismiss(bulkLeaveTooltipDate !== null, () => setBulkLeaveTooltipDate(null));
   usePopupDismiss(leaveTooltipDate !== null, () => setLeaveTooltipDate(null));
   usePopupDismiss(wizardTooltipDate !== null, () => { setWizardTooltipDate(null); setWizardTooltipPos(null); });
+
+  const { showToast } = useToast();
+
+  useModalBehavior(attendanceModalOpen, () => setAttendanceModalOpen(false));
+  useModalBehavior(shiftModalOpen, () => setShiftModalOpen(false));
+  useModalBehavior(bulkLeaveModalOpen, () => setBulkLeaveModalOpen(false));
+  useModalBehavior(bulkLeaveLimitDialogOpen, () => setBulkLeaveLimitDialogOpen(false));
+  useModalBehavior(bulkAssignModalOpen, () => setBulkAssignModalOpen(false));
+  useModalBehavior(showOverlapDialog, () => setShowOverlapDialog(false));
+  useModalBehavior(showBulkOverlapDialog, () => setShowBulkOverlapDialog(false));
+  useModalBehavior(leaveModalOpen, () => setLeaveModalOpen(false));
+  useModalBehavior(leaveFormLimitDialogOpen, () => setLeaveFormLimitDialogOpen(false));
+  useModalBehavior(askLeavesDialog, () => {}, { dismissible: false });
+  useModalBehavior(showDeleteConfirm, () => { setShowDeleteConfirm(false); setShiftToDelete(null); }, { dismissible: !isDeletingShift });
+  useModalBehavior(leaveWizardOpen, () => setLeaveWizardOpen(false), { dismissible: !isSavingLeaves });
+  useModalBehavior(changeShiftModalOpen, () => { setChangeShiftModalOpen(false); setChangeShiftDate(null); });
 
   const fetchLeaveValidationData = async () => {
     const firestore = getFirestore();
@@ -326,13 +340,13 @@ export const EmployeesPage: React.FC = () => {
           className="card p-5 hover:shadow-md transition-shadow flex flex-col"
         >
           <div className="flex items-start justify-between mb-3">
-            <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
-              <Users className="w-6 h-6 text-blue-600" />
+            <div className="w-12 h-12 rounded-full bg-secondary-100 flex items-center justify-center">
+              <Users className="w-6 h-6 text-secondary-500" />
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => navigate(`/attendance/employees/${employee.id}`)}
-                className="text-gray-400 hover:text-blue-600 transition-colors"
+                className="text-gray-400 hover:text-primary-600 transition-colors"
                 aria-label="View"
               >
                 <Eye size={18} />
@@ -363,21 +377,21 @@ export const EmployeesPage: React.FC = () => {
           </div>
           <button
             onClick={() => handleShiftsClick(employee)}
-            className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+            className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
           >
             <Clock size={16} />
             Shifts
           </button>
           <button
             onClick={() => handleViewAttendanceClick(employee)}
-            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
           >
             <Eye size={16} />
             View Attendance
           </button>
           <button
             onClick={() => handleLeaveClick(employee)}
-            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
           >
             <Umbrella size={16} />
             Leave / Week Off
@@ -805,11 +819,11 @@ export const EmployeesPage: React.FC = () => {
           });
         }
       }
-      setSuccessMessage(`Leave added for ${bulkLeaveSelectedIds.size} employee(s) successfully`);
-      setShowSuccessDialog(true);
+      showToast('success', `Leave added for ${bulkLeaveSelectedIds.size} employee(s) successfully`);
       closeBulkLeaveModal();
     } catch (err) {
       console.error('Error saving bulk leave:', err);
+      showToast('error', 'Failed to save leave assignments. Please try again.');
     } finally {
       setIsSavingBulkLeave(false);
     }
@@ -845,13 +859,13 @@ export const EmployeesPage: React.FC = () => {
           createdBy: currentUser?.uid
         });
       }
-      setSuccessMessage('Leave Assigned Successfully');
-      setShowSuccessDialog(true);
+      showToast('success', 'Leave Assigned Successfully');
       setLeaveDateMap({});
       setLeaveTooltipDate(null);
       fetchLeavesForEmployee(leaveEmployee);
     } catch (e) {
       console.error('Error saving leave:', e);
+      showToast('error', 'Failed to save leave. Please try again.');
     } finally {
       setIsSavingLeave(false);
     }
@@ -1042,7 +1056,7 @@ export const EmployeesPage: React.FC = () => {
     if (r.includes('holiday') || r.includes('festival')) return { bg: 'bg-yellow-50', text: 'text-yellow-600', badge: 'bg-yellow-100' };
     if (r.includes('maternity') || r.includes('paternity')) return { bg: 'bg-pink-50', text: 'text-pink-600', badge: 'bg-pink-100' };
     if (r.includes('earned') || r.includes('privilege')) return { bg: 'bg-indigo-50', text: 'text-indigo-600', badge: 'bg-indigo-100' };
-    if (r.includes('week off') || r.includes('weekoff')) return { bg: 'bg-blue-50', text: 'text-blue-600', badge: 'bg-blue-100' };
+    if (r.includes('week off') || r.includes('weekoff')) return { bg: 'bg-blue-50', text: 'text-primary-600', badge: 'bg-blue-100' };
     return { bg: 'bg-purple-50', text: 'text-purple-600', badge: 'bg-purple-100' };
   };
 
@@ -1189,10 +1203,12 @@ export const EmployeesPage: React.FC = () => {
       await shiftAssignmentsService.removeAssignment(shiftToDelete as ResolvedShiftAssignment);
       setShowDeleteConfirm(false);
       setShiftToDelete(null);
-      setSuccessMessage('Shift Deleted Successfully');
-      setShowSuccessDialog(true);
+      showToast('success', 'Shift Deleted Successfully');
+      setShowViewShifts(true);
+      fetchShiftsForEmployee();
     } catch (error) {
       console.error('Error deleting shift:', error);
+      showToast('error', 'Failed to delete shift. Please try again.');
     } finally {
       setIsDeletingShift(false);
     }
@@ -1228,7 +1244,7 @@ export const EmployeesPage: React.FC = () => {
       if (!editShiftForm.startMinute) missingFields.push('Start Minute');
       if (!editShiftForm.endHour) missingFields.push('End Hour');
       if (!editShiftForm.endMinute) missingFields.push('End Minute');
-      alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+      showToast('warning', `Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -1241,7 +1257,7 @@ export const EmployeesPage: React.FC = () => {
         endTime24 = to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
       } catch (error) {
         console.error('Invalid time format:', error);
-        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        showToast('warning', 'Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
         setIsSavingShift(false);
         return;
       }
@@ -1289,11 +1305,10 @@ export const EmployeesPage: React.FC = () => {
       setSelectedShift(null);
       setShowViewShifts(true);
       await fetchShiftsForEmployee();
-      setSuccessMessage('Shift Updated Successfully');
-      setShowSuccessDialog(true);
+      showToast('success', 'Shift Updated Successfully');
     } catch (error) {
       console.error('Error updating shift:', error);
-      alert('An error occurred while updating the shift. Please check your time values and try again.');
+      showToast('error', 'An error occurred while updating the shift. Please check your time values and try again.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1310,7 +1325,7 @@ export const EmployeesPage: React.FC = () => {
       if (!shiftForm.startMinute) missingFields.push('Start Minute');
       if (!shiftForm.endHour) missingFields.push('End Hour');
       if (!shiftForm.endMinute) missingFields.push('End Minute');
-      alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+      showToast('warning', `Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -1327,7 +1342,7 @@ export const EmployeesPage: React.FC = () => {
           : to24Hour(shiftForm.endHour, shiftForm.endMinute, shiftForm.endAmPm);
       } catch (error) {
         console.error('Invalid time format:', error);
-        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        showToast('warning', 'Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
         setIsSavingShift(false);
         return;
       }
@@ -1367,7 +1382,7 @@ export const EmployeesPage: React.FC = () => {
       setAskLeavesDialog(true);
     } catch (error) {
       console.error('Error saving shift:', error);
-      alert('An error occurred while saving the shift. Please check your time values and try again.');
+      showToast('error', 'An error occurred while saving the shift. Please check your time values and try again.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1462,7 +1477,7 @@ export const EmployeesPage: React.FC = () => {
       if (!bulkShiftForm.startMinute) missingFields.push('Start Minute');
       if (!bulkShiftForm.endHour) missingFields.push('End Hour');
       if (!bulkShiftForm.endMinute) missingFields.push('End Minute');
-      alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+      showToast('warning', `Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -1479,7 +1494,7 @@ export const EmployeesPage: React.FC = () => {
           : to24Hour(bulkShiftForm.endHour, bulkShiftForm.endMinute, bulkShiftForm.endAmPm);
       } catch (error) {
         console.error('Invalid time format:', error);
-        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        showToast('warning', 'Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
         setIsBulkAssigning(false);
         return;
       }
@@ -1520,12 +1535,11 @@ export const EmployeesPage: React.FC = () => {
         });
       }
 
-      setSuccessMessage(`Shift assigned to ${selectedEmployeeIds.size} employee(s) successfully`);
-      setShowSuccessDialog(true);
+      showToast('success', `Shift assigned to ${selectedEmployeeIds.size} employee(s) successfully`);
       closeBulkAssignModal();
     } catch (error) {
       console.error('Error bulk assigning shifts:', error);
-      alert('An error occurred while bulk assigning shifts. Please check your time values and try again.');
+      showToast('error', 'An error occurred while bulk assigning shifts. Please check your time values and try again.');
     } finally {
       setIsBulkAssigning(false);
     }
@@ -1534,7 +1548,7 @@ export const EmployeesPage: React.FC = () => {
   return (
     <div className="flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -1550,10 +1564,10 @@ export const EmployeesPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="p-6">
+      <div className="py-6">
         {/* Search Bar */}
-        <div className="mb-6 flex items-center justify-between gap-4">
-          <div className="relative z-50 flex items-center gap-3 flex-1 max-w-3xl">
+        <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
+          <div className="relative z-50 flex items-center gap-3 flex-1 max-w-3xl flex-wrap min-w-[260px]">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
               <input
@@ -1561,7 +1575,7 @@ export const EmployeesPage: React.FC = () => {
                 placeholder="Search employees by name, code, or ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white/30 backdrop-blur-sm border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
             <div className="w-52">
@@ -1569,7 +1583,7 @@ export const EmployeesPage: React.FC = () => {
                 value={userData?.designation === 'Branch Manager' ? (managerBranchName ?? '') : branchFilter}
                 onChange={(e) => setBranchFilter(e.target.value)}
                 disabled={userData?.designation === 'Branch Manager'}
-                className="w-full px-3 py-2 bg-white/30 backdrop-blur-sm border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
               >
                 {userData?.designation === 'Branch Manager' ? (
                   <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -1588,7 +1602,7 @@ export const EmployeesPage: React.FC = () => {
             {canManageLeaves && (
               <button
                 onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveLimitDialogOpen(false); setBulkLeaveModalOpen(true); }}
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600/90 backdrop-blur-sm rounded-xl hover:bg-purple-700 transition-colors"
+                className="btn-primary"
               >
                 <Umbrella size={16} />
                 Add Leaves
@@ -1599,7 +1613,7 @@ export const EmployeesPage: React.FC = () => {
                 setBulkAssignModalOpen(true);
                 fetchShiftTemplates();
               }}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600/90 backdrop-blur-sm rounded-xl hover:bg-blue-700 transition-colors"
+              className="btn-primary"
             >
               <Clock size={16} />
               Assign Shifts
@@ -1614,8 +1628,8 @@ export const EmployeesPage: React.FC = () => {
           </div>
         ) : filteredEmployees.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center mb-4">
-              <Users className="w-10 h-10 text-blue-600" />
+            <div className="w-20 h-20 rounded-full bg-secondary-100 flex items-center justify-center mb-4">
+              <Users className="w-10 h-10 text-secondary-400" />
             </div>
             <h3 className="text-lg font-medium text-secondary-900 mb-2">
               {searchQuery ? 'No employees found' : 'No employees yet'}
@@ -1630,7 +1644,7 @@ export const EmployeesPage: React.FC = () => {
           <div className="space-y-6">
             {activeEmployees.length > 0 && renderEmployeeGrid(activeEmployees)}
             {inactiveEmployees.length > 0 && (
-              <details className="rounded-xl bg-white/80 backdrop-blur-sm shadow-lg">
+              <details className="card overflow-hidden">
                 <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-secondary-700">
                   Inactive Employees ({inactiveEmployees.length})
                 </summary>
@@ -1902,14 +1916,14 @@ export const EmployeesPage: React.FC = () => {
                     <button type="button"
                       onClick={() => { setShiftMode('existing'); setSelectedShiftTemplate(null); }}
                       className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                        shiftMode === 'existing' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-secondary-500 hover:text-secondary-700'
+                        shiftMode === 'existing' ? 'text-primary-700 border-b-2 border-primary-600 bg-primary-50' : 'text-secondary-500 hover:text-secondary-700'
                       }`}>
                       Existing Shift
                     </button>
                     <button type="button"
                       onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
                       className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                        shiftMode === 'new' ? 'text-blue-700 border-b-2 border-blue-600 bg-blue-50' : 'text-secondary-500 hover:text-secondary-700'
+                        shiftMode === 'new' ? 'text-primary-700 border-b-2 border-primary-600 bg-primary-50' : 'text-secondary-500 hover:text-secondary-700'
                       }`}>
                       New Shift
                     </button>
@@ -1932,7 +1946,7 @@ export const EmployeesPage: React.FC = () => {
                               <button key={i} type="button"
                                 onClick={() => setSelectedShiftTemplate(t)}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
-                                  isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                                  isSelected ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
                                 }`}>
                                 {label}
                               </button>
@@ -1949,15 +1963,15 @@ export const EmployeesPage: React.FC = () => {
                       <div className="border border-secondary-300 rounded-lg p-3">
                         <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
                         <div className="flex gap-2">
-                          <select value={shiftForm.startHour} onChange={(e) => setShiftForm({ ...shiftForm, startHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                          <select value={shiftForm.startHour} onChange={(e) => setShiftForm({ ...shiftForm, startHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                             <option value="">Hr</option>
                             {Array.from({ length: 12 }, (_, i) => i + 1).map(h => <option key={h} value={h.toString()}>{h}</option>)}
                           </select>
-                          <select value={shiftForm.startMinute} onChange={(e) => setShiftForm({ ...shiftForm, startMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                          <select value={shiftForm.startMinute} onChange={(e) => setShiftForm({ ...shiftForm, startMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                             <option value="">Min</option>
                             {['00', '15', '30', '45'].map(m => <option key={m} value={m}>{m}</option>)}
                           </select>
-                          <select value={shiftForm.startAmPm} onChange={(e) => setShiftForm({ ...shiftForm, startAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                          <select value={shiftForm.startAmPm} onChange={(e) => setShiftForm({ ...shiftForm, startAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                             <option value="AM">AM</option><option value="PM">PM</option>
                           </select>
                         </div>
@@ -1965,15 +1979,15 @@ export const EmployeesPage: React.FC = () => {
                       <div className="border border-secondary-300 rounded-lg p-3">
                         <label className="block text-sm font-medium text-secondary-700 mb-2">End Time</label>
                         <div className="flex gap-2">
-                          <select value={shiftForm.endHour} onChange={(e) => setShiftForm({ ...shiftForm, endHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                          <select value={shiftForm.endHour} onChange={(e) => setShiftForm({ ...shiftForm, endHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                             <option value="">Hr</option>
                             {Array.from({ length: 12 }, (_, i) => i + 1).map(h => <option key={h} value={h.toString()}>{h}</option>)}
                           </select>
-                          <select value={shiftForm.endMinute} onChange={(e) => setShiftForm({ ...shiftForm, endMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                          <select value={shiftForm.endMinute} onChange={(e) => setShiftForm({ ...shiftForm, endMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                             <option value="">Min</option>
                             {['00', '15', '30', '45'].map(m => <option key={m} value={m}>{m}</option>)}
                           </select>
-                          <select value={shiftForm.endAmPm} onChange={(e) => setShiftForm({ ...shiftForm, endAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                          <select value={shiftForm.endAmPm} onChange={(e) => setShiftForm({ ...shiftForm, endAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                             <option value="AM">AM</option><option value="PM">PM</option>
                           </select>
                         </div>
@@ -1985,11 +1999,11 @@ export const EmployeesPage: React.FC = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">From Date</label>
-                      <input type="date" value={shiftForm.fromDate} max={shiftForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setShiftForm({ ...shiftForm, fromDate: v, toDate: shiftForm.toDate && shiftForm.toDate < v ? '' : shiftForm.toDate }); }} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                      <input type="date" value={shiftForm.fromDate} max={shiftForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setShiftForm({ ...shiftForm, fromDate: v, toDate: shiftForm.toDate && shiftForm.toDate < v ? '' : shiftForm.toDate }); }} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required />
                     </div>
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">To Date</label>
-                      <input type="date" value={shiftForm.toDate} min={shiftForm.fromDate || undefined} disabled={!shiftForm.fromDate} onChange={(e) => setShiftForm({ ...shiftForm, toDate: e.target.value })} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
+                      <input type="date" value={shiftForm.toDate} min={shiftForm.fromDate || undefined} disabled={!shiftForm.fromDate} onChange={(e) => setShiftForm({ ...shiftForm, toDate: e.target.value })} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
                     </div>
                   </div>
 
@@ -1998,7 +2012,7 @@ export const EmployeesPage: React.FC = () => {
                     <button
                       type="submit"
                       disabled={isSavingShift || !shiftForm.fromDate || !shiftForm.toDate || (shiftMode === 'existing' ? !selectedShiftTemplate : (!shiftForm.startHour || !shiftForm.startMinute || !shiftForm.endHour || !shiftForm.endMinute))}
-                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                       {isSavingShift ? (
                         <>
@@ -2018,7 +2032,7 @@ export const EmployeesPage: React.FC = () => {
                     {userData?.designation !== 'Branch Manager' && (
                     <button
                       onClick={() => { setShowAddShiftForm(true); fetchShiftTemplates(); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
                     >
                       <Plus size={16} /> Add Shift
                     </button>
@@ -2039,15 +2053,15 @@ export const EmployeesPage: React.FC = () => {
                         <div key={shift.id} className="border border-secondary-200 rounded-lg p-3 hover:bg-secondary-50 transition-colors">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-medium">
-                              <span className="text-blue-600">{formatShiftDate(shift.fromDate)}</span>
+                              <span className="text-primary-600">{formatShiftDate(shift.fromDate)}</span>
                               <span className="text-black"> - </span>
-                              <span className="text-blue-600">{formatShiftDate(shift.toDate)}</span>
+                              <span className="text-primary-600">{formatShiftDate(shift.toDate)}</span>
                             </span>
                             {userData?.designation !== 'Branch Manager' && (
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => handleEditShift(shift)}
-                                className="text-blue-600 hover:text-blue-700"
+                                className="text-primary-600 hover:text-primary-700"
                               >
                                 <Edit size={16} />
                               </button>
@@ -2078,7 +2092,7 @@ export const EmployeesPage: React.FC = () => {
                         setShowEditShiftForm(false);
                         setShowViewShifts(true);
                       }}
-                      className="text-sm text-blue-600 hover:text-blue-700"
+                      className="text-sm text-primary-600 hover:text-primary-700"
                     >
                       Back
                     </button>
@@ -2091,7 +2105,7 @@ export const EmployeesPage: React.FC = () => {
                         value={editShiftForm.fromDate}
                         max={editShiftForm.toDate || undefined}
                         onChange={(e) => { const v = e.target.value; setEditShiftForm({ ...editShiftForm, fromDate: v, toDate: editShiftForm.toDate && editShiftForm.toDate < v ? '' : editShiftForm.toDate }); }}
-                        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                         required
                       />
                     </div>
@@ -2103,7 +2117,7 @@ export const EmployeesPage: React.FC = () => {
                         min={editShiftForm.fromDate || undefined}
                         disabled={!editShiftForm.fromDate}
                         onChange={(e) => setEditShiftForm({ ...editShiftForm, toDate: e.target.value })}
-                        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
                         required
                       />
                     </div>
@@ -2115,7 +2129,7 @@ export const EmployeesPage: React.FC = () => {
                         <select
                           value={editShiftForm.startHour}
                           onChange={(e) => setEditShiftForm({ ...editShiftForm, startHour: e.target.value })}
-                          className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                           required
                         >
                           {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
@@ -2125,7 +2139,7 @@ export const EmployeesPage: React.FC = () => {
                         <select
                           value={editShiftForm.startMinute}
                           onChange={(e) => setEditShiftForm({ ...editShiftForm, startMinute: e.target.value })}
-                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                           required
                         >
                           {['00', '15', '30', '45'].map(m => (
@@ -2135,7 +2149,7 @@ export const EmployeesPage: React.FC = () => {
                         <select
                           value={editShiftForm.startAmPm}
                           onChange={(e) => setEditShiftForm({ ...editShiftForm, startAmPm: e.target.value })}
-                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                           required
                         >
                           <option value="AM">AM</option>
@@ -2149,7 +2163,7 @@ export const EmployeesPage: React.FC = () => {
                         <select
                           value={editShiftForm.endHour}
                           onChange={(e) => setEditShiftForm({ ...editShiftForm, endHour: e.target.value })}
-                          className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                           required
                         >
                           {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
@@ -2159,7 +2173,7 @@ export const EmployeesPage: React.FC = () => {
                         <select
                           value={editShiftForm.endMinute}
                           onChange={(e) => setEditShiftForm({ ...editShiftForm, endMinute: e.target.value })}
-                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                           required
                         >
                           {['00', '15', '30', '45'].map(m => (
@@ -2169,7 +2183,7 @@ export const EmployeesPage: React.FC = () => {
                         <select
                           value={editShiftForm.endAmPm}
                           onChange={(e) => setEditShiftForm({ ...editShiftForm, endAmPm: e.target.value })}
-                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                           required
                         >
                           <option value="AM">AM</option>
@@ -2192,7 +2206,7 @@ export const EmployeesPage: React.FC = () => {
                     <button
                       type="submit"
                       disabled={isSavingShift}
-                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                       {isSavingShift ? (
                         <>
@@ -2231,7 +2245,7 @@ export const EmployeesPage: React.FC = () => {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
                   <input type="text" placeholder="Search by name or code..."
                     value={bulkLeaveSearchQuery} onChange={(e) => setBulkLeaveSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" />
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
                 </div>
                 <div className="max-h-40 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
                   {employees.filter((emp) => {
@@ -2241,7 +2255,7 @@ export const EmployeesPage: React.FC = () => {
                   }).map((emp) => (
                     <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
                       <input type="checkbox" checked={bulkLeaveSelectedIds.has(emp.id)} onChange={() => toggleBulkLeaveEmployee(emp.id)}
-                        className="w-4 h-4 text-purple-600 rounded border-secondary-300 focus:ring-purple-500" />
+                        className="w-4 h-4 text-purple-600 rounded border-secondary-300 focus:ring-primary-500" />
                       <div>
                         <p className="text-sm font-medium text-purple-700">{emp.employeeName || 'Unnamed'}</p>
                         <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
@@ -2322,7 +2336,7 @@ export const EmployeesPage: React.FC = () => {
                 <button type="button" onClick={closeBulkLeaveModal}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                 <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
                   {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
                 </button>
               </div>
@@ -2345,7 +2359,7 @@ export const EmployeesPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setBulkLeaveLimitDialogOpen(false)}
-                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 OK
               </button>
@@ -2383,7 +2397,7 @@ export const EmployeesPage: React.FC = () => {
                     placeholder="Search by name or code..."
                     value={bulkSearchQuery}
                     onChange={(e) => setBulkSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto space-y-2 border border-secondary-200 rounded-lg p-2">
@@ -2406,10 +2420,10 @@ export const EmployeesPage: React.FC = () => {
                         type="checkbox"
                         checked={selectedEmployeeIds.has(employee.id)}
                         onChange={() => toggleEmployeeSelection(employee.id)}
-                        className="w-4 h-4 text-blue-600 rounded border-secondary-300 focus:ring-blue-500"
+                        className="w-4 h-4 text-primary-600 rounded border-secondary-300 focus:ring-primary-500"
                       />
                       <div>
-                        <p className="text-sm font-medium text-blue-600">{employee.employeeName || 'Unnamed'}</p>
+                        <p className="text-sm font-medium text-primary-600">{employee.employeeName || 'Unnamed'}</p>
                         <p className="text-xs text-black">{employee.employeeCode || '—'}</p>
                       </div>
                     </label>
@@ -2422,12 +2436,12 @@ export const EmployeesPage: React.FC = () => {
                 <div className="border border-secondary-300 rounded-lg p-3">
                   <label className="block text-sm font-medium text-secondary-700 mb-2">From Date</label>
                   <input type="date" value={bulkShiftForm.fromDate} max={bulkShiftForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setBulkShiftForm({ ...bulkShiftForm, fromDate: v, toDate: bulkShiftForm.toDate && bulkShiftForm.toDate < v ? '' : bulkShiftForm.toDate }); }}
-                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required />
                 </div>
                 <div className="border border-secondary-300 rounded-lg p-3">
                   <label className="block text-sm font-medium text-secondary-700 mb-2">To Date</label>
                   <input type="date" value={bulkShiftForm.toDate} min={bulkShiftForm.fromDate || undefined} disabled={!bulkShiftForm.fromDate} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, toDate: e.target.value })}
-                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
+                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
                 </div>
               </div>
 
@@ -2436,14 +2450,14 @@ export const EmployeesPage: React.FC = () => {
                 <button type="button"
                   onClick={() => { setBulkShiftMode('existing'); setBulkShiftForm((f) => ({ ...f, startHour: '', startMinute: '', startAmPm: 'AM', endHour: '', endMinute: '', endAmPm: 'AM' })); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                    bulkShiftMode === 'existing' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
+                    bulkShiftMode === 'existing' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
                   }`}>
                   Use Existing Shift
                 </button>
                 <button type="button"
                   onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                    bulkShiftMode === 'new' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
+                    bulkShiftMode === 'new' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
                   }`}>
                   Add New Shift
                 </button>
@@ -2461,7 +2475,7 @@ export const EmployeesPage: React.FC = () => {
                         <button key={i} type="button"
                           onClick={() => setBulkSelectedTemplate(t)}
                           className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-colors ${
-                            isActive ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                            isActive ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
                           }`}>
                           {label}
                         </button>
@@ -2477,15 +2491,15 @@ export const EmployeesPage: React.FC = () => {
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
                       <div className="flex gap-2">
-                        <select value={bulkShiftForm.startHour} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, startHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={bulkShiftForm.startHour} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, startHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Hr</option>
                           {Array.from({ length: 12 }, (_, i) => i + 1).map(h => <option key={h} value={h.toString()}>{h}</option>)}
                         </select>
-                        <select value={bulkShiftForm.startMinute} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, startMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={bulkShiftForm.startMinute} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, startMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Min</option>
                           {['00', '15', '30', '45'].map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
-                        <select value={bulkShiftForm.startAmPm} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, startAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={bulkShiftForm.startAmPm} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, startAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="AM">AM</option><option value="PM">PM</option>
                         </select>
                       </div>
@@ -2493,15 +2507,15 @@ export const EmployeesPage: React.FC = () => {
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">End Time</label>
                       <div className="flex gap-2">
-                        <select value={bulkShiftForm.endHour} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, endHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={bulkShiftForm.endHour} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, endHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Hr</option>
                           {Array.from({ length: 12 }, (_, i) => i + 1).map(h => <option key={h} value={h.toString()}>{h}</option>)}
                         </select>
-                        <select value={bulkShiftForm.endMinute} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, endMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={bulkShiftForm.endMinute} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, endMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Min</option>
                           {['00', '15', '30', '45'].map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
-                        <select value={bulkShiftForm.endAmPm} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, endAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={bulkShiftForm.endAmPm} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, endAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="AM">AM</option><option value="PM">PM</option>
                         </select>
                       </div>
@@ -2521,7 +2535,7 @@ export const EmployeesPage: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isBulkAssigning || selectedEmployeeIds.size === 0 || !bulkShiftForm.fromDate || !bulkShiftForm.toDate || (bulkShiftMode === 'existing' ? !bulkSelectedTemplate : !bulkShiftForm.startHour || !bulkShiftForm.startMinute || !bulkShiftForm.endHour || !bulkShiftForm.endMinute)}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isBulkAssigning ? (
                     <>
@@ -2594,7 +2608,7 @@ export const EmployeesPage: React.FC = () => {
                   setShowViewShifts(true);
                   fetchShiftsForEmployee();
                 }}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 View Shifts
               </button>
@@ -2635,9 +2649,9 @@ export const EmployeesPage: React.FC = () => {
                       const toDate = matchingEntry?.toDate ?? shift.toDate ?? '';
                       return (
                         <div key={shift.id} className="text-sm text-secondary-600">
-                          <span className="text-blue-600">{formatShiftDate(fromDate)}</span>
+                          <span className="text-primary-600">{formatShiftDate(fromDate)}</span>
                           <span className="text-black"> - </span>
-                          <span className="text-blue-600">{formatShiftDate(toDate)}</span>
+                          <span className="text-primary-600">{formatShiftDate(toDate)}</span>
                           <span className="text-secondary-400"> · </span>
                           <span className="text-green-600">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
                         </div>
@@ -2652,7 +2666,7 @@ export const EmployeesPage: React.FC = () => {
             </p>
             <button
               onClick={() => setShowBulkOverlapDialog(false)}
-              className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              className="w-full px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
             >
               Go Back
             </button>
@@ -2801,7 +2815,7 @@ export const EmployeesPage: React.FC = () => {
                               <button
                                 type="submit"
                                 disabled={isSavingLeave}
-                                className="flex-1 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60"
+                                className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60"
                               >
                                 {isSavingLeave ? 'Saving...' : 'Save'}
                               </button>
@@ -2832,7 +2846,7 @@ export const EmployeesPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setLeaveFormLimitDialogOpen(false)}
-                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 OK
               </button>
@@ -2846,7 +2860,7 @@ export const EmployeesPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
             <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
-              <Clock className="w-7 h-7 text-blue-600" />
+              <Clock className="w-7 h-7 text-primary-600" />
             </div>
             <h3 className="text-lg font-semibold text-secondary-900 mb-2">Assign Week-offs & Leaves?</h3>
             <p className="text-sm text-secondary-600 mb-6">Would you like to assign week-off and leave dates for {selectedEmployee?.employeeName}?</p>
@@ -2854,8 +2868,7 @@ export const EmployeesPage: React.FC = () => {
               <button
                 onClick={() => {
                   setAskLeavesDialog(false);
-                  setSuccessMessage('Shift Saved Successfully');
-                  setShowSuccessDialog(true);
+                  showToast('success', 'Shift Saved Successfully');
                 }}
                 className="flex-1 py-2 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
               >
@@ -2881,7 +2894,7 @@ export const EmployeesPage: React.FC = () => {
                     setLeaveWizardOpen(true);
                   }
                 }}
-                className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 Yes, Assign
               </button>
@@ -2923,38 +2936,6 @@ export const EmployeesPage: React.FC = () => {
                 )}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Success Dialog */}
-      {showSuccessDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
-            <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-600">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                <polyline points="22 4 12 14.01 9 11.01"></polyline>
-              </svg>
-            </div>
-            <h3 className="text-lg font-semibold text-secondary-900 mb-2">{successMessage}</h3>
-            <p className="text-sm text-secondary-600 mb-6">
-              The shift has been assigned to {selectedEmployee?.employeeName}.
-            </p>
-            <button
-              onClick={() => {
-                setShowSuccessDialog(false);
-                if (successMessage === 'Shift Deleted Successfully') {
-                  setShowViewShifts(true);
-                  fetchShiftsForEmployee();
-                } else {
-                  closeModal();
-                }
-              }}
-              className="w-full px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
-            >
-              OK
-            </button>
           </div>
         </div>
       )}
@@ -3017,7 +2998,7 @@ export const EmployeesPage: React.FC = () => {
                   <div className="border border-secondary-200 rounded-lg p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                        <Users className="w-4 h-4 text-blue-600" />
+                        <Users className="w-4 h-4 text-primary-600" />
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-secondary-900">{emp.employeeName}</p>
@@ -3104,7 +3085,7 @@ export const EmployeesPage: React.FC = () => {
                       } catch (err) { console.error(err); }
                       finally { setIsSavingLeaves(false); }
                     }}
-                    className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60"
+                    className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60"
                   >
                     {isSavingLeaves ? 'Saving...' : 'Confirm & Save'}
                   </button>
@@ -3127,7 +3108,7 @@ export const EmployeesPage: React.FC = () => {
               <div className="p-4 border-b border-secondary-100">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Users className="w-5 h-5 text-blue-600" />
+                    <Users className="w-5 h-5 text-primary-600" />
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-secondary-900">{emp.employeeName}</p>
@@ -3203,7 +3184,7 @@ export const EmployeesPage: React.FC = () => {
                           }}
                           className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors
                             ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
-                              wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
+                              wizardMultiSelectedDates.includes(ds) ? 'bg-primary-600 text-white font-semibold ring-2 ring-primary-300' :
                               shiftChangedDates.some(sc => sc.date === ds) ? 'bg-orange-500 text-white font-semibold' :
                               isSelected ? `${leaveDotClass(leaveType ?? '', wizardEmpLeaves.find(l => l.date === ds)?.duration === 'half_day')} text-white font-semibold` :
                               'hover:bg-secondary-100 text-secondary-800'}`}
@@ -3292,7 +3273,7 @@ export const EmployeesPage: React.FC = () => {
                     setWizardTooltipDate(null); setWizardTooltipPos(null);
                     setWizardShowConfirm(true);
                   }}
-                  className="w-full h-10 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                  className="w-full h-10 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
                 >
                   Review
                 </button>
@@ -3350,10 +3331,10 @@ export const EmployeesPage: React.FC = () => {
                             setIsSavingShiftOverride(false);
                           }
                         }}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                        className="w-full flex items-center justify-between px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-primary-400 hover:bg-primary-50 transition-colors disabled:opacity-50"
                       >
                         <div className="flex items-center gap-3">
-                          <Clock size={16} className="text-blue-600" />
+                          <Clock size={16} className="text-primary-600" />
                           <span className="text-sm font-medium text-secondary-900">{label}</span>
                         </div>
                       </button>

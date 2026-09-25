@@ -29,7 +29,7 @@ export const EnquiryStatusCard: React.FC<EnquiryStatusCardProps> = ({
         <select
           value={status}
           onChange={(e) => onStatusChange(e.target.value as EnquiryStatus)}
-          className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
         >
           <option value="New">New</option>
           <option value="In Progress">In Progress</option>

@@ -3,7 +3,7 @@ import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, 
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useToast } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import {
   flattenShiftAssignments,
@@ -157,6 +157,7 @@ const getLeaveColor = (reason?: string) => {
 };
 
 export const LeavesPage: React.FC = () => {
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
   const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR' || userData?.designation === 'Branch Manager';
@@ -388,7 +389,11 @@ export const LeavesPage: React.FC = () => {
       setEditLeaveOpen(false);
       setEditingLeave(null);
       fetchData();
-    } catch (err) { console.error(err); }
+      showToast('success', 'Leave updated');
+    } catch (err) {
+      console.error(err);
+      showToast('error', 'Failed to update leave. Please try again.');
+    }
     finally { setIsSavingEdit(false); }
   };
 
@@ -407,8 +412,10 @@ export const LeavesPage: React.FC = () => {
       fetchData();
       setDeleteModalOpen(false);
       setDeletingLeave(null);
+      showToast('success', 'Leave deleted');
     } catch (err) {
       console.error(err);
+      showToast('error', 'Failed to delete leave. Please try again.');
     } finally {
       setIsDeleting(false);
     }
@@ -520,8 +527,10 @@ export const LeavesPage: React.FC = () => {
       }
       fetchData();
       closeBulkLeaveModal();
+      showToast('success', 'Leaves saved successfully');
     } catch (err) {
       console.error('Error saving bulk leave:', err);
+      showToast('error', 'Failed to save leaves. Please try again.');
     } finally {
       setIsSavingBulkLeave(false);
     }
@@ -882,7 +891,7 @@ export const LeavesPage: React.FC = () => {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3">
+      <div className="flex items-center gap-3 py-3">
         <button onClick={() => navigate('/attendance')} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
           <ArrowLeft size={20} className="text-secondary-600" />
         </button>
@@ -896,20 +905,20 @@ export const LeavesPage: React.FC = () => {
       </div>
 
       {/* Search & Date Filter */}
-      <div className="px-4 pt-3 pb-4">
-        <div className="flex items-center gap-5 mb-4">
+      <div className="pt-3 pb-4">
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
           {canManageLeaves && (
-            <button onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveLimitDialogOpen(false); setBulkLeaveModalOpen(true); }} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-indigo-600 border-2 border-indigo-500 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm">
-              <Umbrella size={20} />
+            <button onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveLimitDialogOpen(false); setBulkLeaveModalOpen(true); }} className="btn-primary">
+              <Umbrella size={16} />
               Add Leaves
             </button>
           )}
-          <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-rose-600 border-2 border-rose-500 rounded-2xl hover:bg-rose-700 transition-colors disabled:opacity-70 shadow-sm">
-            {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={18} />}
+          <button onClick={checkUnauthorizedAbsences} disabled={checkingAbsences} className="btn-secondary">
+            {checkingAbsences ? <RedSpinner size="sm" /> : <AlertTriangle size={16} />}
             Check Unauthorized Absence
           </button>
-          <button onClick={() => navigate('/attendance/leave-counts')} className="flex-1 flex items-center justify-center gap-3 px-6 py-4 text-base font-medium text-white bg-teal-600 border-2 border-teal-500 rounded-2xl hover:bg-teal-700 transition-colors shadow-sm">
-            <BarChart3 size={20} />
+          <button onClick={() => navigate('/attendance/leave-counts')} className="btn-secondary">
+            <BarChart3 size={16} />
             Leave Counts
           </button>
         </div>
@@ -921,7 +930,7 @@ export const LeavesPage: React.FC = () => {
               placeholder="Search by name or code..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="w-full pl-9 pr-4 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div className="flex items-center gap-2">
@@ -930,7 +939,7 @@ export const LeavesPage: React.FC = () => {
               value={fromDateFilter}
               max={toDateFilter || undefined}
               onChange={(e) => handleFromDateChange(e.target.value)}
-              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
             <span className="text-sm text-secondary-500">→</span>
             <input
@@ -938,12 +947,12 @@ export const LeavesPage: React.FC = () => {
               value={toDateFilter}
               min={fromDateFilter || undefined}
               onChange={(e) => setToDateFilter(e.target.value)}
-              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
             <select
               value={branchFilter}
               onChange={(e) => setBranchFilter(e.target.value)}
-              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
               disabled={userData?.designation === 'Branch Manager'}
             >
               {userData?.designation === 'Branch Manager' ? (
@@ -962,7 +971,7 @@ export const LeavesPage: React.FC = () => {
             <select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value as any)}
-              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="all">All Types</option>
               <option value="leave">All Leaves</option>
@@ -976,7 +985,7 @@ export const LeavesPage: React.FC = () => {
             <select
               value={viewMode}
               onChange={(e) => setViewMode(e.target.value as ViewMode)}
-              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
+              className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
             >
               <option value="calendar">Calendar View</option>
               <option value="cards">Card View</option>
@@ -987,15 +996,15 @@ export const LeavesPage: React.FC = () => {
 
       {/* Content */}
       {viewMode === 'calendar' ? (
-        <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <div className="flex-1 overflow-y-auto pb-4">
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <RedSpinner />
             </div>
           ) : (
-            <div className="bg-white/90 rounded-2xl shadow-lg border border-secondary-200 overflow-hidden">
-              <div className="flex items-center justify-between px-4 sm:px-6 py-4 bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100">
-                <button type="button" onClick={() => changeCalendarMonth(-1)} className="p-2 rounded-xl text-purple-700 bg-white border border-purple-100 shadow-sm hover:bg-purple-100 transition-colors" aria-label="Previous month">
+            <div className="card overflow-hidden">
+              <div className="flex items-center justify-between px-4 sm:px-6 py-4 bg-secondary-50 border-b border-secondary-200">
+                <button type="button" onClick={() => changeCalendarMonth(-1)} className="p-2 rounded-lg text-secondary-600 bg-white border border-secondary-200 shadow-sm hover:bg-secondary-100 transition-colors" aria-label="Previous month">
                   <ChevronLeft size={20} />
                 </button>
                 <div className="text-center">
@@ -1003,7 +1012,7 @@ export const LeavesPage: React.FC = () => {
                     {new Date(calendarYear, calendarMonth, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                   </h2>
                 </div>
-                <button type="button" onClick={() => changeCalendarMonth(1)} className="p-2 rounded-xl text-purple-700 bg-white border border-purple-100 shadow-sm hover:bg-purple-100 transition-colors" aria-label="Next month">
+                <button type="button" onClick={() => changeCalendarMonth(1)} className="p-2 rounded-lg text-secondary-600 bg-white border border-secondary-200 shadow-sm hover:bg-secondary-100 transition-colors" aria-label="Next month">
                   <ChevronRight size={20} />
                 </button>
               </div>
@@ -1056,7 +1065,7 @@ export const LeavesPage: React.FC = () => {
           )}
         </div>
       ) : (
-      <div className="flex-1 overflow-y-auto px-4 pb-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3 content-start">
+      <div className="flex-1 overflow-y-auto pb-4 grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-3 content-start">
         {loading ? (
           <div className="w-full flex items-center justify-center py-16">
             <RedSpinner />
@@ -1077,7 +1086,7 @@ export const LeavesPage: React.FC = () => {
             const empCode = group.employeeCode;
 
             return (
-              <div key={empCode} className="bg-white/80 backdrop-blur-sm rounded-xl overflow-hidden cursor-pointer shadow-lg hover:shadow-xl transition-shadow h-auto min-h-[200px]" onClick={() => {
+              <div key={empCode} role="button" tabIndex={0} className="card overflow-hidden cursor-pointer hover:shadow-md transition-shadow h-auto min-h-[200px]" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }} onClick={() => {
                 const leaveDetails = leaves
                   .filter((l) => l.employeeCode === empCode)
                   .flatMap((l) => (l.dates ?? (l.fromDate ? [l.fromDate] : [])))
@@ -1350,7 +1359,7 @@ export const LeavesPage: React.FC = () => {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
                   <input type="text" placeholder="Search by name or code..."
                     value={bulkLeaveSearchQuery} onChange={(e) => setBulkLeaveSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent" />
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
                 </div>
                 <div className="max-h-40 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
                   {employees.filter((emp) => {
@@ -1370,7 +1379,7 @@ export const LeavesPage: React.FC = () => {
                   }).map((emp) => (
                     <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
                       <input type="checkbox" checked={bulkLeaveSelectedIds.has(emp.id)} onChange={() => toggleBulkLeaveEmployee(emp.id)}
-                        className="w-4 h-4 text-purple-600 rounded border-secondary-300 focus:ring-purple-500" />
+                        className="w-4 h-4 text-purple-600 rounded border-secondary-300 focus:ring-primary-500" />
                       <div>
                         <p className="text-sm font-medium text-purple-700">{emp.employeeName || 'Unnamed'}</p>
                         <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
@@ -1451,7 +1460,7 @@ export const LeavesPage: React.FC = () => {
                 <button type="button" onClick={closeBulkLeaveModal}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                 <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
                   {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
                 </button>
               </div>
@@ -1479,7 +1488,7 @@ export const LeavesPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setBulkLeaveLimitDialogOpen(false)}
-                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+                className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 Review Selection
               </button>
@@ -1528,7 +1537,7 @@ export const LeavesPage: React.FC = () => {
                           return (
                             <button key={i} type="button"
                               onClick={() => toggleEditLeaveDate(dateStr)}
-                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${selected ? 'bg-purple-600 text-white font-semibold' : 'hover:bg-purple-100 text-secondary-800'}`}>{day}</button>
+                              className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors ${selected ? 'bg-primary-600 text-white font-semibold' : 'hover:bg-primary-50 text-secondary-800'}`}>{day}</button>
                           );
                         })}
                       </div>
@@ -1540,7 +1549,7 @@ export const LeavesPage: React.FC = () => {
               <div className="border border-secondary-300 rounded-lg p-3">
                 <label className="block text-sm font-medium text-secondary-700 mb-2">Leave Type</label>
                 <select value={editLeaveForm.reason} onChange={(e) => updateEditLeaveForm({ ...editLeaveForm, reason: e.target.value })}
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" required>
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                   <option value="">Select leave type...</option>
                   <option value="Week Off">Week Off</option>
                   <option value="Casual Leave">Casual Leave</option>
@@ -1569,7 +1578,7 @@ export const LeavesPage: React.FC = () => {
                 <button type="button" onClick={() => setEditLeaveOpen(false)}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                 <button type="submit" disabled={isSavingEdit || editLeaveForm.dates.length === 0 || !editLeaveForm.reason}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-60">
+                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
                   {isSavingEdit ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>

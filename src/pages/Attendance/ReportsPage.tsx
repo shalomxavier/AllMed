@@ -158,7 +158,7 @@ export const ReportsPage: React.FC = () => {
 
   return (
     <div className="flex flex-col">
-      <div className="flex items-center gap-3 px-6 py-4">
+      <div className="flex items-center gap-3 py-4">
         <button
           onClick={() => navigate('/attendance')}
           className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"
@@ -171,10 +171,10 @@ export const ReportsPage: React.FC = () => {
           <p className="text-sm text-secondary-500">Attendance reports</p>
         </div>
       </div>
-      <div className="p-6 flex-1">
+      <div className="py-6 flex-1">
         <div className="max-w-2xl space-y-6">
           {/* Monthly Work Duration */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+          <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Monthly Work Duration</h2>
             <p className="text-sm text-secondary-500 mb-4">Generate monthly work duration report.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -186,7 +186,7 @@ export const ReportsPage: React.FC = () => {
                   value={monthlyFromDate}
                   max={monthlyToDate || undefined}
                   onChange={(e) => { const v = e.target.value; setMonthlyFromDate(v); if (v) setMonthlyToDate((t) => (t && t < v ? '' : t)); }}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -198,7 +198,7 @@ export const ReportsPage: React.FC = () => {
                   min={monthlyFromDate || undefined}
                   disabled={!monthlyFromDate}
                   onChange={(e) => setMonthlyToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
@@ -208,7 +208,7 @@ export const ReportsPage: React.FC = () => {
                   value={monthlyLocation}
                   onChange={(e) => setMonthlyLocation(e.target.value)}
                   disabled={userData?.designation === 'Branch Manager'}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
                   {userData?.designation === 'Branch Manager' ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -235,7 +235,7 @@ export const ReportsPage: React.FC = () => {
               <button
                 onClick={handleExport}
                 disabled={!monthlyFromDate || !monthlyToDate || exporting}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
                 {exporting ? 'Exporting...' : 'Export Monthly Report'}
@@ -244,7 +244,7 @@ export const ReportsPage: React.FC = () => {
           </div>
 
           {/* Daily Attendance */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+          <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Daily Attendance</h2>
             <p className="text-sm text-secondary-500 mb-4">Export daily attendance records.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -256,7 +256,7 @@ export const ReportsPage: React.FC = () => {
                   value={dailyFromDate}
                   max={dailyToDate || undefined}
                   onChange={(e) => { const v = e.target.value; setDailyFromDate(v); if (v) setDailyToDate((t) => (t && t < v ? '' : t)); }}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -268,7 +268,7 @@ export const ReportsPage: React.FC = () => {
                   min={dailyFromDate || undefined}
                   disabled={!dailyFromDate}
                   onChange={(e) => setDailyToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
@@ -278,7 +278,7 @@ export const ReportsPage: React.FC = () => {
                   value={dailyLocation}
                   onChange={(e) => setDailyLocation(e.target.value)}
                   disabled={userData?.designation === 'Branch Manager'}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
                   {userData?.designation === 'Branch Manager' ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -305,7 +305,7 @@ export const ReportsPage: React.FC = () => {
               <button
                 onClick={handleDailyExport}
                 disabled={!dailyFromDate || !dailyToDate || exportingDaily}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
                 {exportingDaily ? 'Exporting...' : 'Export Attendance Log'}
@@ -314,7 +314,7 @@ export const ReportsPage: React.FC = () => {
           </div>
 
           {/* Shifts */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+          <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Shifts</h2>
             <p className="text-sm text-secondary-500 mb-4">Export shift assignment report.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -326,7 +326,7 @@ export const ReportsPage: React.FC = () => {
                   value={shiftFromDate}
                   max={shiftToDate || undefined}
                   onChange={(e) => { const v = e.target.value; setShiftFromDate(v); if (v) setShiftToDate((t) => (t && t < v ? '' : t)); }}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -338,7 +338,7 @@ export const ReportsPage: React.FC = () => {
                   min={shiftFromDate || undefined}
                   disabled={!shiftFromDate}
                   onChange={(e) => setShiftToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
@@ -348,7 +348,7 @@ export const ReportsPage: React.FC = () => {
                   value={shiftLocation}
                   onChange={(e) => setShiftLocation(e.target.value)}
                   disabled={userData?.designation === 'Branch Manager'}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
                   {userData?.designation === 'Branch Manager' ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -375,7 +375,7 @@ export const ReportsPage: React.FC = () => {
               <button
                 onClick={handleShiftExport}
                 disabled={!shiftFromDate || !shiftToDate || exportingShift}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
                 {exportingShift ? 'Exporting...' : 'Export Shift Report'}
@@ -384,7 +384,7 @@ export const ReportsPage: React.FC = () => {
           </div>
 
           {/* Employee Master */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-lg">
+          <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Employee Master</h2>
             <p className="text-sm text-secondary-500 mb-4">Export all employee details.</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
@@ -395,7 +395,7 @@ export const ReportsPage: React.FC = () => {
                   value={employeeMasterLocation}
                   onChange={(e) => setEmployeeMasterLocation(e.target.value)}
                   disabled={userData?.designation === 'Branch Manager'}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
                   {userData?.designation === 'Branch Manager' ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -415,7 +415,7 @@ export const ReportsPage: React.FC = () => {
                   id="employeeMasterStatus"
                   value={employeeMasterStatus}
                   onChange={(e) => setEmployeeMasterStatus(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 >
                   <option value="All">All</option>
                   <option value="Active">Active</option>
@@ -434,7 +434,7 @@ export const ReportsPage: React.FC = () => {
               <button
                 onClick={handleEmployeeMasterExport}
                 disabled={exportingEmployeeMaster}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Download size={16} />
                 {exportingEmployeeMaster ? 'Exporting...' : 'Export Employee Master'}

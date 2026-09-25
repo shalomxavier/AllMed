@@ -191,7 +191,7 @@ export const ChangeTrackerPage: React.FC = () => {
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance/records')}
@@ -207,7 +207,7 @@ export const ChangeTrackerPage: React.FC = () => {
       </div>
 
       {/* Filters */}
-      <div className="px-6 pb-4 flex flex-wrap items-end gap-4">
+      <div className="pb-4 flex flex-wrap items-end gap-4">
         <div className="w-1/2 min-w-[200px]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
@@ -216,7 +216,7 @@ export const ChangeTrackerPage: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by employee or editor..."
-              className="w-full pl-9 pr-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full pl-9 pr-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
           </div>
         </div>
@@ -227,7 +227,7 @@ export const ChangeTrackerPage: React.FC = () => {
             value={fromDate}
             max={toDateFilter || undefined}
             onChange={(e) => { const v = e.target.value; setFromDate(v); if (v) setToDateFilter((t) => (t && t < v ? '' : t)); }}
-            className="px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            className="px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -237,13 +237,13 @@ export const ChangeTrackerPage: React.FC = () => {
             value={toDateFilter}
             min={fromDate || undefined}
             onChange={(e) => setToDateFilter(e.target.value)}
-            className="px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            className="px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto px-6">
+      <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RedSpinner />

@@ -38,7 +38,7 @@ export const FollowUpSection: React.FC<FollowUpSectionProps> = ({
               const value = e.target.value;
               onFollowUpDateChange(value ? new Date(value) : undefined);
             }}
-            className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -50,7 +50,7 @@ export const FollowUpSection: React.FC<FollowUpSectionProps> = ({
             type="time"
             value={followUpTime}
             onChange={(e) => onFollowUpTimeChange(e.target.value)}
-            className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
         <div>
@@ -60,7 +60,7 @@ export const FollowUpSection: React.FC<FollowUpSectionProps> = ({
             onChange={(e) => onFollowUpReminderNoteChange(e.target.value)}
             placeholder="Add a reminder note for the follow-up..."
             rows={2}
-            className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+            className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
           />
         </div>
       </div>

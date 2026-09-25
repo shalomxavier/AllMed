@@ -5,7 +5,7 @@ import { format, parseISO } from 'date-fns';
 import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useToast } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import { LeaveTypeLegend, leaveDotClass } from '@/components/attendance/LeaveOptionMenu';
@@ -180,6 +180,7 @@ const WizardLeaveOptionMenu: React.FC<{ onSelect: (selection: WizardLeaveSelecti
 };
 
 export const ShiftsPage: React.FC = () => {
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
   const [slots, setSlots] = useState<ShiftSlot[]>([]);
@@ -199,7 +200,6 @@ export const ShiftsPage: React.FC = () => {
   const [showOverlapDialog, setShowOverlapDialog] = useState(false);
   const [duplicateAssignments, setDuplicateAssignments] = useState<{ name: string; existing: ShiftEmployee[] }[]>([]);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
-  const [assignSuccess, setAssignSuccess] = useState(false);
   const [showSlotExistsDialog, setShowSlotExistsDialog] = useState(false);
   const [editingSlot, setEditingSlot] = useState<ShiftSlot | null>(null);
   const [addingToSlot, setAddingToSlot] = useState<ShiftSlot | null>(null);
@@ -325,7 +325,6 @@ export const ShiftsPage: React.FC = () => {
     setShowOverlapDialog(false);
     setDuplicateAssignments([]);
     setShowDuplicateDialog(false);
-    setAssignSuccess(false);
     setEditingSlot(null);
     setAddingToSlot(null);
     setAddEmpSearch('');
@@ -344,7 +343,7 @@ export const ShiftsPage: React.FC = () => {
           if (!assignForm.startMinute) missingFields.push('Start Minute');
           if (!assignForm.endHour) missingFields.push('End Hour');
           if (!assignForm.endMinute) missingFields.push('End Minute');
-          alert(`Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
+          showToast('warning', `Please fill in all time fields. Missing: ${missingFields.join(', ')}`);
           setIsAssigning(false);
           return;
         }
@@ -363,7 +362,7 @@ export const ShiftsPage: React.FC = () => {
         }
       } catch (error) {
         console.error('Invalid time format:', error);
-        alert('Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
+        showToast('warning', 'Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
         setIsAssigning(false);
         return;
       }
@@ -394,7 +393,7 @@ export const ShiftsPage: React.FC = () => {
           startTime,
           endTime,
         });
-        setAssignSuccess(true);
+        showToast('success', 'Shifts assigned successfully!');
         fetchShifts();
         closeAssignModal();
         return;
@@ -495,7 +494,7 @@ export const ShiftsPage: React.FC = () => {
       if (empsForWizard.length > 0) setAskLeavesDialog(true);
     } catch (err) { 
       console.error(err);
-      alert('An error occurred while saving the shift. Please check your time values and try again.');
+      showToast('error', 'An error occurred while saving the shift. Please check your time values and try again.');
     }
     finally { setIsAssigning(false); }
   };
@@ -508,8 +507,10 @@ export const ShiftsPage: React.FC = () => {
       await deleteDoc(doc(db, 'shifts', deleteSlot.key));
       await fetchShifts();
       setDeleteSlot(null);
+      showToast('success', 'Shift deleted');
     } catch (err) {
       console.error('Error deleting shift:', err);
+      showToast('error', 'Failed to delete shift. Please try again.');
     } finally {
       setIsDeleting(false);
     }
@@ -667,7 +668,7 @@ export const ShiftsPage: React.FC = () => {
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -691,7 +692,7 @@ export const ShiftsPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto bg-transparent p-6">
+      <div className="flex-1 overflow-y-auto bg-transparent py-6">
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <div className="w-56">
             <label className="block text-xs font-medium text-secondary-600 mb-1">Branch</label>
@@ -699,7 +700,7 @@ export const ShiftsPage: React.FC = () => {
               value={userData?.designation === 'Branch Manager' ? (managerBranchName ?? '') : selectedBranchFilter}
               onChange={(e) => setSelectedBranchFilter(e.target.value)}
               disabled={userData?.designation === 'Branch Manager'}
-              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
             >
               {userData?.designation === 'Branch Manager' ? (
                 <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
@@ -716,7 +717,7 @@ export const ShiftsPage: React.FC = () => {
           {userData?.designation !== 'Branch Manager' && (
             <button
               onClick={() => setAssignOpen(true)}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
+              className="btn-primary"
             >
               <Plus size={16} />
               Add Shifts
@@ -742,15 +743,26 @@ export const ShiftsPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSelectedSlot(slot)}
-                  className="absolute top-3 right-3 p-1.5 rounded-lg text-secondary-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                  className="absolute top-3 right-3 p-1.5 rounded-lg text-secondary-500 hover:text-secondary-800 hover:bg-secondary-100 transition-colors"
                   aria-label="View shift employees"
                   title="View employees"
                 >
                   <Eye size={17} />
                 </button>
-                <div className="flex items-center gap-3 mb-3 cursor-pointer" onClick={() => setSelectedSlot(slot)}>
-                  <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
-                    <Clock className="w-6 h-6 text-orange-600" />
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="flex items-center gap-3 mb-3 cursor-pointer"
+                  onClick={() => setSelectedSlot(slot)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedSlot(slot);
+                    }
+                  }}
+                >
+                  <div className="w-12 h-12 rounded-full bg-secondary-100 flex items-center justify-center shrink-0">
+                    <Clock className="w-6 h-6 text-secondary-500" />
                   </div>
                   <div>
                     <h3 className="font-semibold text-secondary-900 mb-1">
@@ -779,7 +791,7 @@ export const ShiftsPage: React.FC = () => {
                     setSelectedSlot(null);
                     setAssignOpen(true);
                   }}
-                  className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                  className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
                 >
                   <Plus size={16} />
                   Add Employees
@@ -802,7 +814,7 @@ export const ShiftsPage: React.FC = () => {
                         setEditingSlot(slot);
                         setAssignOpen(true);
                       }}
-                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-violet-700 bg-violet-50 rounded-lg hover:bg-violet-100 transition-colors"
+                      className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
                     >
                       <Pencil size={16} />
                       Edit
@@ -840,7 +852,7 @@ export const ShiftsPage: React.FC = () => {
                       setEditEmployeesOpen(true);
                       setAssignOpen(false);
                     }}
-                    className="flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900 transition-colors"
+                    className="flex items-center gap-1.5 text-sm font-medium text-primary-700 hover:text-primary-800 transition-colors"
                   >
                     <Pencil size={14} />
                     Edit Employees
@@ -858,7 +870,7 @@ export const ShiftsPage: React.FC = () => {
 
                   <div className="border border-secondary-300 rounded-lg p-3">
                     <label className="block text-sm font-medium text-secondary-700 mb-2">
-                      Select Employees {assignSelectedIds.size > 0 && <span className="text-blue-600">({assignSelectedIds.size} selected)</span>}
+                      Select Employees {assignSelectedIds.size > 0 && <span className="text-primary-600">({assignSelectedIds.size} selected)</span>}
                       {userData?.designation === 'Branch Manager' && (
                         <span className="ml-2 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
                           Branch Filter Active
@@ -868,7 +880,7 @@ export const ShiftsPage: React.FC = () => {
                     <div className="relative mb-3">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-400" />
                       <input type="text" placeholder="Search by name or code..." value={addEmpSearch} onChange={(e) => setAddEmpSearch(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                        className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
                     </div>
                     <div className="max-h-52 overflow-y-auto space-y-1 border border-secondary-200 rounded-lg p-2">
                       {allEmployees.filter((e) => {
@@ -888,9 +900,9 @@ export const ShiftsPage: React.FC = () => {
                           <label key={emp.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-secondary-50 cursor-pointer">
                             <input type="checkbox" checked={assignSelectedIds.has(emp.id)}
                               onChange={() => setAssignSelectedIds((prev) => { const n = new Set(prev); n.has(emp.id) ? n.delete(emp.id) : n.add(emp.id); return n; })}
-                              className="w-4 h-4 text-blue-600 rounded border-secondary-300 focus:ring-blue-500" />
+                              className="w-4 h-4 text-primary-600 rounded border-secondary-300 focus:ring-primary-500" />
                             <div>
-                              <p className="text-sm font-medium text-blue-600">{emp.employeeName || 'Unnamed'}</p>
+                              <p className="text-sm font-medium text-primary-600">{emp.employeeName || 'Unnamed'}</p>
                               <p className="text-xs text-secondary-500">{emp.employeeCode || '—'}</p>
                             </div>
                           </label>
@@ -904,12 +916,12 @@ export const ShiftsPage: React.FC = () => {
                       <div className="border border-secondary-300 rounded-lg p-3">
                         <label className="block text-sm font-medium text-secondary-700 mb-2">From Date</label>
                         <input type="date" value={assignForm.fromDate} max={assignForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setAssignForm({ ...assignForm, fromDate: v, toDate: assignForm.toDate && assignForm.toDate < v ? '' : assignForm.toDate }); }}
-                          className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                          className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required />
                       </div>
                       <div className="border border-secondary-300 rounded-lg p-3">
                         <label className="block text-sm font-medium text-secondary-700 mb-2">To Date</label>
                         <input type="date" value={assignForm.toDate} min={assignForm.fromDate || undefined} disabled={!assignForm.fromDate} onChange={(e) => setAssignForm({ ...assignForm, toDate: e.target.value })}
-                          className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
+                          className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
                       </div>
                     </div>
                   )}
@@ -918,7 +930,7 @@ export const ShiftsPage: React.FC = () => {
                     <button type="button" onClick={closeAssignModal} className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                     <button type="submit"
                       disabled={isAssigning || assignSelectedIds.size === 0 || !assignForm.fromDate || !assignForm.toDate}
-                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                       {isAssigning ? 'Saving...' : `Assign ${assignSelectedIds.size > 0 ? assignSelectedIds.size : ''} Employee${assignSelectedIds.size === 1 ? '' : 's'}`}
                     </button>
                   </div>
@@ -930,15 +942,15 @@ export const ShiftsPage: React.FC = () => {
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
                       <div className="flex gap-2">
-                        <select value={assignForm.startHour} onChange={(e) => setAssignForm({ ...assignForm, startHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={assignForm.startHour} onChange={(e) => setAssignForm({ ...assignForm, startHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Hr</option>
                           {Array.from({ length: 12 }, (_, i) => i + 1).map(h => <option key={h} value={h.toString()}>{h}</option>)}
                         </select>
-                        <select value={assignForm.startMinute} onChange={(e) => setAssignForm({ ...assignForm, startMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={assignForm.startMinute} onChange={(e) => setAssignForm({ ...assignForm, startMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Min</option>
                           {['00','15','30','45'].map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
-                        <select value={assignForm.startAmPm} onChange={(e) => setAssignForm({ ...assignForm, startAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={assignForm.startAmPm} onChange={(e) => setAssignForm({ ...assignForm, startAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="AM">AM</option><option value="PM">PM</option>
                         </select>
                       </div>
@@ -946,15 +958,15 @@ export const ShiftsPage: React.FC = () => {
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">End Time</label>
                       <div className="flex gap-2">
-                        <select value={assignForm.endHour} onChange={(e) => setAssignForm({ ...assignForm, endHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={assignForm.endHour} onChange={(e) => setAssignForm({ ...assignForm, endHour: e.target.value })} className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Hr</option>
                           {Array.from({ length: 12 }, (_, i) => i + 1).map(h => <option key={h} value={h.toString()}>{h}</option>)}
                         </select>
-                        <select value={assignForm.endMinute} onChange={(e) => setAssignForm({ ...assignForm, endMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={assignForm.endMinute} onChange={(e) => setAssignForm({ ...assignForm, endMinute: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="">Min</option>
                           {['00','15','30','45'].map(m => <option key={m} value={m}>{m}</option>)}
                         </select>
-                        <select value={assignForm.endAmPm} onChange={(e) => setAssignForm({ ...assignForm, endAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required>
+                        <select value={assignForm.endAmPm} onChange={(e) => setAssignForm({ ...assignForm, endAmPm: e.target.value })} className="w-20 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" required>
                           <option value="AM">AM</option><option value="PM">PM</option>
                         </select>
                       </div>
@@ -965,7 +977,7 @@ export const ShiftsPage: React.FC = () => {
                     <button type="button" onClick={closeAssignModal} className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
                     <button type="submit"
                       disabled={isAssigning || !assignForm.startHour || !assignForm.startMinute || !assignForm.endHour || !assignForm.endMinute}
-                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                       {isAssigning ? 'Saving...' : editingSlot ? 'Update Shift' : 'Save Shift'}
                     </button>
                   </div>
@@ -1096,8 +1108,10 @@ export const ShiftsPage: React.FC = () => {
                     setEditingSlot(null);
                     setEditEmployeesOpen(false);
                     setRemoveEditEmpConfirm(null);
+                    showToast('success', 'Employee removed from shift');
                   } catch (e) {
                     console.error('Error removing employee:', e);
+                    showToast('error', 'Failed to remove employee. Please try again.');
                   } finally {
                     setIsRemovingEmp(false);
                   }
@@ -1120,7 +1134,7 @@ export const ShiftsPage: React.FC = () => {
             </div>
             <h3 className="text-lg font-semibold text-secondary-900 mb-2">Shift Already Exists</h3>
             <p className="text-sm text-secondary-900 mb-6">A shift with this start and end time already exists. Use <span className="font-medium text-orange-600">Add Employees</span> on the existing shift to assign employees to it.</p>
-            <button onClick={() => setShowSlotExistsDialog(false)} className="w-full px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors">OK</button>
+            <button onClick={() => setShowSlotExistsDialog(false)} className="w-full px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors">OK</button>
           </div>
         </div>
       )}
@@ -1266,13 +1280,6 @@ export const ShiftsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Success toast */}
-      {assignSuccess && (
-        <div className="fixed bottom-6 right-6 z-50 bg-green-600 text-white text-sm font-medium px-5 py-3 rounded-xl shadow-lg">
-          Shifts assigned successfully!
-        </div>
-      )}
-
       {/* Employees Modal */}
       {selectedSlot && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1358,7 +1365,7 @@ export const ShiftsPage: React.FC = () => {
                   setSelectedSlot(null);
                   setAssignOpen(true);
                 }}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 <Plus size={15} />
                 Add Employees
@@ -1401,8 +1408,10 @@ export const ShiftsPage: React.FC = () => {
                     await fetchShifts();
                     setRemoveEmpConfirm(null);
                     setSelectedSlot(prev => prev ? { ...prev, employees: updatedEmployees } : null);
+                    showToast('success', 'Employee removed from shift');
                   } catch (e) {
                     console.error('Error removing employee:', e);
+                    showToast('error', 'Failed to remove employee. Please try again.');
                   } finally {
                     setIsRemovingEmp(false);
                   }
@@ -1421,7 +1430,7 @@ export const ShiftsPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
             <div className="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
-              <Clock className="w-7 h-7 text-blue-600" />
+              <Clock className="w-7 h-7 text-primary-600" />
             </div>
             <h3 className="text-lg font-semibold text-secondary-900 mb-2">Assign Week-offs & Leaves?</h3>
             <p className="text-sm text-secondary-600 mb-6">Would you like to assign week-off and leave dates for the assigned employees?</p>
@@ -1450,7 +1459,7 @@ export const ShiftsPage: React.FC = () => {
                   }
                   setLeaveWizardOpen(true);
                 }}
-                className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
               >
                 Yes, Assign
               </button>
@@ -1533,7 +1542,7 @@ export const ShiftsPage: React.FC = () => {
                       <div key={e.employeeCode} className="border border-secondary-200 rounded-lg p-3">
                         <div className="flex items-center gap-2 mb-2">
                           <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                            <Users className="w-4 h-4 text-blue-600" />
+                            <Users className="w-4 h-4 text-primary-600" />
                           </div>
                           <div>
                             <p className="text-sm font-semibold text-secondary-900">{e.employeeName}</p>
@@ -1617,10 +1626,14 @@ export const ShiftsPage: React.FC = () => {
                         setLeaveWizardOpen(false);
                         setWizardEmployees([]);
                         setWizardEmpLeaves({});
-                      } catch (err) { console.error(err); }
+                        showToast('success', 'Leaves saved successfully');
+                      } catch (err) {
+                        console.error(err);
+                        showToast('error', 'Failed to save leaves. Please try again.');
+                      }
                       finally { setIsSavingLeaves(false); }
                     }}
-                    className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60"
+                    className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60"
                   >
                     {isSavingLeaves ? 'Saving...' : 'Confirm & Save'}
                   </button>
@@ -1643,7 +1656,7 @@ export const ShiftsPage: React.FC = () => {
               <div className="p-4 border-b border-secondary-100">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Users className="w-5 h-5 text-blue-600" />
+                    <Users className="w-5 h-5 text-primary-600" />
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-secondary-900">{emp.employeeName}</p>
@@ -1722,7 +1735,7 @@ export const ShiftsPage: React.FC = () => {
                           }}
                           className={`w-full aspect-square flex items-center justify-center text-xs rounded-full transition-colors
                             ${!inRange ? 'text-secondary-200 cursor-not-allowed' :
-                              wizardMultiSelectedDates.includes(ds) ? 'bg-blue-600 text-white font-semibold ring-2 ring-blue-300' :
+                              wizardMultiSelectedDates.includes(ds) ? 'bg-primary-600 text-white font-semibold ring-2 ring-primary-300' :
                               (shiftChangedDates[emp.employeeCode] ?? []).some(sc => sc.date === ds) ? 'bg-orange-500 text-white font-semibold' :
                               isSelected ? `${leaveDotClass(leaveType ?? '', empLeaves.find(l => l.date === ds)?.duration === 'half_day')} text-white font-semibold` :
                               'hover:bg-secondary-100 text-secondary-800'}`}
@@ -1837,7 +1850,7 @@ export const ShiftsPage: React.FC = () => {
                       setWizardMultiSelectedDates([]);
                       e.currentTarget.value = '';
                     }}
-                    className="flex-1 min-w-0 h-10 px-3 text-center text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 min-w-0 h-10 px-3 text-center text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                     aria-label="Copy leaves from a previous employee"
                   >
                     <option value="">Copy</option>
@@ -1864,7 +1877,7 @@ export const ShiftsPage: React.FC = () => {
                       setWizardShowConfirm(true);
                     }
                   }}
-                  className="flex-1 h-10 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                  className="flex-1 h-10 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
                 >
                   {wizardEmpIndex < wizardEmployees.length - 1 ? 'Next Employee' : 'Review'}
                 </button>
@@ -1926,16 +1939,18 @@ export const ShiftsPage: React.FC = () => {
                               }));
                               setChangeShiftModalOpen(false);
                               setChangeShiftDate(null);
+                              showToast('success', 'Shift updated');
                             } catch (err) {
                               console.error('Error changing shift:', err);
+                              showToast('error', 'Failed to change shift. Please try again.');
                             } finally {
                               setIsSavingShiftOverride(false);
                             }
                           }}
-                          className="w-full flex items-center justify-between px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                          className="w-full flex items-center justify-between px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-primary-400 hover:bg-primary-50 transition-colors disabled:opacity-50"
                         >
                           <div className="flex items-center gap-3">
-                            <Clock size={16} className="text-blue-600" />
+                            <Clock size={16} className="text-primary-600" />
                             <span className="text-sm font-medium text-secondary-900">{label}</span>
                           </div>
                         </button>

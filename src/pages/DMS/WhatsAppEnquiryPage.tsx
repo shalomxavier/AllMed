@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, MessageSquare, Search, Plus, RefreshCw, AlertCircle, LogOut } from 'lucide-react';
+import { ArrowLeft, MessageSquare, Search, RefreshCw, AlertCircle, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
@@ -105,10 +105,7 @@ export const WhatsAppEnquiryPage: React.FC = () => {
               <RefreshCw size={16} />
               Refresh
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors">
-              <Plus size={16} />
-              New Chat
-            </button>
+
           </div>
         </div>
       )}
@@ -121,7 +118,7 @@ export const WhatsAppEnquiryPage: React.FC = () => {
               <MessageSquare className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-green-600">WhatsApp</h1>
+              <h1 className="text-xl font-semibold text-secondary-900">WhatsApp</h1>
               <p className="text-xs text-secondary-500">Business Messenger</p>
             </div>
           </div>
@@ -200,7 +197,7 @@ export const WhatsAppEnquiryPage: React.FC = () => {
                 placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 bg-secondary-50 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
           </div>

@@ -100,7 +100,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
         type="button"
         onClick={toggleDropdown}
         disabled={disabled}
-        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white text-left flex items-center justify-between disabled:opacity-70 disabled:cursor-not-allowed"
+        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white text-left flex items-center justify-between disabled:opacity-70 disabled:cursor-not-allowed"
       >
         <span className={selectedItems.length === 0 ? 'text-secondary-400' : 'text-secondary-900'}>
           {selectedItems.length === 0
@@ -142,7 +142,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={searchPlaceholder}
-                    className="w-full pl-9 pr-3 py-1.5 text-sm border border-secondary-200 rounded-md focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                    className="w-full pl-9 pr-3 py-1.5 text-sm border border-secondary-200 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     onClick={(e) => e.stopPropagation()}
                   />
                 </div>
@@ -166,7 +166,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
                     >
                       <div
                         className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                          isSelected ? 'bg-cyan-600 border-cyan-600' : 'border-secondary-300 bg-white'
+                          isSelected ? 'bg-primary-600 border-primary-600' : 'border-secondary-300 bg-white'
                         }`}
                       >
                         {isSelected && <Check size={12} className="text-white" />}

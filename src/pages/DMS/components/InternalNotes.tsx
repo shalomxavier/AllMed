@@ -21,7 +21,7 @@ export const InternalNotes: React.FC<InternalNotesProps> = ({
           onChange={(e) => onNotesChange(e.target.value)}
           placeholder="Add internal notes about this enquiry..."
           rows={6}
-          className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+          className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
         />
       </div>
     </div>

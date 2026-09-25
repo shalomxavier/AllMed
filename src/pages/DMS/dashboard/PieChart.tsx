@@ -150,7 +150,7 @@ export const PieChart: React.FC<PieChartProps> = ({
                         />
                         <span
                           onClick={() => onLabelClick?.(item.label)}
-                          className={`text-secondary-700 ${onLabelClick ? 'cursor-pointer hover:text-blue-600 hover:underline' : ''}`}
+                          className={`text-secondary-700 ${onLabelClick ? 'cursor-pointer hover:text-primary-600 hover:underline' : ''}`}
                         >
                           {item.label}
                         </span>
@@ -176,7 +176,7 @@ export const PieChart: React.FC<PieChartProps> = ({
                           />
                           <span
                             onClick={() => onDepartmentLabelClick?.(item.label)}
-                            className={`text-secondary-700 ${onDepartmentLabelClick ? 'cursor-pointer hover:text-blue-600 hover:underline' : ''}`}
+                            className={`text-secondary-700 ${onDepartmentLabelClick ? 'cursor-pointer hover:text-primary-600 hover:underline' : ''}`}
                           >
                             {item.label}
                           </span>

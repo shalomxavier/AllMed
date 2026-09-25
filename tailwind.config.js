@@ -1,3 +1,5 @@
+import colors from 'tailwindcss/colors';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -21,18 +23,21 @@ export default {
           950: '#450a0a',
         },
         secondary: {
-          50: '#ffffff',
-          100: '#fafafa',
-          200: '#f5f5f5',
-          300: '#f0f0f0',
-          400: '#e5e5e5',
-          500: '#d4d4d4',
-          600: '#a3a3a3',
-          700: '#737373',
-          800: '#525252',
-          900: '#404040',
-          950: '#262626',
+          50: '#fafafa',
+          100: '#f5f5f5',
+          200: '#e5e5e5',
+          300: '#d4d4d4',
+          400: '#a3a3a3',
+          500: '#737373',
+          600: '#525252',
+          700: '#404040',
+          800: '#262626',
+          900: '#171717',
+          950: '#0a0a0a',
         },
+        success: colors.emerald,
+        warning: colors.amber,
+        info: colors.blue,
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],

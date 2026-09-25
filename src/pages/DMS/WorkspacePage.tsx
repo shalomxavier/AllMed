@@ -6,7 +6,7 @@ import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/com
 import type { LastEnquiryInfo } from '@/components/whatsapp/ChatHeader';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { LostReasonModal } from './components/LostReasonModal';
-import { useToast } from './components/Toast';
+import { useToast } from '@/components/common';
 import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { updateDeliveryStatus } from '@/services/whatsapp';
 import { enquiriesService } from '@/services/firestore/enquiriesService';
@@ -50,7 +50,7 @@ export const WorkspacePage: React.FC = () => {
     internalNotes: '',
   });
 
-  const { showToast, ToastContainer } = useToast();
+  const { showToast } = useToast();
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -246,7 +246,7 @@ export const WorkspacePage: React.FC = () => {
               >
                 <ArrowLeft size={20} className="text-secondary-600" />
               </button>
-              <h2 className="text-xl font-semibold text-green-600">WhatsApp</h2>
+              <h2 className="text-xl font-semibold text-secondary-900">WhatsApp</h2>
             </div>
 
             <div className="relative mb-4">
@@ -256,7 +256,7 @@ export const WorkspacePage: React.FC = () => {
                 placeholder="Search or start new chat"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                className="w-full pl-10 pr-4 py-2 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
                 style={{ background: '#f6f5f4' }}
               />
             </div>
@@ -373,8 +373,6 @@ export const WorkspacePage: React.FC = () => {
         onCancel={() => setShowLostReasonModal(false)}
       />
 
-      {/* Toast Container */}
-      <ToastContainer />
     </PageContainer>
   );
 };

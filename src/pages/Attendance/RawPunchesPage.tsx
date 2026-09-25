@@ -5,8 +5,7 @@ import * as XLSX from 'xlsx';
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { useToast } from '@/pages/DMS/components/Toast';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useToast } from '@/components/common';
 
 interface RawPunch {
   id: string;
@@ -107,7 +106,7 @@ const ANALYSIS_THRESHOLD_MINUTES = 120;
 export const RawPunchesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
-  const { showToast, ToastContainer } = useToast();
+  const { showToast } = useToast();
   // Only Director (admin) and HR are allowed to add, edit, or delete punch records.
   const canManagePunches = userData?.designation === 'Director' || userData?.designation === 'HR';
 
@@ -226,7 +225,7 @@ export const RawPunchesPage: React.FC = () => {
           <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
             <button
               onClick={(e) => { e.stopPropagation(); openEditPunch(punch, record); }}
-              className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+              className="p-0.5 rounded text-blue-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
               title="Edit time"
             >
               <Pencil size={12} />
@@ -266,7 +265,7 @@ export const RawPunchesPage: React.FC = () => {
                 <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
                   <button
                     onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
-                    className="p-0.5 rounded text-blue-500 hover:text-blue-700 hover:bg-blue-50 transition-colors"
+                    className="p-0.5 rounded text-blue-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
                     title="Edit time"
                   >
                     <Pencil size={12} />
@@ -1184,6 +1183,7 @@ export const RawPunchesPage: React.FC = () => {
       exportRecordsToExcel(records, exportFromDate, exportToDate);
     } catch (error) {
       console.error('Error exporting records:', error);
+      showToast('error', 'Failed to export records. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -1226,9 +1226,9 @@ export const RawPunchesPage: React.FC = () => {
 
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col">
-      <ToastContainer />
+
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -1245,7 +1245,7 @@ export const RawPunchesPage: React.FC = () => {
           {userData?.designation !== 'Branch Manager' && (
             <button
               onClick={() => navigate('/attendance/change-tracker')}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-600 rounded-lg hover:bg-slate-700 transition-colors"
+              className="btn-secondary"
             >
               <History size={16} />
               Alterations
@@ -1254,7 +1254,7 @@ export const RawPunchesPage: React.FC = () => {
           {userData?.designation !== 'Branch Manager' && (
             <button
               onClick={openAnalyzeModal}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+              className="btn-primary"
             >
               <Clock size={16} />
               Analyze
@@ -1264,9 +1264,9 @@ export const RawPunchesPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto py-6">
         {/* Search */}
-        <div className="mb-4 flex gap-3 flex-wrap items-end bg-white/80 backdrop-blur-sm shadow-lg rounded-xl p-4">
+        <div className="mb-4 card flex gap-3 flex-wrap items-end p-4">
           <div className="relative max-w-md flex-1 min-w-[200px]">
             <label className="block text-xs font-medium text-secondary-600 mb-1">Search</label>
             <div className="relative">
@@ -1276,7 +1276,7 @@ export const RawPunchesPage: React.FC = () => {
                 placeholder="Search by user ID, device, direction..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
           </div>
@@ -1287,7 +1287,7 @@ export const RawPunchesPage: React.FC = () => {
               value={fromDate}
               max={toDateFilter || undefined}
               onChange={(e) => { const v = e.target.value; setFromDate(v); if (v) setToDateFilter((t) => (t && t < v ? '' : t)); }}
-              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
           </div>
           <div className="w-40">
@@ -1297,7 +1297,7 @@ export const RawPunchesPage: React.FC = () => {
               value={toDateFilter}
               min={fromDate || undefined}
               onChange={(e) => setToDateFilter(e.target.value)}
-              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
           </div>
           <div className="w-48">
@@ -1306,7 +1306,7 @@ export const RawPunchesPage: React.FC = () => {
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}
               disabled={userData?.designation === 'Branch Manager'}
-              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+              className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
             >
               {userData?.designation === 'Branch Manager' ? (
                 <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
@@ -1329,14 +1329,14 @@ export const RawPunchesPage: React.FC = () => {
           </div>
         ) : filteredRecords.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-20 h-20 rounded-full bg-green-100 flex items-center justify-center mb-4">
-              <Calendar className="w-10 h-10 text-green-600" />
+            <div className="w-20 h-20 rounded-full bg-secondary-100 flex items-center justify-center mb-4">
+              <Calendar className="w-10 h-10 text-secondary-400" />
             </div>
             <h3 className="text-lg font-medium text-secondary-900 mb-2">No records found</h3>
             <p className="text-sm text-secondary-500">Try adjusting your search or refresh the page.</p>
           </div>
         ) : (
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg overflow-hidden">
+          <div className="card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -1351,15 +1351,16 @@ export const RawPunchesPage: React.FC = () => {
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Out</th>
                     <th className="text-left px-4 py-3 font-semibold text-secondary-700 whitespace-nowrap">Duration</th>
                     <th className="relative">
-                      <div 
+                      <button
+                        type="button"
                         className={`text-left px-4 py-3 font-semibold whitespace-nowrap cursor-pointer hover:bg-secondary-100 transition-colors ${columnFilter === 'late' ? 'text-red-600' : 'text-secondary-700'}`}
                         onClick={() => handleColumnFilter(columnFilter === 'late' ? null : 'late')}
                       >
-                        <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-2">
                           Late In
                           <Filter size={14} className={columnFilter === 'late' ? 'text-red-600' : 'text-secondary-400'} />
-                        </div>
-                      </div>
+                        </span>
+                      </button>
                       {showTooltip === 'late' && (
                         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 z-50">
                           <div className="relative bg-green-100/90 backdrop-blur-sm text-green-800 px-4 py-2 rounded-lg shadow-xl whitespace-nowrap animate-fade-in border border-green-200">
@@ -1370,15 +1371,16 @@ export const RawPunchesPage: React.FC = () => {
                       )}
                     </th>
                     <th className="relative">
-                      <div 
+                      <button
+                        type="button"
                         className={`text-left px-4 py-3 font-semibold whitespace-nowrap cursor-pointer hover:bg-secondary-100 transition-colors ${columnFilter === 'early' ? 'text-red-600' : 'text-secondary-700'}`}
                         onClick={() => handleColumnFilter(columnFilter === 'early' ? null : 'early')}
                       >
-                        <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-2">
                           Early Out
                           <Filter size={14} className={columnFilter === 'early' ? 'text-red-600' : 'text-secondary-400'} />
-                        </div>
-                      </div>
+                        </span>
+                      </button>
                       {showTooltip === 'early' && (
                         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 z-50">
                           <div className="relative bg-green-100/90 backdrop-blur-sm text-green-800 px-4 py-2 rounded-lg shadow-xl whitespace-nowrap animate-fade-in border border-green-200">
@@ -1471,7 +1473,7 @@ export const RawPunchesPage: React.FC = () => {
                   value={exportFromDate}
                   max={exportToDate || undefined}
                   onChange={(e) => { const v = e.target.value; setExportFromDate(v); if (v) setExportToDate((t) => (t && t < v ? '' : t)); }}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -1482,7 +1484,7 @@ export const RawPunchesPage: React.FC = () => {
                   min={exportFromDate || undefined}
                   disabled={!exportFromDate}
                   onChange={(e) => setExportToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
@@ -1496,7 +1498,7 @@ export const RawPunchesPage: React.FC = () => {
               <button
                 onClick={handleExportConfirm}
                 disabled={!exportFromDate || !exportToDate}
-                className="px-4 py-2 text-sm font-medium text-white bg-pink-600 rounded-lg hover:bg-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Export
               </button>
@@ -1522,7 +1524,7 @@ export const RawPunchesPage: React.FC = () => {
                 type="time"
                 value={addTimeValue}
                 onChange={(e) => setAddTimeValue(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
             <div className="flex items-center justify-end gap-2">
@@ -1535,7 +1537,7 @@ export const RawPunchesPage: React.FC = () => {
               <button
                 onClick={handleAddPunch}
                 disabled={!addTimeValue || isSavingEdit}
-                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isSavingEdit ? 'Adding...' : 'Add'}
               </button>
@@ -1561,7 +1563,7 @@ export const RawPunchesPage: React.FC = () => {
                 type="time"
                 value={editTimeValue}
                 onChange={(e) => setEditTimeValue(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
             <div className="mb-6">
@@ -1601,7 +1603,7 @@ export const RawPunchesPage: React.FC = () => {
               <button
                 onClick={handleSaveEdit}
                 disabled={!editTimeValue || isSavingEdit}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isSavingEdit ? 'Saving...' : 'Save'}
               </button>
@@ -1680,7 +1682,7 @@ export const RawPunchesPage: React.FC = () => {
                     setAnalyzeToDate(newTo);
                     runAnalysis(value, newTo);
                   }}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -1694,7 +1696,7 @@ export const RawPunchesPage: React.FC = () => {
                     setAnalyzeToDate(value);
                     runAnalysis(analyzeFromDate, value);
                   }}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -1702,7 +1704,7 @@ export const RawPunchesPage: React.FC = () => {
                 <select
                   value={analyzeLocationFilter}
                   onChange={(e) => setAnalyzeLocationFilter(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 >
                   <option value="">All Branches</option>
                   {branchesList.map((b) => (
@@ -1719,14 +1721,14 @@ export const RawPunchesPage: React.FC = () => {
                     value={analyzeSearchQuery}
                     onChange={(e) => setAnalyzeSearchQuery(e.target.value)}
                     placeholder="Employee ID, name, date or type"
-                    className="w-full pl-10 pr-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    className="w-full pl-10 pr-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   />
                 </div>
               </div>
               <button
                 onClick={handleFixAnomalies}
                 disabled={isFixing || filteredAnalyzeResults.length === 0}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isFixing ? 'Fixing...' : 'Fix'}
               </button>

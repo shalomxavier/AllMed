@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Building, X, Plus, Pencil, Trash2, Eye, User } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
-import { MultiSelectDropdown, RedSpinner } from '@/components/common';
+import { MultiSelectDropdown, RedSpinner, useToast } from '@/components/common';
 import {
   getFirestore,
   collection,
@@ -46,6 +46,7 @@ interface Shift {
 }
 
 export const BranchesPage: React.FC = () => {
+  const { showToast } = useToast();
   const { currentUser, userData } = useAuthContext();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,8 +257,10 @@ export const BranchesPage: React.FC = () => {
 
       closeModal();
       fetchBranches();
+      showToast('success', 'Branch saved successfully');
     } catch (e) {
       console.error('Error saving branch:', e);
+      showToast('error', 'Failed to save branch. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -276,27 +279,29 @@ export const BranchesPage: React.FC = () => {
       setDeleteModalOpen(false);
       setBranchToDelete(null);
       fetchBranches();
+      showToast('success', 'Branch deleted');
     } catch (e) {
       console.error('Error deleting branch:', e);
+      showToast('error', 'Failed to delete branch. Please try again.');
     }
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-secondary-900">Branches</h1>
         </div>
         <button
           onClick={openAddModal}
-          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors"
+          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
         >
           <Plus size={18} />
           Add Branch
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto py-6">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <RedSpinner />
@@ -345,7 +350,7 @@ export const BranchesPage: React.FC = () => {
                   </button>
                   <button
                     onClick={() => openEditModal(branch)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
                     aria-label="Edit"
                   >
                     <Pencil size={16} />
@@ -394,7 +399,7 @@ export const BranchesPage: React.FC = () => {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Enter branch name"
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -402,7 +407,7 @@ export const BranchesPage: React.FC = () => {
                 <select
                   value={managerId}
                   onChange={(e) => setManagerId(e.target.value)}
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent bg-white"
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
                 >
                   <option value="">Select a manager</option>
                   {managers.map((manager) => (
@@ -445,7 +450,7 @@ export const BranchesPage: React.FC = () => {
                 <button
                   onClick={handleSave}
                   disabled={saving || !name.trim()}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-700 transition-colors disabled:opacity-70"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
                 >
                   {saving ? 'Saving...' : editingBranch ? 'Update' : 'Save'}
                 </button>

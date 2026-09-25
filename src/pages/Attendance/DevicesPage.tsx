@@ -3,9 +3,10 @@ import { Search, RefreshCw, Plus, Fingerprint, X, Edit, Trash2, ArrowLeft } from
 import { useNavigate } from 'react-router-dom';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
-import { RedSpinner } from '@/components/common';
+import { RedSpinner, useToast } from '@/components/common';
 
 export const DevicesPage: React.FC = () => {
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const { currentUser } = useAuthContext();
   const [devices, setDevices] = useState<any[]>([]);
@@ -62,8 +63,10 @@ export const DevicesPage: React.FC = () => {
       setModalOpen(false);
       setEditingDevice(null);
       fetchDevices();
+      showToast('success', 'Device saved successfully');
     } catch (e) {
       console.error('Error saving device:', e);
+      showToast('error', 'Failed to save device. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -89,8 +92,10 @@ export const DevicesPage: React.FC = () => {
       setDeleteModalOpen(false);
       setDeviceToDelete(null);
       fetchDevices();
+      showToast('success', 'Device deleted');
     } catch (e) {
       console.error('Error deleting device:', e);
+      showToast('error', 'Failed to delete device. Please try again.');
     }
   };
 
@@ -106,7 +111,7 @@ export const DevicesPage: React.FC = () => {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4">
+      <div className="flex items-center justify-between py-4 flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/attendance')}
@@ -134,7 +139,7 @@ export const DevicesPage: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto py-6">
         {/* Search Bar */}
         <div className="mb-6 flex items-center justify-between gap-4">
           <div className="relative flex-1 max-w-2xl">
@@ -144,13 +149,13 @@ export const DevicesPage: React.FC = () => {
               placeholder="Search devices by name or ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={openAddModal}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
             >
               <Plus size={16} />
               Register Device
@@ -187,7 +192,7 @@ export const DevicesPage: React.FC = () => {
                 <div className="absolute top-4 right-4 flex gap-1">
                   <button
                     onClick={() => handleEditClick(device)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
                   >
                     <Edit size={16} />
                   </button>
@@ -242,7 +247,7 @@ export const DevicesPage: React.FC = () => {
                   value={deviceId}
                   onChange={(e) => setDeviceId(e.target.value)}
                   placeholder="Enter device ID"
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div>
@@ -252,7 +257,7 @@ export const DevicesPage: React.FC = () => {
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="Enter device location"
-                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
               <div className="flex gap-2 pt-2">
@@ -265,7 +270,7 @@ export const DevicesPage: React.FC = () => {
                 <button
                   onClick={handleRegisterDevice}
                   disabled={saving || !deviceId.trim() || !location.trim()}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-70"
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
                 >
                   {saving ? 'Saving...' : 'Register'}
                 </button>

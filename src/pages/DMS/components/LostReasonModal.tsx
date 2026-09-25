@@ -41,7 +41,7 @@ export const LostReasonModal: React.FC<LostReasonModalProps> = ({
               <select
                 value={lostReason}
                 onChange={(e) => onLostReasonChange(e.target.value as LostReason | '')}
-                className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               >
                 <option value="">Select a reason</option>
                 {LOST_REASONS.map((reason) => (
@@ -62,7 +62,7 @@ export const LostReasonModal: React.FC<LostReasonModalProps> = ({
                   onChange={(e) => onOtherReasonChange(e.target.value)}
                   placeholder="Please specify the reason..."
                   rows={3}
-                  className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                  className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
                 />
               </div>
             )}
@@ -76,7 +76,7 @@ export const LostReasonModal: React.FC<LostReasonModalProps> = ({
                 onChange={(e) => onInternalNotesChange(e.target.value)}
                 placeholder="Add any additional notes..."
                 rows={3}
-                className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                className="w-full px-3 py-2 border border-secondary-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
               />
             </div>
           </div>
