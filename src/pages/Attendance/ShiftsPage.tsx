@@ -8,7 +8,7 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
-import { leaveDotClass } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveTypeLegend, leaveDotClass } from '@/components/attendance/LeaveOptionMenu';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 import {
@@ -903,13 +903,13 @@ export const ShiftsPage: React.FC = () => {
                     <div className="grid grid-cols-2 gap-4">
                       <div className="border border-secondary-300 rounded-lg p-3">
                         <label className="block text-sm font-medium text-secondary-700 mb-2">From Date</label>
-                        <input type="date" value={assignForm.fromDate} onChange={(e) => setAssignForm({ ...assignForm, fromDate: e.target.value })}
+                        <input type="date" value={assignForm.fromDate} max={assignForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setAssignForm({ ...assignForm, fromDate: v, toDate: assignForm.toDate && assignForm.toDate < v ? '' : assignForm.toDate }); }}
                           className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
                       </div>
                       <div className="border border-secondary-300 rounded-lg p-3">
                         <label className="block text-sm font-medium text-secondary-700 mb-2">To Date</label>
-                        <input type="date" value={assignForm.toDate} onChange={(e) => setAssignForm({ ...assignForm, toDate: e.target.value })}
-                          className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                        <input type="date" value={assignForm.toDate} min={assignForm.fromDate || undefined} disabled={!assignForm.fromDate} onChange={(e) => setAssignForm({ ...assignForm, toDate: e.target.value })}
+                          className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
                       </div>
                     </div>
                   )}
@@ -1636,7 +1636,6 @@ export const ShiftsPage: React.FC = () => {
               <div className="flex items-center justify-between p-4 border-b border-secondary-200">
                 <div>
                   <h2 className="text-base font-semibold text-secondary-900">Assign Leaves / Week-offs</h2>
-                  <p className="text-xs text-secondary-500 mt-0.5">Employee {wizardEmpIndex + 1} of {wizardEmployees.length}</p>
                 </div>
                 <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
               </div>
@@ -1788,9 +1787,13 @@ export const ShiftsPage: React.FC = () => {
                     </div>
                   </div>
                 )}
-                {selectedDates.length > 0 && (
-                  <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
-                )}
+                <div className="mt-3">
+                  <LeaveTypeLegend reasons={empLeaves.map((l) => l.type)}>
+                    {(shiftChangedDates[emp.employeeCode] ?? []).length > 0 && (
+                      <span className="flex items-center gap-1 text-xs text-secondary-600"><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />Shift Changed</span>
+                    )}
+                  </LeaveTypeLegend>
+                </div>
                 {wizardLeaveLimitErrors.length > 0 && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>

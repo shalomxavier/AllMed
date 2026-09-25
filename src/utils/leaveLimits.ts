@@ -391,18 +391,18 @@ export const formatLeaveCount = (value?: number): string => {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 };
 
-export const formatLeaveLimitFailures = (failures: LeaveLimitFailure[]): string[] =>
+export const formatLeaveLimitFailures = (failures: LeaveLimitFailure[], includeEmployee = true): string[] =>
   failures.map((failure) => {
-    const employee = `${failure.employeeName || 'Employee'} (${failure.employeeCode})`;
+    const prefix = includeEmployee ? `${failure.employeeName || 'Employee'} (${failure.employeeCode}):` : '';
     if (failure.kind === 'overlapping_limits') {
       const periods = (failure.limitPeriods ?? [])
         .map((period) => `${period.fromDate ?? '—'} → ${period.toDate ?? '—'}`)
         .join(', ');
-      return `${employee}: overlapping limit periods cover ${failure.dates.join(', ')} (${periods}). Resolve the overlapping configuration before assigning.`;
+      return `${prefix ? `${prefix} ` : ''}overlapping limit periods cover ${failure.dates.join(', ')} (${periods}). Resolve the overlapping configuration before assigning.`;
     }
 
     const available = failure.limit !== undefined && failure.currentUsage !== undefined
       ? Math.max(0, failure.limit - failure.currentUsage)
       : undefined;
-    return `${employee}:\nOnly ${formatLeaveCount(available)} out of ${formatLeaveCount(failure.limit)} ${failure.leaveType} Available`;
+    return `${prefix}\nOnly ${formatLeaveCount(available)} out of ${formatLeaveCount(failure.limit)} ${failure.leaveType} Available`;
   });

@@ -24,6 +24,19 @@ export const leaveDotClass = (reason: string | undefined, halfDay = false): stri
   return halfDay ? 'bg-purple-600/50' : 'bg-purple-600';
 };
 
+export const LeaveTypeLegend: React.FC<{ reasons: (string | undefined)[]; children?: React.ReactNode }> = ({ reasons, children }) => {
+  const unique = Array.from(new Set(reasons.filter((r): r is string => Boolean(r))));
+  if (unique.length === 0 && !children) return null;
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1">
+      {unique.map((reason) => (
+        <span key={reason} className="flex items-center gap-1 text-xs text-secondary-600"><span className={`w-2.5 h-2.5 rounded-full ${leaveDotClass(reason)}`} />{reason}</span>
+      ))}
+      {children}
+    </div>
+  );
+};
+
 interface LeaveOptionMenuProps {
   onSelect: (selection: LeaveSelection) => void;
   current?: LeaveSelection | null;

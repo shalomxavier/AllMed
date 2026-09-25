@@ -1285,7 +1285,8 @@ export const RawPunchesPage: React.FC = () => {
             <input
               type="date"
               value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
+              max={toDateFilter || undefined}
+              onChange={(e) => { const v = e.target.value; setFromDate(v); if (v) setToDateFilter((t) => (t && t < v ? '' : t)); }}
               className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -1294,6 +1295,7 @@ export const RawPunchesPage: React.FC = () => {
             <input
               type="date"
               value={toDateFilter}
+              min={fromDate || undefined}
               onChange={(e) => setToDateFilter(e.target.value)}
               className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
@@ -1467,7 +1469,8 @@ export const RawPunchesPage: React.FC = () => {
                 <input
                   type="date"
                   value={exportFromDate}
-                  onChange={(e) => setExportFromDate(e.target.value)}
+                  max={exportToDate || undefined}
+                  onChange={(e) => { const v = e.target.value; setExportFromDate(v); if (v) setExportToDate((t) => (t && t < v ? '' : t)); }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
@@ -1476,8 +1479,10 @@ export const RawPunchesPage: React.FC = () => {
                 <input
                   type="date"
                   value={exportToDate}
+                  min={exportFromDate || undefined}
+                  disabled={!exportFromDate}
                   onChange={(e) => setExportToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
@@ -1667,10 +1672,13 @@ export const RawPunchesPage: React.FC = () => {
                 <input
                   type="date"
                   value={analyzeFromDate}
+                  max={analyzeToDate || undefined}
                   onChange={(e) => {
                     const value = e.target.value;
+                    const newTo = analyzeToDate && analyzeToDate < value ? '' : analyzeToDate;
                     setAnalyzeFromDate(value);
-                    runAnalysis(value, analyzeToDate);
+                    setAnalyzeToDate(newTo);
+                    runAnalysis(value, newTo);
                   }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
@@ -1680,6 +1688,7 @@ export const RawPunchesPage: React.FC = () => {
                 <input
                   type="date"
                   value={analyzeToDate}
+                  min={analyzeFromDate || undefined}
                   onChange={(e) => {
                     const value = e.target.value;
                     setAnalyzeToDate(value);

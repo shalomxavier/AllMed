@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Search, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Search, Users, Clock, Plus, Edit, Eye, X, CalendarDays, LogIn, LogOut, ChevronLeft, ChevronRight, Umbrella, Trash2, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, serverTimestamp, doc } from 'firebase/firestore';
 
@@ -9,7 +9,7 @@ import { RedSpinner } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
 import { assignmentContainsDate, type ResolvedShiftAssignment } from '@/utils/shiftAssignments';
-import { LeaveOptionMenu, leaveDotClass, leavePeriodLabel, type HalfDayPeriod, type LeaveDuration, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveOptionMenu, LeaveTypeLegend, leaveDotClass, leavePeriodLabel, type HalfDayPeriod, type LeaveDuration, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import {
   formatLeaveLimitFailures,
@@ -107,6 +107,7 @@ export const EmployeesPage: React.FC = () => {
   const [selectedShift, setSelectedShift] = useState<any>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [shiftToDelete, setShiftToDelete] = useState<any>(null);
+  const [isDeletingShift, setIsDeletingShift] = useState(false);
   const [askLeavesDialog, setAskLeavesDialog] = useState(false);
   const [leaveWizardOpen, setLeaveWizardOpen] = useState(false);
   const [wizardEmployee, setWizardEmployee] = useState<{ employeeCode: string; employeeName: string; fromDate: string; toDate: string } | null>(null);
@@ -389,6 +390,8 @@ export const EmployeesPage: React.FC = () => {
   const handleShiftsClick = (employee: Employee) => {
     setSelectedEmployee(employee);
     setShiftModalOpen(true);
+    setShowViewShifts(true);
+    fetchShiftsForEmployee(employee);
   };
 
   const proposalsFromDateMap = (
@@ -444,7 +447,7 @@ export const EmployeesPage: React.FC = () => {
 
   const validateLeaveFormSelection = (dateMap: Record<string, LeaveSelection>): boolean => {
     const failures = validateLeaveAssignments(getLeaveFormProposals(dateMap), allLeaveRecords, leaveLimits);
-    const messages = formatLeaveLimitFailures(failures);
+    const messages = formatLeaveLimitFailures(failures, false);
     setLeaveFormLimitErrors(messages);
     setLeaveFormLimitDialogOpen(messages.length > 0);
     return failures.length === 0;
@@ -452,7 +455,7 @@ export const EmployeesPage: React.FC = () => {
 
   const validateWizardLeaveSelection = (entries = wizardEmpLeaves): boolean => {
     const failures = validateLeaveAssignments(getWizardLeaveProposals(entries), allLeaveRecords, leaveLimits);
-    setWizardLeaveLimitErrors(formatLeaveLimitFailures(failures));
+    setWizardLeaveLimitErrors(formatLeaveLimitFailures(failures, false));
     return failures.length === 0;
   };
 
@@ -553,6 +556,7 @@ export const EmployeesPage: React.FC = () => {
       }],
       setLeaveFormLimitErrors,
       leave.id,
+      false,
     );
     if (!isValid) {
       setLeaveFormLimitDialogOpen(true);
@@ -585,10 +589,11 @@ export const EmployeesPage: React.FC = () => {
     proposals: ProposedLeaveAssignment[],
     setErrors: React.Dispatch<React.SetStateAction<string[]>>,
     excludeLeaveId?: string,
+    includeEmployee = true,
   ): Promise<boolean> => {
     const { latestLeaves, latestLimits } = await fetchLeaveValidationData();
     const failures = validateLeaveAssignments(proposals, latestLeaves, latestLimits, excludeLeaveId);
-    setErrors(formatLeaveLimitFailures(failures));
+    setErrors(formatLeaveLimitFailures(failures, includeEmployee));
     return failures.length === 0;
   };
 
@@ -816,7 +821,7 @@ export const EmployeesPage: React.FC = () => {
     if (!leaveEmployee || dateEntries.length === 0) return;
     setIsSavingLeave(true);
     try {
-      const isValid = await validateFreshLeaveProposals(getLeaveFormProposals(leaveDateMap), setLeaveFormLimitErrors);
+      const isValid = await validateFreshLeaveProposals(getLeaveFormProposals(leaveDateMap), setLeaveFormLimitErrors, undefined, false);
       if (!isValid) {
         setLeaveFormLimitDialogOpen(true);
         return;
@@ -1112,21 +1117,9 @@ export const EmployeesPage: React.FC = () => {
     });
   };
 
-  const handleShiftAction = async (action: 'view' | 'add' | 'edit') => {
-    if (action === 'add') {
-      setShowAddShiftForm(true);
-      fetchShiftTemplates();
-    } else if (action === 'view') {
-      setShowViewShifts(true);
-      await fetchShiftsForEmployee();
-    } else if (action === 'edit') {
-      setShowViewShifts(true);
-      await fetchShiftsForEmployee();
-    }
-  };
-
-  const fetchShiftsForEmployee = async () => {
-    if (!selectedEmployee) return;
+  const fetchShiftsForEmployee = async (employee?: Employee) => {
+    const emp = employee ?? selectedEmployee;
+    if (!emp) return;
     setShiftsLoading(true);
     try {
       const db = getFirestore();
@@ -1150,7 +1143,7 @@ export const EmployeesPage: React.FC = () => {
 
       const snapshot = await getDocs(collection(db, 'shifts'));
       const shifts: any[] = [];
-      const empCode = (selectedEmployee.employeeCode ?? '').trim().toLowerCase();
+      const empCode = (emp.employeeCode ?? '').trim().toLowerCase();
       snapshot.forEach((doc) => {
         // Filter by branch if allowedShiftIds is set
         if (allowedShiftIds && !allowedShiftIds.includes(doc.id)) {
@@ -1166,8 +1159,8 @@ export const EmployeesPage: React.FC = () => {
             slotId: doc.id,
             assignmentId: entry.assignmentId || `${doc.id}:legacy:${legacyIndex}`,
             legacyIndex,
-            employeeCode: entry.employeeCode ?? selectedEmployee.employeeCode ?? '',
-            employeeName: entry.employeeName ?? selectedEmployee.employeeName ?? '',
+            employeeCode: entry.employeeCode ?? emp.employeeCode ?? '',
+            employeeName: entry.employeeName ?? emp.employeeName ?? '',
             startTime: data.startTime,
             endTime: data.endTime,
             fromDate: entry.fromDate ?? '',
@@ -1190,16 +1183,18 @@ export const EmployeesPage: React.FC = () => {
   };
 
   const confirmDeleteShift = async () => {
-    if (!selectedEmployee || !shiftToDelete) return;
-    setShowDeleteConfirm(false);
+    if (!selectedEmployee || !shiftToDelete || isDeletingShift) return;
+    setIsDeletingShift(true);
     try {
       await shiftAssignmentsService.removeAssignment(shiftToDelete as ResolvedShiftAssignment);
+      setShowDeleteConfirm(false);
       setShiftToDelete(null);
       setSuccessMessage('Shift Deleted Successfully');
       setShowSuccessDialog(true);
     } catch (error) {
       console.error('Error deleting shift:', error);
-      setShiftToDelete(null);
+    } finally {
+      setIsDeletingShift(false);
     }
   };
 
@@ -1990,11 +1985,11 @@ export const EmployeesPage: React.FC = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">From Date</label>
-                      <input type="date" value={shiftForm.fromDate} onChange={(e) => setShiftForm({ ...shiftForm, fromDate: e.target.value })} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                      <input type="date" value={shiftForm.fromDate} max={shiftForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setShiftForm({ ...shiftForm, fromDate: v, toDate: shiftForm.toDate && shiftForm.toDate < v ? '' : shiftForm.toDate }); }} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
                     </div>
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">To Date</label>
-                      <input type="date" value={shiftForm.toDate} onChange={(e) => setShiftForm({ ...shiftForm, toDate: e.target.value })} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                      <input type="date" value={shiftForm.toDate} min={shiftForm.fromDate || undefined} disabled={!shiftForm.fromDate} onChange={(e) => setShiftForm({ ...shiftForm, toDate: e.target.value })} className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
                     </div>
                   </div>
 
@@ -2020,12 +2015,14 @@ export const EmployeesPage: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-secondary-700">Shift Records</h3>
+                    {userData?.designation !== 'Branch Manager' && (
                     <button
-                      onClick={() => setShowViewShifts(false)}
-                      className="text-sm text-secondary-500 hover:text-secondary-700"
+                      onClick={() => { setShowAddShiftForm(true); fetchShiftTemplates(); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                     >
-                      Back
+                      <Plus size={16} /> Add Shift
                     </button>
+                    )}
                   </div>
                   {shiftsLoading ? (
                     <div className="text-center py-8">
@@ -2092,7 +2089,8 @@ export const EmployeesPage: React.FC = () => {
                       <input
                         type="date"
                         value={editShiftForm.fromDate}
-                        onChange={(e) => setEditShiftForm({ ...editShiftForm, fromDate: e.target.value })}
+                        max={editShiftForm.toDate || undefined}
+                        onChange={(e) => { const v = e.target.value; setEditShiftForm({ ...editShiftForm, fromDate: v, toDate: editShiftForm.toDate && editShiftForm.toDate < v ? '' : editShiftForm.toDate }); }}
                         className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         required
                       />
@@ -2102,8 +2100,10 @@ export const EmployeesPage: React.FC = () => {
                       <input
                         type="date"
                         value={editShiftForm.toDate}
+                        min={editShiftForm.fromDate || undefined}
+                        disabled={!editShiftForm.fromDate}
                         onChange={(e) => setEditShiftForm({ ...editShiftForm, toDate: e.target.value })}
-                        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
                         required
                       />
                     </div>
@@ -2205,50 +2205,7 @@ export const EmployeesPage: React.FC = () => {
                     </button>
                   </div>
                 </form>
-              ) : (
-                <div className="space-y-2">
-                <button
-                  onClick={() => handleShiftAction('view')}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg border border-secondary-200 hover:bg-secondary-50 transition-colors"
-                >
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Eye size={20} className="text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-secondary-900">View Shifts</p>
-                    <p className="text-sm text-secondary-500">View existing shift records</p>
-                  </div>
-                </button>
-                {userData?.designation !== 'Branch Manager' && (
-                <button
-                  onClick={() => handleShiftAction('add')}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg border border-secondary-200 hover:bg-secondary-50 transition-colors"
-                >
-                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-                    <Plus size={20} className="text-green-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-secondary-900">Add Shift</p>
-                    <p className="text-sm text-secondary-500">Create a new shift assignment</p>
-                  </div>
-                </button>
-                )}
-                {userData?.designation !== 'Branch Manager' && (
-                <button
-                  onClick={() => handleShiftAction('edit')}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg border border-secondary-200 hover:bg-secondary-50 transition-colors"
-                >
-                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
-                    <Edit size={20} className="text-orange-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-secondary-900">Edit Shift</p>
-                    <p className="text-sm text-secondary-500">Modify existing shift details</p>
-                  </div>
-                </button>
-                )}
-              </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -2356,6 +2313,9 @@ export const EmployeesPage: React.FC = () => {
                     </div>
                   );
                 })()}
+                <div className="mt-2">
+                  <LeaveTypeLegend reasons={Object.values(bulkLeaveDateMap).map((s) => s.reason)} />
+                </div>
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -2374,24 +2334,20 @@ export const EmployeesPage: React.FC = () => {
       {bulkLeaveModalOpen && bulkLeaveLimitDialogOpen && bulkLeaveLimitErrors.length > 0 && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={() => setBulkLeaveLimitDialogOpen(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-200">
-              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center">
-                <AlertTriangle size={18} className="text-red-600" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-secondary-900">Leave limit check failed</h2>
-              </div>
-            </div>
             <div className="p-4">
-              <ul className="list-disc pl-5 space-y-1.5 text-sm text-secondary-800">
-                {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
-              </ul>
+              <div className="flex flex-col items-center text-center">
+                <AlertCircle size={40} className="text-amber-500" />
+                <h2 className="mt-3 text-base font-semibold text-secondary-900">Leave limit check failed</h2>
+                <ul className="mt-2 space-y-1 text-sm text-secondary-600">
+                  {bulkLeaveLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message.trim()}</li>)}
+                </ul>
+              </div>
               <button
                 type="button"
                 onClick={() => setBulkLeaveLimitDialogOpen(false)}
                 className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
               >
-                Review Selection
+                OK
               </button>
             </div>
           </div>
@@ -2465,13 +2421,13 @@ export const EmployeesPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="border border-secondary-300 rounded-lg p-3">
                   <label className="block text-sm font-medium text-secondary-700 mb-2">From Date</label>
-                  <input type="date" value={bulkShiftForm.fromDate} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, fromDate: e.target.value })}
+                  <input type="date" value={bulkShiftForm.fromDate} max={bulkShiftForm.toDate || undefined} onChange={(e) => { const v = e.target.value; setBulkShiftForm({ ...bulkShiftForm, fromDate: v, toDate: bulkShiftForm.toDate && bulkShiftForm.toDate < v ? '' : bulkShiftForm.toDate }); }}
                     className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
                 </div>
                 <div className="border border-secondary-300 rounded-lg p-3">
                   <label className="block text-sm font-medium text-secondary-700 mb-2">To Date</label>
-                  <input type="date" value={bulkShiftForm.toDate} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, toDate: e.target.value })}
-                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" required />
+                  <input type="date" value={bulkShiftForm.toDate} min={bulkShiftForm.fromDate || undefined} disabled={!bulkShiftForm.fromDate} onChange={(e) => setBulkShiftForm({ ...bulkShiftForm, toDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-secondary-100 disabled:cursor-not-allowed" required />
                 </div>
               </div>
 
@@ -2808,10 +2764,6 @@ export const EmployeesPage: React.FC = () => {
                   </div>
                 );
 
-                const legendReasons = Array.from(new Set(
-                  Object.values(savedLeaveByDate).map((leave: any) => leave.reason).filter(Boolean)
-                )) as string[];
-
                 return (
                   <>
                     {leavesLoading ? (
@@ -2825,26 +2777,19 @@ export const EmployeesPage: React.FC = () => {
                             Week off: {weekOffDays.join(', ')}{existingWeekOff ? ' (saved)' : ''}
                           </p>
                         )}
-                        {canManageLeaves && (
-                          <p className="text-xs text-secondary-500">Click a date to assign, change, or remove leave.</p>
-                        )}
-
                         {renderLeaveCalendar(canManageLeaves)}
 
-                        {(legendReasons.length > 0 || weekOffDays.length > 0) && (
-                          <div className="flex flex-wrap gap-x-3 gap-y-1">
-                            {legendReasons.map((reason) => (
-                              <span key={reason} className="flex items-center gap-1 text-xs text-secondary-600"><span className={`w-2.5 h-2.5 rounded-full ${leaveDotClass(reason)}`} />{reason}</span>
-                            ))}
-                            {weekOffDays.length > 0 && (
-                              <span className="flex items-center gap-1 text-xs text-secondary-600"><span className="w-2.5 h-2.5 rounded-full bg-green-100 ring-1 ring-green-300" />Week off</span>
-                            )}
-                          </div>
-                        )}
+                        <LeaveTypeLegend reasons={[
+                          ...Object.values(savedLeaveByDate).map((leave: any) => leave.reason),
+                          ...Object.values(leaveDateMap).map((s) => s.reason),
+                        ]}>
+                          {weekOffDays.length > 0 && (
+                            <span className="flex items-center gap-1 text-xs text-secondary-600"><span className="w-2.5 h-2.5 rounded-full bg-green-100 ring-1 ring-green-300" />Week off</span>
+                          )}
+                        </LeaveTypeLegend>
 
                         {canManageLeaves && Object.keys(leaveDateMap).length > 0 && (
                           <>
-                            <p className="text-xs text-purple-700 font-medium">{Object.keys(leaveDateMap).length} date{Object.keys(leaveDateMap).length > 1 ? 's' : ''} selected</p>
                             <div className="flex gap-2">
                               <button
                                 type="button"
@@ -2876,24 +2821,20 @@ export const EmployeesPage: React.FC = () => {
       {leaveModalOpen && leaveFormLimitDialogOpen && leaveFormLimitErrors.length > 0 && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4" onClick={() => setLeaveFormLimitDialogOpen(false)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-secondary-200">
-              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center">
-                <AlertTriangle size={18} className="text-red-600" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-secondary-900">Leave limit check failed</h2>
-              </div>
-            </div>
             <div className="p-4">
-              <ul className="list-disc pl-5 space-y-1.5 text-sm text-secondary-800">
-                {leaveFormLimitErrors.map((message) => <li key={message} className="whitespace-pre-line"><LeaveLimitFailureMessage message={message} /></li>)}
-              </ul>
+              <div className="flex flex-col items-center text-center">
+                <AlertCircle size={40} className="text-amber-500" />
+                <h2 className="mt-3 text-base font-semibold text-secondary-900">Leave limit check failed</h2>
+                <ul className="mt-2 space-y-1 text-sm text-secondary-600">
+                  {leaveFormLimitErrors.map((message) => <li key={message} className="whitespace-pre-line">{message.trim()}</li>)}
+                </ul>
+              </div>
               <button
                 type="button"
                 onClick={() => setLeaveFormLimitDialogOpen(false)}
                 className="mt-4 w-full py-2.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors"
               >
-                Review Selection
+                OK
               </button>
             </div>
           </div>
@@ -2969,9 +2910,17 @@ export const EmployeesPage: React.FC = () => {
               </button>
               <button
                 onClick={confirmDeleteShift}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+                disabled={isDeletingShift}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Delete
+                {isDeletingShift ? (
+                  <>
+                    <RedSpinner size="sm" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
               </button>
             </div>
           </div>
@@ -3117,7 +3066,7 @@ export const EmployeesPage: React.FC = () => {
                     onClick={async () => {
                       setIsSavingLeaves(true);
                       try {
-                        const isValid = await validateFreshLeaveProposals(getWizardLeaveProposals(), setWizardLeaveLimitErrors);
+                        const isValid = await validateFreshLeaveProposals(getWizardLeaveProposals(), setWizardLeaveLimitErrors, undefined, false);
                         if (!isValid) return;
 
                         const leaves = wizardEmpLeaves;
@@ -3171,7 +3120,6 @@ export const EmployeesPage: React.FC = () => {
               <div className="flex items-center justify-between p-4 border-b border-secondary-200">
                 <div>
                   <h2 className="text-base font-semibold text-secondary-900">Assign Leaves / Week-offs</h2>
-                  <p className="text-xs text-secondary-500 mt-0.5">Employee 1 of 1</p>
                 </div>
                 <button onClick={() => setLeaveWizardOpen(false)} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
               </div>
@@ -3320,9 +3268,13 @@ export const EmployeesPage: React.FC = () => {
                     </div>
                   </div>
                 )}
-                {selectedDates.length > 0 && (
-                  <p className="text-xs text-purple-600 font-medium mt-3">{selectedDates.length} date{selectedDates.length > 1 ? 's' : ''} selected</p>
-                )}
+                <div className="mt-3">
+                  <LeaveTypeLegend reasons={wizardEmpLeaves.map((l) => l.type)}>
+                    {shiftChangedDates.length > 0 && (
+                      <span className="flex items-center gap-1 text-xs text-secondary-600"><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />Shift Changed</span>
+                    )}
+                  </LeaveTypeLegend>
+                </div>
                 {wizardLeaveLimitErrors.length > 0 && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
                     <p className="text-sm font-medium text-red-700 mb-1">Leave limit check failed</p>

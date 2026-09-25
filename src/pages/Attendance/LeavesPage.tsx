@@ -11,7 +11,7 @@ import {
   resolveShiftAssignment,
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
-import { LeaveOptionMenu, leaveDotClass, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
+import { LeaveOptionMenu, LeaveTypeLegend, leaveDotClass, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import {
   formatLeaveLimitFailures,
@@ -371,7 +371,7 @@ export const LeavesPage: React.FC = () => {
         editingLeave.id,
       );
       if (failures.length > 0) {
-        setEditLeaveLimitErrors(formatLeaveLimitFailures(failures));
+        setEditLeaveLimitErrors(formatLeaveLimitFailures(failures, false));
         return;
       }
 
@@ -763,13 +763,13 @@ export const LeavesPage: React.FC = () => {
 
     const dates = data.dates ?? [];
     if (dates.length > 0) {
-      return dates.some((d: string) => d >= fromDateFilter && d <= toDateFilter);
+      return dates.some((d: string) => (!fromDateFilter || d >= fromDateFilter) && (!toDateFilter || d <= toDateFilter));
     }
 
     const from = data.fromDate;
     const to = data.toDate || from;
     if (from && to) {
-      return from <= toDateFilter && to >= fromDateFilter;
+      return (!toDateFilter || from <= toDateFilter) && (!fromDateFilter || to >= fromDateFilter);
     }
 
     return true;
@@ -872,6 +872,7 @@ export const LeavesPage: React.FC = () => {
   const handleFromDateChange = (value: string) => {
     setFromDateFilter(value);
     if (!value) return;
+    setToDateFilter((t) => (t && t < value ? '' : t));
     const [year, month] = value.split('-').map(Number);
     setCalendarYear(year);
     setCalendarMonth(month - 1);
@@ -927,6 +928,7 @@ export const LeavesPage: React.FC = () => {
             <input
               type="date"
               value={fromDateFilter}
+              max={toDateFilter || undefined}
               onChange={(e) => handleFromDateChange(e.target.value)}
               className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
             />
@@ -934,6 +936,7 @@ export const LeavesPage: React.FC = () => {
             <input
               type="date"
               value={toDateFilter}
+              min={fromDateFilter || undefined}
               onChange={(e) => setToDateFilter(e.target.value)}
               className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-purple-300"
             />
@@ -1439,6 +1442,9 @@ export const LeavesPage: React.FC = () => {
                     </div>
                   );
                 })()}
+                <div className="mt-2">
+                  <LeaveTypeLegend reasons={Object.values(bulkLeaveDateMap).map((s) => s.reason)} />
+                </div>
               </div>
 
               <div className="flex gap-3 pt-2">

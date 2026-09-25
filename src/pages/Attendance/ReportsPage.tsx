@@ -184,7 +184,8 @@ export const ReportsPage: React.FC = () => {
                   id="monthlyFromDate"
                   type="date"
                   value={monthlyFromDate}
-                  onChange={(e) => setMonthlyFromDate(e.target.value)}
+                  max={monthlyToDate || undefined}
+                  onChange={(e) => { const v = e.target.value; setMonthlyFromDate(v); if (v) setMonthlyToDate((t) => (t && t < v ? '' : t)); }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
@@ -194,8 +195,10 @@ export const ReportsPage: React.FC = () => {
                   id="monthlyToDate"
                   type="date"
                   value={monthlyToDate}
+                  min={monthlyFromDate || undefined}
+                  disabled={!monthlyFromDate}
                   onChange={(e) => setMonthlyToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
@@ -251,7 +254,8 @@ export const ReportsPage: React.FC = () => {
                   id="dailyFromDate"
                   type="date"
                   value={dailyFromDate}
-                  onChange={(e) => setDailyFromDate(e.target.value)}
+                  max={dailyToDate || undefined}
+                  onChange={(e) => { const v = e.target.value; setDailyFromDate(v); if (v) setDailyToDate((t) => (t && t < v ? '' : t)); }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
@@ -261,8 +265,10 @@ export const ReportsPage: React.FC = () => {
                   id="dailyToDate"
                   type="date"
                   value={dailyToDate}
+                  min={dailyFromDate || undefined}
+                  disabled={!dailyFromDate}
                   onChange={(e) => setDailyToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
@@ -318,7 +324,8 @@ export const ReportsPage: React.FC = () => {
                   id="shiftFromDate"
                   type="date"
                   value={shiftFromDate}
-                  onChange={(e) => setShiftFromDate(e.target.value)}
+                  max={shiftToDate || undefined}
+                  onChange={(e) => { const v = e.target.value; setShiftFromDate(v); if (v) setShiftToDate((t) => (t && t < v ? '' : t)); }}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
@@ -328,8 +335,10 @@ export const ReportsPage: React.FC = () => {
                   id="shiftToDate"
                   type="date"
                   value={shiftToDate}
+                  min={shiftFromDate || undefined}
+                  disabled={!shiftFromDate}
                   onChange={(e) => setShiftToDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 />
               </div>
               <div>

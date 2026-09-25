@@ -225,7 +225,8 @@ export const ChangeTrackerPage: React.FC = () => {
           <input
             type="date"
             value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
+            max={toDateFilter || undefined}
+            onChange={(e) => { const v = e.target.value; setFromDate(v); if (v) setToDateFilter((t) => (t && t < v ? '' : t)); }}
             className="px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
         </div>
@@ -234,6 +235,7 @@ export const ChangeTrackerPage: React.FC = () => {
           <input
             type="date"
             value={toDateFilter}
+            min={fromDate || undefined}
             onChange={(e) => setToDateFilter(e.target.value)}
             className="px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
           />
