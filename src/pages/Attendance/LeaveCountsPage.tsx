@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Calendar, User, Pencil, Eye, X, Trash2, Search, Plus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Calendar, User, Pencil, X, Trash2, Search, Plus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { addDays, intervalToDuration, parseISO } from 'date-fns';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -71,7 +71,6 @@ export const LeaveCountsPage: React.FC = () => {
   const [editingLimit, setEditingLimit] = useState<LeaveLimit | null>(null);
   const [managingEmployee, setManagingEmployee] = useState<Employee | null>(null);
   const [returnToManage, setReturnToManage] = useState(false);
-  const [viewingEmployee, setViewingEmployee] = useState<Employee | null>(null);
   const [limitForm, setLimitForm] = useState<{
     fromDate: string;
     toDate: string;
@@ -81,7 +80,6 @@ export const LeaveCountsPage: React.FC = () => {
   const [manageLimitError, setManageLimitError] = useState('');
   const [limitOverlapWarning, setLimitOverlapWarning] = useState('');
   const [expandedLimitId, setExpandedLimitId] = useState<string | null>(null);
-  const [expandedViewLimitId, setExpandedViewLimitId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
@@ -159,11 +157,6 @@ export const LeaveCountsPage: React.FC = () => {
     setLimitFormError('');
     setLimitOverlapWarning('');
     if (fromManage) setManagingEmployee(null);
-  };
-
-  const openViewLimits = (employee: Employee) => {
-    setViewingEmployee(employee);
-    setExpandedViewLimitId(null);
   };
 
   const openManageLimits = (employee: Employee) => {
@@ -383,16 +376,20 @@ export const LeaveCountsPage: React.FC = () => {
           employeeStats.map((emp) => (
             <div
               key={emp.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => openViewLimits(emp)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openViewLimits(emp);
-                }
-              }}
-              className="card p-4 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow"
+              className={`card p-4 flex items-center gap-3 hover:shadow-md transition-shadow${canManageLimits ? ' cursor-pointer' : ''}`}
+              {...(canManageLimits
+                ? {
+                    role: 'button',
+                    tabIndex: 0,
+                    onClick: () => openManageLimits(emp),
+                    onKeyDown: (e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openManageLimits(emp);
+                      }
+                    },
+                  }
+                : {})}
             >
               <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
                 <User className="w-5 h-5 text-purple-600" />
@@ -420,13 +417,6 @@ export const LeaveCountsPage: React.FC = () => {
                     </button>
                   </>
                 )}
-                <button
-                  onClick={(e) => { e.stopPropagation(); openViewLimits(emp); }}
-                  className="p-1.5 rounded-lg text-secondary-500 hover:text-teal-600 hover:bg-teal-50 transition-colors"
-                  aria-label="View limits"
-                >
-                  <Eye size={16} />
-                </button>
               </div>
             </div>
           ))
@@ -634,95 +624,6 @@ export const LeaveCountsPage: React.FC = () => {
                 <button type="button" onClick={() => openAddLimit(managingEmployee, true)} className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700">
                   <Plus size={16} /> Add another limit period
                 </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* View Limits Modal */}
-      {viewingEmployee && (() => {
-        const employeeLimits = getEmployeeLimits(viewingEmployee);
-        return (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setViewingEmployee(null)}>
-            <div className="bg-white rounded-xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-4 py-3 border-b border-secondary-200">
-                <div>
-                  <h2 className="text-base font-semibold text-secondary-900">Configured Limits</h2>
-                  <p className="text-xs text-secondary-500">{viewingEmployee.employeeName} · {viewingEmployee.employeeCode}</p>
-                </div>
-                <button onClick={() => setViewingEmployee(null)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-                  <X size={18} className="text-secondary-500" />
-                </button>
-              </div>
-              <div className="p-4 overflow-y-auto space-y-3">
-                {employeeLimits.length === 0 ? (
-                  <div className="text-center py-8">
-                    <p className="text-sm font-medium text-secondary-700">No limits configured</p>
-                    <p className="text-xs text-secondary-500 mt-1">No leave/week-off limit period has been assigned.</p>
-                  </div>
-                ) : employeeLimits.map((limit) => {
-                  const isExpanded = expandedViewLimitId === limit.id;
-                  const usage = limit.fromDate && limit.toDate
-                    ? getLeaveUsageByType(viewingEmployee.employeeCode || '', limit.fromDate, limit.toDate, leaves)
-                    : {};
-                  const totalAssigned = Object.values(limit.limits || {}).reduce((total, value) => total + (value || 0), 0);
-                  const totalUsed = Object.entries(limit.limits || {}).reduce((total, [type]) => total + (usage[type] || 0), 0);
-                  const totalRemaining = totalAssigned - totalUsed;
-                  return (
-                    <div key={limit.id} className="rounded-xl border border-secondary-200 overflow-hidden">
-                      <div className="flex items-center justify-between px-3 py-2.5 bg-secondary-50 border-b border-secondary-100">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="flex flex-col items-start gap-0.5">
-                            <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 whitespace-nowrap">{formatDateRange(limit.fromDate, limit.toDate)}</span>
-                            <span className="ml-3 text-sm font-semibold text-secondary-700 whitespace-nowrap">{formatPeriodDuration(limit.fromDate, limit.toDate)}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-sm font-medium text-secondary-600 whitespace-nowrap">Leave/Off:</span>
-                          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
-                          <button type="button" onClick={() => setExpandedViewLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-700 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
-                          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                        </button>
-                      </div>
-                      </div>
-                      {isExpanded && (
-                        <div className="overflow-x-auto">
-                          <table className="w-full min-w-[360px] text-sm">
-                            <thead>
-                              <tr className="bg-purple-50 border-b border-purple-100 text-purple-700">
-                                <th className="px-3 py-2 text-left font-medium">Leave/Off</th>
-                                <th className="px-3 py-2 text-center font-medium">Assigned</th>
-                                <th className="px-3 py-2 text-center font-medium">Used</th>
-                                <th className="px-3 py-2 text-center font-medium">Remaining</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(limit.limits || {}).map(([type, assigned]) => {
-                                const used = usage[type] || 0;
-                                const remaining = assigned - used;
-                                return (
-                                  <tr key={type} className="border-b border-secondary-100 last:border-0">
-                                    <td className="px-3 py-2 font-medium text-secondary-800">{type}</td>
-                                    <td className="px-3 py-2 text-center font-bold text-secondary-900">{formatLeaveCount(assigned)}</td>
-                                    <td className="px-3 py-2 text-center font-bold text-secondary-900">{formatLeaveCount(used)}</td>
-                                    <td className={`px-3 py-2 text-center font-bold ${remaining < 0 ? 'text-red-700' : 'text-green-700'}`}>{formatLeaveCount(remaining)}</td>
-                                  </tr>
-                                );
-                              })}
-                              <tr className="bg-purple-50 border-t border-purple-100 font-semibold">
-                                <td className="px-3 py-2 text-purple-800">Total</td>
-                                <td className="px-3 py-2 text-center text-purple-900">{formatLeaveCount(totalAssigned)}</td>
-                                <td className="px-3 py-2 text-center text-purple-900">{formatLeaveCount(totalUsed)}</td>
-                                <td className={`px-3 py-2 text-center ${totalRemaining < 0 ? 'text-red-700' : 'text-purple-900'}`}>{formatLeaveCount(totalRemaining)}</td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             </div>
           </div>
