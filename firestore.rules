@@ -7,9 +7,18 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
     }
 
-    function canManageLeaves() {
+    function canManageAllLeaves() {
       return request.auth != null &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    }
+
+    function canManageBranchEmployee(leave) {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation == 'Branch Manager' &&
+        leave.branchId is string &&
+        leave.employeeId is string &&
+        get(/databases/$(database)/documents/branches/$(leave.branchId)).data.managerId == request.auth.uid &&
+        leave.employeeId in get(/databases/$(database)/documents/branches/$(leave.branchId)).data.employeeIds;
     }
 
     function canManageShifts() {
@@ -57,16 +66,19 @@ service cloud.firestore {
       allow delete: if canManageShifts();
     }
 
-    // Allow authenticated users to read leaves; only Director/HR may mutate them
+    // Allow authenticated users to read leaves; Director/HR may mutate all records,
+    // while Branch Managers may mutate records only for employees in their branch.
     match /leaves/{leaveId} {
       allow read: if request.auth != null;
-      allow write: if canManageLeaves();
+      allow create: if canManageAllLeaves() || canManageBranchEmployee(request.resource.data);
+      allow update: if canManageAllLeaves() || canManageBranchEmployee(request.resource.data);
+      allow delete: if canManageAllLeaves() || canManageBranchEmployee(resource.data);
     }
 
     // Allow authenticated users to read leave limits; only Director/HR may mutate them
     match /leaveLimits/{limitId} {
       allow read: if request.auth != null;
-      allow write: if canManageLeaves();
+      allow write: if canManageAllLeaves();
     }
 
     // Allow authenticated users to read and write week offs

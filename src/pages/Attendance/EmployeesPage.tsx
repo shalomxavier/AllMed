@@ -92,6 +92,7 @@ export const EmployeesPage: React.FC = () => {
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
   const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
+  const [managerBranchId, setManagerBranchId] = useState<string | null>(null);
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddShiftForm, setShowAddShiftForm] = useState(false);
@@ -250,12 +251,15 @@ export const EmployeesPage: React.FC = () => {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
           if (!branchSnapshot.empty) {
-            const branchData = branchSnapshot.docs[0].data();
+            const branchDoc = branchSnapshot.docs[0];
+            const branchData = branchDoc.data();
             allowedEmployeeIds = branchData.employeeIds || [];
             setManagerBranchName(branchData.name || '');
+            setManagerBranchId(branchDoc.id);
           } else {
             allowedEmployeeIds = [];
             setManagerBranchName('');
+            setManagerBranchId('');
           }
         } catch (err) {
           console.error('Error fetching branch employees:', err);
@@ -537,13 +541,21 @@ export const EmployeesPage: React.FC = () => {
     return dates;
   };
 
+  const getManagedBranchFields = () => managerBranchId ? { branchId: managerBranchId } : {};
+
   const removeDateFromLeaveRecord = async (leave: any, dateStr: string) => {
     const firestore = getFirestore();
+    const leaveRef = doc(firestore, 'leaves', leave.id);
+    const employeeId = leave.employeeId || leaveEmployee?.id;
+    const branchFields = managerBranchId && employeeId ? { branchId: managerBranchId, employeeId } : {};
     const next = expandLeaveDates(leave).filter((d) => d !== dateStr).sort();
     if (next.length === 0) {
-      await deleteDoc(doc(firestore, 'leaves', leave.id));
+      if (userData?.designation === 'Branch Manager' && (!leave.branchId || !leave.employeeId) && managerBranchId && employeeId) {
+        await updateDoc(leaveRef, branchFields);
+      }
+      await deleteDoc(leaveRef);
     } else {
-      await updateDoc(doc(firestore, 'leaves', leave.id), { dates: next, fromDate: next[0], toDate: next[next.length - 1] });
+      await updateDoc(leaveRef, { dates: next, fromDate: next[0], toDate: next[next.length - 1], ...branchFields });
     }
   };
 
@@ -591,7 +603,8 @@ export const EmployeesPage: React.FC = () => {
         ...(selection.halfDayPeriod ? { halfDayPeriod: selection.halfDayPeriod } : {}),
         dayValue: selection.duration === 'half_day' ? 0.5 : 1,
         createdAt: serverTimestamp(),
-        createdBy: currentUser?.uid
+        createdBy: currentUser?.uid,
+        ...getManagedBranchFields(),
       });
       if (leaveEmployee) fetchLeavesForEmployee(leaveEmployee);
     } catch (e) {
@@ -816,6 +829,7 @@ export const EmployeesPage: React.FC = () => {
             dayValue: selection.duration === 'half_day' ? 0.5 : 1,
             createdAt: serverTimestamp(),
             createdBy: currentUser?.uid,
+            ...getManagedBranchFields(),
           });
         }
       }
@@ -856,7 +870,8 @@ export const EmployeesPage: React.FC = () => {
           ...(selection.halfDayPeriod ? { halfDayPeriod: selection.halfDayPeriod } : {}),
           dayValue: selection.duration === 'half_day' ? 0.5 : 1,
           createdAt: serverTimestamp(),
-          createdBy: currentUser?.uid
+          createdBy: currentUser?.uid,
+          ...getManagedBranchFields(),
         });
       }
       showToast('success', 'Leave Assigned Successfully');
@@ -3135,6 +3150,7 @@ export const EmployeesPage: React.FC = () => {
                               dayValue: first.duration === 'half_day' ? 0.5 : 1,
                               createdAt: serverTimestamp(),
                               createdBy: currentUser?.uid,
+                              ...getManagedBranchFields(),
                             });
                           }
                         }

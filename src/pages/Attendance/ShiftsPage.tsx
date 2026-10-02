@@ -189,6 +189,7 @@ export const ShiftsPage: React.FC = () => {
   const [branchOptions, setBranchOptions] = useState<{ id: string; name: string; shiftIds: string[] }[]>([]);
   const [selectedBranchFilter, setSelectedBranchFilter] = useState('');
   const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
+  const [managerBranchId, setManagerBranchId] = useState<string | null>(null);
 
   // Assign shift modal state
   const [assignOpen, setAssignOpen] = useState(false);
@@ -282,12 +283,15 @@ export const ShiftsPage: React.FC = () => {
           console.log('Branch query results:', branchSnapshot.size, 'branches found');
           
           if (!branchSnapshot.empty) {
-            const branchData = branchSnapshot.docs[0].data();
+            const branchDoc = branchSnapshot.docs[0];
+            const branchData = branchDoc.data();
+            setManagerBranchId(branchDoc.id);
             console.log('Branch data:', branchData);
             allowedEmployeeIds = branchData.employeeIds || [];
             console.log('Allowed employee IDs:', allowedEmployeeIds);
           } else {
             console.log('No branches found for this manager - showing no employees');
+            setManagerBranchId('');
             allowedEmployeeIds = []; // Explicitly empty to show no employees
           }
         } catch (err) {
@@ -1630,6 +1634,7 @@ export const ShiftsPage: React.FC = () => {
                               dayValue: first.duration === 'half_day' ? 0.5 : 1,
                               createdAt: serverTimestamp(),
                               createdBy: currentUser?.uid,
+                              ...(managerBranchId ? { branchId: managerBranchId } : {}),
                             });
                           }
                         }

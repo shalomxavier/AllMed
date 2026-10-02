@@ -23,6 +23,8 @@ import {
 interface LeaveRecord {
   id: string;
   type?: 'leave' | 'weekoff';
+  employeeId?: string;
+  branchId?: string;
   employeeCode?: string;
   employeeName?: string;
   dates?: string[];
@@ -208,6 +210,7 @@ export const LeavesPage: React.FC = () => {
   const [branchesList, setBranchesList] = useState<{ id: string; name: string; employeeIds: string[] }[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
   const [managerBranch, setManagerBranch] = useState<string | null>(null);
+  const [managerBranchId, setManagerBranchId] = useState<string | null>(null);
   const [leaveLimits, setLeaveLimits] = useState<LeaveLimitRecord[]>([]);
   const [bulkLeaveLimitErrors, setBulkLeaveLimitErrors] = useState<string[]>([]);
   const [editLeaveLimitErrors, setEditLeaveLimitErrors] = useState<string[]>([]);
@@ -247,12 +250,15 @@ export const LeavesPage: React.FC = () => {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
-          const branchName = branchSnapshot.empty ? '' : (branchSnapshot.docs[0].data().name || '');
+          const managerBranchDoc = branchSnapshot.docs[0];
+          const branchName = managerBranchDoc?.data().name || '';
           setManagerBranch(branchName);
+          setManagerBranchId(managerBranchDoc?.id || '');
           setBranchFilter(branchName);
         } catch (err) {
           console.error('Error resolving manager branch:', err);
           setManagerBranch('');
+          setManagerBranchId('');
         }
       }
 
@@ -358,6 +364,14 @@ export const LeavesPage: React.FC = () => {
     setEditLeaveOpen(true);
   };
 
+  const getEmployeeIdForLeave = (leave: LeaveRecord) => leave.employeeId || employees.find((employee) => employee.employeeCode === leave.employeeCode)?.id || '';
+
+  const getBranchIdForEmployee = (employeeId?: string) => {
+    if (!employeeId) return '';
+    if (userData?.designation === 'Branch Manager') return managerBranchId || '';
+    return branchesList.find((branch) => branch.employeeIds.includes(employeeId))?.id || '';
+  };
+
   const handleEditLeaveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLeave || editLeaveForm.dates.length === 0) return;
@@ -377,6 +391,8 @@ export const LeavesPage: React.FC = () => {
       }
 
       const sorted = [...editLeaveForm.dates].sort();
+      const employeeId = getEmployeeIdForLeave(editingLeave);
+      const branchId = getBranchIdForEmployee(employeeId);
       await updateDoc(doc(db, 'leaves', editingLeave.id), {
         dates: sorted,
         fromDate: sorted[0],
@@ -385,6 +401,8 @@ export const LeavesPage: React.FC = () => {
         duration: editLeaveForm.duration,
         halfDayPeriod: editLeaveForm.duration === 'half_day' ? editLeaveForm.halfDayPeriod : null,
         dayValue: editLeaveForm.duration === 'half_day' ? 0.5 : 1,
+        ...(employeeId ? { employeeId } : {}),
+        ...(branchId ? { branchId } : {}),
       });
       setEditLeaveOpen(false);
       setEditingLeave(null);
@@ -408,6 +426,11 @@ export const LeavesPage: React.FC = () => {
     setIsDeleting(true);
     try {
       const db = getFirestore();
+      const employeeId = getEmployeeIdForLeave(deletingLeave);
+      const branchId = getBranchIdForEmployee(employeeId);
+      if (userData?.designation === 'Branch Manager' && (!deletingLeave.branchId || !deletingLeave.employeeId) && branchId && employeeId) {
+        await updateDoc(doc(db, 'leaves', deletingLeave.id), { branchId, employeeId });
+      }
       await deleteDoc(doc(db, 'leaves', deletingLeave.id));
       fetchData();
       setDeleteModalOpen(false);
@@ -513,6 +536,7 @@ export const LeavesPage: React.FC = () => {
             employeeId: employee.id,
             employeeCode: employee.employeeCode,
             employeeName: employee.employeeName,
+            ...(getBranchIdForEmployee(employee.id) ? { branchId: getBranchIdForEmployee(employee.id) } : {}),
             dates: [date],
             fromDate: date,
             toDate: date,
