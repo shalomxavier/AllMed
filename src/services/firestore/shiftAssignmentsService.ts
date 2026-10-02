@@ -7,7 +7,8 @@ import {
   serverTimestamp,
   where,
 } from 'firebase/firestore';
-import { db } from '@/firebase/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '@/firebase/firebase';
 import {
   dateRangesOverlap,
   flattenShiftAssignments,
@@ -28,6 +29,32 @@ export interface NewShiftAssignment {
   startTime: string;
   endTime: string;
 }
+
+export interface ExistingShiftAssignment {
+  employeeId: string;
+  shiftId: string;
+  fromDate: string;
+  toDate: string;
+}
+
+export interface ExistingAssignmentSelection {
+  employeeId: string;
+  shiftId: string;
+  assignmentId: string;
+  fromDate?: string;
+  toDate?: string;
+}
+
+const addExistingAssignmentFn = httpsCallable<ExistingShiftAssignment, { assignmentId: string }>(functions, 'addExistingShiftAssignment');
+const updateExistingAssignmentFn = httpsCallable(functions, 'updateExistingShiftAssignment');
+const removeExistingAssignmentFn = httpsCallable(functions, 'removeExistingShiftAssignment');
+const changeExistingAssignmentForDateFn = httpsCallable(functions, 'changeExistingShiftAssignmentForDate');
+
+const callableError = (error: unknown): Error => {
+  const candidate = error as { message?: string; code?: string };
+  if (candidate.code?.includes('permission-denied')) return new Error('You can only manage employees and shifts assigned to your branch.');
+  return new Error(candidate.message || 'Failed to update the shift assignment.');
+};
 
 const shiftsCollection = collection(db, 'shifts');
 
@@ -244,10 +271,77 @@ const changeAssignmentForDate = async (
   });
 };
 
+const addExistingAssignment = async (assignment: ExistingShiftAssignment): Promise<string> => {
+  try {
+    const result = await addExistingAssignmentFn(assignment);
+    return result.data.assignmentId;
+  } catch (error) {
+    throw callableError(error);
+  }
+};
+
+const updateExistingAssignment = async (
+  selected: ExistingAssignmentSelection,
+  destinationShiftId: string,
+  fromDate: string,
+  toDate: string,
+): Promise<void> => {
+  try {
+    await updateExistingAssignmentFn({
+      employeeId: selected.employeeId,
+      sourceShiftId: selected.shiftId,
+      destinationShiftId,
+      assignmentId: selected.assignmentId,
+      legacyFromDate: selected.fromDate,
+      legacyToDate: selected.toDate,
+      fromDate,
+      toDate,
+    });
+  } catch (error) {
+    throw callableError(error);
+  }
+};
+
+const removeExistingAssignment = async (selected: ExistingAssignmentSelection): Promise<void> => {
+  try {
+    await removeExistingAssignmentFn({
+      employeeId: selected.employeeId,
+      shiftId: selected.shiftId,
+      assignmentId: selected.assignmentId,
+      legacyFromDate: selected.fromDate,
+      legacyToDate: selected.toDate,
+    });
+  } catch (error) {
+    throw callableError(error);
+  }
+};
+
+const changeExistingAssignmentForDate = async (
+  selected: ExistingAssignmentSelection,
+  destinationShiftId: string,
+  date: string,
+): Promise<void> => {
+  try {
+    await changeExistingAssignmentForDateFn({
+      employeeId: selected.employeeId,
+      sourceShiftId: selected.shiftId,
+      destinationShiftId,
+      assignmentId: selected.assignmentId,
+      date,
+    });
+  } catch (error) {
+    throw callableError(error);
+  }
+};
+
 export const shiftAssignmentsService = {
   readSlots,
   addAssignment,
   removeAssignment,
   moveAssignment,
   changeAssignmentForDate,
+  addExistingAssignment,
+  updateExistingAssignment,
+  removeExistingAssignment,
+  changeExistingAssignmentForDate,
 };

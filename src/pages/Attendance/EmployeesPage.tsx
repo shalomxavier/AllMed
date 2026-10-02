@@ -146,14 +146,14 @@ export const EmployeesPage: React.FC = () => {
     endMinute: '',
     endAmPm: 'AM'
   });
-  const [bulkSelectedTemplate, setBulkSelectedTemplate] = useState<{ startTime: string; endTime: string } | null>(null);
+  const [bulkSelectedTemplate, setBulkSelectedTemplate] = useState<{ id: string; startTime: string; endTime: string } | null>(null);
   const [isBulkAssigning, setIsBulkAssigning] = useState(false);
   const [bulkOverlapResults, setBulkOverlapResults] = useState<{ employee: Employee; overlaps: any[] }[]>([]);
   const [showBulkOverlapDialog, setShowBulkOverlapDialog] = useState(false);
-  const [shiftTemplates, setShiftTemplates] = useState<{ startTime: string; endTime: string }[]>([]);
+  const [shiftTemplates, setShiftTemplates] = useState<{ id: string; startTime: string; endTime: string }[]>([]);
   const [bulkShiftMode, setBulkShiftMode] = useState<'existing' | 'new'>('existing');
   const [shiftMode, setShiftMode] = useState<'existing' | 'new'>('existing');
-  const [selectedShiftTemplate, setSelectedShiftTemplate] = useState<{ startTime: string; endTime: string } | null>(null);
+  const [selectedShiftTemplate, setSelectedShiftTemplate] = useState<{ id: string; startTime: string; endTime: string } | null>(null);
   const [shiftForm, setShiftForm] = useState({
     fromDate: '',
     toDate: '',
@@ -1200,7 +1200,13 @@ export const EmployeesPage: React.FC = () => {
     if (!selectedEmployee || !shiftToDelete || isDeletingShift) return;
     setIsDeletingShift(true);
     try {
-      await shiftAssignmentsService.removeAssignment(shiftToDelete as ResolvedShiftAssignment);
+      await shiftAssignmentsService.removeExistingAssignment({
+        employeeId: selectedEmployee.id,
+        shiftId: shiftToDelete.slotId,
+        assignmentId: shiftToDelete.assignmentId,
+        fromDate: shiftToDelete.fromDate,
+        toDate: shiftToDelete.toDate,
+      });
       setShowDeleteConfirm(false);
       setShiftToDelete(null);
       showToast('success', 'Shift Deleted Successfully');
@@ -1208,7 +1214,7 @@ export const EmployeesPage: React.FC = () => {
       fetchShiftsForEmployee();
     } catch (error) {
       console.error('Error deleting shift:', error);
-      showToast('error', 'Failed to delete shift. Please try again.');
+      showToast('error', error instanceof Error ? error.message : 'Failed to remove the shift assignment.');
     } finally {
       setIsDeletingShift(false);
     }
@@ -1216,6 +1222,8 @@ export const EmployeesPage: React.FC = () => {
 
   const handleEditShift = (shift: any) => {
     setSelectedShift(shift);
+    setSelectedShiftTemplate({ id: shift.slotId, startTime: shift.startTime, endTime: shift.endTime });
+    fetchShiftTemplates();
     const start = to12Hour(shift.startTime);
     const end = to12Hour(shift.endTime);
 
@@ -1253,8 +1261,12 @@ export const EmployeesPage: React.FC = () => {
       const db = getFirestore();
       let startTime24, endTime24;
       try {
-        startTime24 = to24Hour(editShiftForm.startHour, editShiftForm.startMinute, editShiftForm.startAmPm);
-        endTime24 = to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
+        startTime24 = userData?.designation === 'Branch Manager' && selectedShiftTemplate
+          ? selectedShiftTemplate.startTime
+          : to24Hour(editShiftForm.startHour, editShiftForm.startMinute, editShiftForm.startAmPm);
+        endTime24 = userData?.designation === 'Branch Manager' && selectedShiftTemplate
+          ? selectedShiftTemplate.endTime
+          : to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
       } catch (error) {
         console.error('Invalid time format:', error);
         showToast('warning', 'Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
@@ -1291,14 +1303,25 @@ export const EmployeesPage: React.FC = () => {
         throw new Error('Invalid time data detected before save');
       }
 
-      await shiftAssignmentsService.moveAssignment(selectedShift as ResolvedShiftAssignment, {
-        employeeCode: selectedEmployee.employeeCode ?? '',
-        employeeName: selectedEmployee.employeeName ?? '',
-        fromDate: editShiftForm.fromDate,
-        toDate: editShiftForm.toDate,
-        startTime: startTime24,
-        endTime: endTime24,
-      });
+      if (userData?.designation === 'Branch Manager') {
+        if (!selectedShiftTemplate) throw new Error('Please select an existing shift.');
+        await shiftAssignmentsService.updateExistingAssignment({
+          employeeId: selectedEmployee.id,
+          shiftId: selectedShift.slotId,
+          assignmentId: selectedShift.assignmentId,
+          fromDate: selectedShift.fromDate,
+          toDate: selectedShift.toDate,
+        }, selectedShiftTemplate.id, editShiftForm.fromDate, editShiftForm.toDate);
+      } else {
+        await shiftAssignmentsService.moveAssignment(selectedShift as ResolvedShiftAssignment, {
+          employeeCode: selectedEmployee.employeeCode ?? '',
+          employeeName: selectedEmployee.employeeName ?? '',
+          fromDate: editShiftForm.fromDate,
+          toDate: editShiftForm.toDate,
+          startTime: startTime24,
+          endTime: endTime24,
+        });
+      }
 
       console.log('Shift updated successfully');
       setShowEditShiftForm(false);
@@ -1308,7 +1331,7 @@ export const EmployeesPage: React.FC = () => {
       showToast('success', 'Shift Updated Successfully');
     } catch (error) {
       console.error('Error updating shift:', error);
-      showToast('error', 'An error occurred while updating the shift. Please check your time values and try again.');
+      showToast('error', error instanceof Error ? error.message : 'An error occurred while updating the shift.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1366,14 +1389,23 @@ export const EmployeesPage: React.FC = () => {
       if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
         throw new Error('Invalid time data detected. Please refresh the page and try again.');
       }
-      await shiftAssignmentsService.addAssignment({
-        employeeCode: selectedEmployee.employeeCode ?? '',
-        employeeName: selectedEmployee.employeeName ?? '',
-        fromDate: shiftForm.fromDate,
-        toDate: shiftForm.toDate,
-        startTime: startTime24,
-        endTime: endTime24,
-      });
+      if (shiftMode === 'existing' && selectedShiftTemplate) {
+        await shiftAssignmentsService.addExistingAssignment({
+          employeeId: selectedEmployee.id,
+          shiftId: selectedShiftTemplate.id,
+          fromDate: shiftForm.fromDate,
+          toDate: shiftForm.toDate,
+        });
+      } else {
+        await shiftAssignmentsService.addAssignment({
+          employeeCode: selectedEmployee.employeeCode ?? '',
+          employeeName: selectedEmployee.employeeName ?? '',
+          fromDate: shiftForm.fromDate,
+          toDate: shiftForm.toDate,
+          startTime: startTime24,
+          endTime: endTime24,
+        });
+      }
 
       setLastAssignedShiftDates({ fromDate: shiftForm.fromDate, toDate: shiftForm.toDate });
       setShowAddShiftForm(false);
@@ -1382,7 +1414,7 @@ export const EmployeesPage: React.FC = () => {
       setAskLeavesDialog(true);
     } catch (error) {
       console.error('Error saving shift:', error);
-      showToast('error', 'An error occurred while saving the shift. Please check your time values and try again.');
+      showToast('error', error instanceof Error ? error.message : 'An error occurred while saving the shift.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1442,7 +1474,7 @@ export const EmployeesPage: React.FC = () => {
 
       const snap = await getDocs(query(collection(db, 'shifts'), orderBy('startTime')));
       const seen = new Set<string>();
-      const templates: { startTime: string; endTime: string }[] = [];
+      const templates: { id: string; startTime: string; endTime: string }[] = [];
       snap.forEach((d) => {
         // Filter by branch if allowedShiftIds is set
         if (allowedShiftIds && !allowedShiftIds.includes(d.id)) {
@@ -1450,7 +1482,7 @@ export const EmployeesPage: React.FC = () => {
         }
         const data = d.data();
         const key = `${data.startTime}|${data.endTime}`;
-        if (!seen.has(key)) { seen.add(key); templates.push({ startTime: data.startTime, endTime: data.endTime }); }
+        if (!seen.has(key)) { seen.add(key); templates.push({ id: d.id, startTime: data.startTime, endTime: data.endTime }); }
       });
       setShiftTemplates(templates);
     } catch (e) { console.error(e); }
@@ -1525,21 +1557,30 @@ export const EmployeesPage: React.FC = () => {
         throw new Error('Invalid time data detected. Please refresh the page and try again.');
       }
       for (const employee of selectedEmps) {
-        await shiftAssignmentsService.addAssignment({
-          employeeCode: employee.employeeCode ?? '',
-          employeeName: employee.employeeName ?? '',
-          fromDate: bulkShiftForm.fromDate,
-          toDate: bulkShiftForm.toDate,
-          startTime: startTime24,
-          endTime: endTime24,
-        });
+        if (bulkShiftMode === 'existing' && bulkSelectedTemplate) {
+          await shiftAssignmentsService.addExistingAssignment({
+            employeeId: employee.id,
+            shiftId: bulkSelectedTemplate.id,
+            fromDate: bulkShiftForm.fromDate,
+            toDate: bulkShiftForm.toDate,
+          });
+        } else {
+          await shiftAssignmentsService.addAssignment({
+            employeeCode: employee.employeeCode ?? '',
+            employeeName: employee.employeeName ?? '',
+            fromDate: bulkShiftForm.fromDate,
+            toDate: bulkShiftForm.toDate,
+            startTime: startTime24,
+            endTime: endTime24,
+          });
+        }
       }
 
       showToast('success', `Shift assigned to ${selectedEmployeeIds.size} employee(s) successfully`);
       closeBulkAssignModal();
     } catch (error) {
       console.error('Error bulk assigning shifts:', error);
-      showToast('error', 'An error occurred while bulk assigning shifts. Please check your time values and try again.');
+      showToast('error', error instanceof Error ? error.message : 'An error occurred while bulk assigning shifts.');
     } finally {
       setIsBulkAssigning(false);
     }
@@ -1920,13 +1961,15 @@ export const EmployeesPage: React.FC = () => {
                       }`}>
                       Existing Shift
                     </button>
-                    <button type="button"
-                      onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
-                      className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                        shiftMode === 'new' ? 'text-primary-700 border-b-2 border-primary-600 bg-primary-50' : 'text-secondary-500 hover:text-secondary-700'
-                      }`}>
-                      New Shift
-                    </button>
+                    {userData?.designation !== 'Branch Manager' && (
+                      <button type="button"
+                        onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
+                        className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                          shiftMode === 'new' ? 'text-primary-700 border-b-2 border-primary-600 bg-primary-50' : 'text-secondary-500 hover:text-secondary-700'
+                        }`}>
+                        New Shift
+                      </button>
+                    )}
                   </div>
 
                   {/* Existing shift picker */}
@@ -2029,14 +2072,12 @@ export const EmployeesPage: React.FC = () => {
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-secondary-700">Shift Records</h3>
-                    {userData?.designation !== 'Branch Manager' && (
                     <button
-                      onClick={() => { setShowAddShiftForm(true); fetchShiftTemplates(); }}
+                      onClick={() => { setShiftMode('existing'); setShowAddShiftForm(true); fetchShiftTemplates(); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
                     >
                       <Plus size={16} /> Add Shift
                     </button>
-                    )}
                   </div>
                   {shiftsLoading ? (
                     <div className="text-center py-8">
@@ -2057,7 +2098,6 @@ export const EmployeesPage: React.FC = () => {
                               <span className="text-black"> - </span>
                               <span className="text-primary-600">{formatShiftDate(shift.toDate)}</span>
                             </span>
-                            {userData?.designation !== 'Branch Manager' && (
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => handleEditShift(shift)}
@@ -2072,7 +2112,6 @@ export const EmployeesPage: React.FC = () => {
                                 <Trash2 size={16} />
                               </button>
                             </div>
-                            )}
                           </div>
                           <div className="flex items-center gap-4 text-sm">
                             <span className="px-2.5 py-0.5 rounded-full bg-green-50 text-green-600 text-xs font-medium">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
@@ -2122,6 +2161,23 @@ export const EmployeesPage: React.FC = () => {
                       />
                     </div>
                   </div>
+                  {userData?.designation === 'Branch Manager' ? (
+                    <div className="border border-secondary-300 rounded-lg p-3">
+                      <label className="block text-sm font-medium text-secondary-700 mb-2">Existing Shift</label>
+                      <div className="flex flex-wrap gap-2">
+                        {shiftTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => setSelectedShiftTemplate(template)}
+                            className={`px-3 py-2 text-sm rounded-lg border ${selectedShiftTemplate?.id === template.id ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-secondary-200 text-secondary-700'}`}
+                          >
+                            {formatTime12(template.startTime)} - {formatTime12(template.endTime)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
@@ -2192,6 +2248,7 @@ export const EmployeesPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  )}
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
@@ -2454,13 +2511,15 @@ export const EmployeesPage: React.FC = () => {
                   }`}>
                   Use Existing Shift
                 </button>
-                <button type="button"
-                  onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                    bulkShiftMode === 'new' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
-                  }`}>
-                  Add New Shift
-                </button>
+                {userData?.designation !== 'Branch Manager' && (
+                  <button type="button"
+                    onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                      bulkShiftMode === 'new' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
+                    }`}>
+                    Add New Shift
+                  </button>
+                )}
               </div>
 
               {bulkShiftMode === 'existing' && shiftTemplates.length > 0 && (

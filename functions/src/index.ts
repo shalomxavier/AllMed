@@ -16,3 +16,10 @@ export { getConversations, getMessages, markConversationRead } from './conversat
 
 // Firestore triggers & scheduled jobs
 export { onNewMessage, syncMessageStatuses } from './triggers';
+
+export {
+  addExistingShiftAssignment,
+  updateExistingShiftAssignment,
+  removeExistingShiftAssignment,
+  changeExistingShiftAssignmentForDate,
+} from './shiftAssignments';

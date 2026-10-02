@@ -61,6 +61,16 @@ describe('shift assignment ranges', () => {
     expect(resolution.matches).toHaveLength(2);
   });
 
+  it('retains employee document identity when flattening assignments', () => {
+    const assignments = flattenShiftAssignments([{
+      id: 'day',
+      startTime: '09:00',
+      endTime: '18:00',
+      employees: [{ assignmentId: 'assigned', employeeId: 'employee-doc', employeeCode: 'EMP-1', fromDate: '2026-09-01', toDate: '2026-09-30' }],
+    }]);
+    expect(assignments[0].employeeId).toBe('employee-doc');
+  });
+
   it('merges adjacent same-employee ranges', () => {
     expect(mergeAdjacentAssignments([
       { employeeCode: 'EMP-1', fromDate: '2026-09-03', toDate: '2026-09-04' },

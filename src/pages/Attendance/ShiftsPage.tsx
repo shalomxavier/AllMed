@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, RefreshCw, Clock, X, Users, Plus, Pencil, Search, Trash2, ChevronLeft, ChevronRight, Eye, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
-import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, serverTimestamp, deleteDoc, getFirestore } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where, addDoc, updateDoc, doc, serverTimestamp, deleteDoc } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { RedSpinner, useToast } from '@/components/common';
@@ -10,7 +10,6 @@ import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { LeaveLimitFailureMessage } from '@/components/attendance/LeaveLimitFailureMessage';
 import { LeaveTypeLegend, leaveDotClass } from '@/components/attendance/LeaveOptionMenu';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
-import type { ResolvedShiftAssignment } from '@/utils/shiftAssignments';
 import {
   formatLeaveCount,
   formatLeaveLimitFailures,
@@ -31,6 +30,7 @@ interface Employee {
 
 interface ShiftEmployee {
   assignmentId?: string;
+  employeeId?: string;
   employeeName: string;
   employeeCode: string;
   fromDate?: string;
@@ -401,7 +401,7 @@ export const ShiftsPage: React.FC = () => {
 
       // ADD EMPLOYEES MODE: add selected employees to existing slot
       if (addingToSlot) {
-        const empEntries = selectedEmps.map((e) => ({ employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', fromDate: assignForm.fromDate, toDate: assignForm.toDate }));
+        const empEntries = selectedEmps.map((e) => ({ employeeId: e.id, employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', fromDate: assignForm.fromDate, toDate: assignForm.toDate }));
 
         // Duplicate check within the same slot: prevent overlapping date ranges for the same employee
         const newFrom = new Date(assignForm.fromDate);
@@ -440,10 +440,11 @@ export const ShiftsPage: React.FC = () => {
         if (overlapResults.length > 0) { setAssignOverlaps(overlapResults); setShowOverlapDialog(true); setIsAssigning(false); return; }
 
         for (const entry of empEntries) {
-          await shiftAssignmentsService.addAssignment({
-            ...entry,
-            startTime: addingToSlot.startTime,
-            endTime: addingToSlot.endTime,
+          await shiftAssignmentsService.addExistingAssignment({
+            employeeId: entry.employeeId,
+            shiftId: addingToSlot.key,
+            fromDate: entry.fromDate,
+            toDate: entry.toDate,
           });
         }
         const empsForWizard = selectedEmps.map(e => ({ employeeCode: e.employeeCode ?? '', employeeName: e.employeeName ?? '', employeeId: e.employeeCodeInDevice ?? e.employeeCode ?? '', fromDate: assignForm.fromDate, toDate: assignForm.toDate }));
@@ -494,7 +495,7 @@ export const ShiftsPage: React.FC = () => {
       if (empsForWizard.length > 0) setAskLeavesDialog(true);
     } catch (err) { 
       console.error(err);
-      showToast('error', 'An error occurred while saving the shift. Please check your time values and try again.');
+      showToast('error', err instanceof Error ? err.message : 'An error occurred while saving the shift.');
     }
     finally { setIsAssigning(false); }
   };
@@ -562,6 +563,7 @@ export const ShiftsPage: React.FC = () => {
         const data = d.data();
         const emps: ShiftEmployee[] = (data.employees ?? []).map((e: any, legacyIndex: number) => ({
           assignmentId: e.assignmentId || `${d.id}:legacy:${legacyIndex}`,
+          employeeId: e.employeeId,
           employeeName: e.employeeName ?? '', 
           employeeCode: e.employeeCode ?? '',
           fromDate: e.fromDate,
@@ -1096,14 +1098,15 @@ export const ShiftsPage: React.FC = () => {
                   setIsRemovingEmp(true);
                   try {
                     const employee = removeEditEmpConfirm.emp;
-                    await shiftAssignmentsService.removeAssignment({
-                      ...employee,
+                    const employeeId = employee.employeeId || allEmployees.find((candidate) => candidate.employeeCode === employee.employeeCode)?.id;
+                    if (!employeeId) throw new Error('Employee record not found.');
+                    await shiftAssignmentsService.removeExistingAssignment({
+                      employeeId,
+                      shiftId: editingSlot.key,
                       assignmentId: employee.assignmentId || `${editingSlot.key}:legacy:${removeEditEmpConfirm.index}`,
-                      slotId: editingSlot.key,
-                      startTime: editingSlot.startTime,
-                      endTime: editingSlot.endTime,
-                      legacyIndex: removeEditEmpConfirm.index,
-                    } as ResolvedShiftAssignment);
+                      fromDate: employee.fromDate,
+                      toDate: employee.toDate,
+                    });
                     await fetchShifts();
                     setEditingSlot(null);
                     setEditEmployeesOpen(false);
@@ -1401,17 +1404,24 @@ export const ShiftsPage: React.FC = () => {
                 onClick={async () => {
                   setIsRemovingEmp(true);
                   try {
-                    const db = getFirestore();
-                    const shiftRef = doc(db, 'shifts', selectedSlot.key);
+                    const employee = removeEmpConfirm.emp;
+                    const employeeId = employee.employeeId || allEmployees.find((candidate) => candidate.employeeCode === employee.employeeCode)?.id;
+                    if (!employeeId) throw new Error('Employee record not found.');
+                    await shiftAssignmentsService.removeExistingAssignment({
+                      employeeId,
+                      shiftId: selectedSlot.key,
+                      assignmentId: employee.assignmentId || `${selectedSlot.key}:legacy:${removeEmpConfirm.index}`,
+                      fromDate: employee.fromDate,
+                      toDate: employee.toDate,
+                    });
                     const updatedEmployees = selectedSlot.employees.filter((_, idx) => idx !== removeEmpConfirm.index);
-                    await updateDoc(shiftRef, { employees: updatedEmployees });
                     await fetchShifts();
                     setRemoveEmpConfirm(null);
                     setSelectedSlot(prev => prev ? { ...prev, employees: updatedEmployees } : null);
                     showToast('success', 'Employee removed from shift');
                   } catch (e) {
                     console.error('Error removing employee:', e);
-                    showToast('error', 'Failed to remove employee. Please try again.');
+                    showToast('error', e instanceof Error ? e.message : 'Failed to remove employee. Please try again.');
                   } finally {
                     setIsRemovingEmp(false);
                   }
@@ -1891,11 +1901,11 @@ export const ShiftsPage: React.FC = () => {
       {changeShiftModalOpen && changeShiftDate && (() => {
         const emp = wizardEmployees[wizardEmpIndex];
         if (!emp) return null;
-        const uniqueSlots: { startTime: string; endTime: string }[] = [];
+        const uniqueSlots: { id: string; startTime: string; endTime: string }[] = [];
         const seen = new Set<string>();
         slots.forEach(s => {
           const key = `${s.startTime}|${s.endTime}`;
-          if (!seen.has(key)) { seen.add(key); uniqueSlots.push({ startTime: s.startTime, endTime: s.endTime }); }
+          if (!seen.has(key)) { seen.add(key); uniqueSlots.push({ id: s.key, startTime: s.startTime, endTime: s.endTime }); }
         });
         return (
           <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
@@ -1926,12 +1936,23 @@ export const ShiftsPage: React.FC = () => {
                             if (!changeShiftDate) return;
                             setIsSavingShiftOverride(true);
                             try {
-                              await shiftAssignmentsService.changeAssignmentForDate(
-                                emp.employeeCode,
-                                changeShiftDate,
-                                t.startTime,
-                                t.endTime,
-                              );
+                              const employeeRecord = allEmployees.find((candidate) => candidate.employeeCode === emp.employeeCode);
+                              const sourceSlot = slots.find((slot) => slot.employees.some((assignment) =>
+                                assignment.employeeCode === emp.employeeCode
+                                && (!assignment.fromDate || assignment.fromDate <= changeShiftDate)
+                                && (!assignment.toDate || assignment.toDate >= changeShiftDate)));
+                              const sourceAssignment = sourceSlot?.employees.find((assignment) =>
+                                assignment.employeeCode === emp.employeeCode
+                                && (!assignment.fromDate || assignment.fromDate <= changeShiftDate)
+                                && (!assignment.toDate || assignment.toDate >= changeShiftDate));
+                              if (!employeeRecord || !sourceSlot || !sourceAssignment?.assignmentId) throw new Error('Current shift assignment not found.');
+                              await shiftAssignmentsService.changeExistingAssignmentForDate({
+                                employeeId: employeeRecord.id,
+                                shiftId: sourceSlot.key,
+                                assignmentId: sourceAssignment.assignmentId,
+                                fromDate: sourceAssignment.fromDate,
+                                toDate: sourceAssignment.toDate,
+                              }, t.id, changeShiftDate);
 
                               setShiftChangedDates(prev => ({
                                 ...prev,
