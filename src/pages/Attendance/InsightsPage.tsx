@@ -53,6 +53,7 @@ interface ChartEmployee {
   employeeCode: string;
   subDesignation: string;
   shiftTime: string;
+  shiftBuckets: (keyof DepartmentShiftCounts)[];
 }
 
 interface AttendanceChart {
@@ -99,6 +100,13 @@ const categorizeShiftTime = (shiftTime: string): Array<keyof DepartmentShiftCoun
   const maxOverlap = Math.max(0, ...overlaps.map((item) => item.overlap));
   if (maxOverlap === 0) return [];
   return overlaps.filter((item) => item.overlap === maxOverlap).map((item) => item.key);
+};
+
+const getShiftBucketFromPunch = (date: Date): keyof DepartmentShiftCounts | null => {
+  const minutes = date.getUTCHours() * 60 + date.getUTCMinutes();
+  if (minutes >= 8 * 60 && minutes < 16 * 60) return 'morning';
+  if (minutes >= 16 * 60 && minutes < 22 * 60) return 'mid';
+  return 'night';
 };
 
 const toDate = (logDate: any): Date | null => {
@@ -313,7 +321,7 @@ const DepartmentShiftTable: React.FC<{ rows: [string, DepartmentShiftCounts][]; 
                   </thead>
                   <tbody>
                     {selectedEmployees.map((employee) => {
-                      const buckets = categorizeShiftTime(employee.shiftTime || '');
+                      const buckets = employee.shiftBuckets ?? categorizeShiftTime(employee.shiftTime || '');
                       return (
                         <tr key={employee.employeeCode} className="border-b border-secondary-200">
                           <td className="px-3 py-2 font-medium text-secondary-900 border border-secondary-200">{employee.name}</td>
@@ -519,6 +527,9 @@ export const InsightsPage: React.FC = () => {
           totalEmployeesByDepartment.get(department)!.add(employeeCode);
         });
 
+        const firstPunchByEmployee = new Map<string, Date>();
+        const anyPunchByEmployee = new Map<string, Date>();
+
         let hasAnyShiftAssignments = false;
 
         if (isFutureDate(selectedDate)) {
@@ -546,6 +557,9 @@ export const InsightsPage: React.FC = () => {
             const employeeCode = punch.userId?.trim().toLowerCase();
             if (!employeeCode || !branchEmployeeCodes.has(employeeCode)) return;
 
+            const punchDate = toDate(punch.logDate);
+            if (!punchDate) return;
+
             // Attribute the punch to the correct attendance day, matching the logic
             // used by /attendance/records. This ensures night-shift out-punches that
             // occur after midnight are counted for the previous day.
@@ -554,6 +568,13 @@ export const InsightsPage: React.FC = () => {
 
             const employee = employeeByCode.get(employeeCode);
             if (employee) addEmployeeToAttendance(employee);
+
+            if (punch.direction !== 'out') {
+              const existing = firstPunchByEmployee.get(employeeCode);
+              if (!existing || punchDate < existing) firstPunchByEmployee.set(employeeCode, punchDate);
+            }
+            const existingAny = anyPunchByEmployee.get(employeeCode);
+            if (!existingAny || punchDate < existingAny) anyPunchByEmployee.set(employeeCode, punchDate);
           });
         }
 
@@ -567,6 +588,17 @@ export const InsightsPage: React.FC = () => {
             .sort()
             .map((department, index) => [department, CHART_COLORS[index % CHART_COLORS.length]]),
         );
+
+        const getShiftBuckets = (employeeCode: string): (keyof DepartmentShiftCounts)[] => {
+          const assignedTime = shiftTimesByEmployee.get(employeeCode);
+          if (assignedTime) {
+            const buckets = categorizeShiftTime(assignedTime);
+            if (buckets.length) return buckets;
+          }
+          const punch = firstPunchByEmployee.get(employeeCode) ?? anyPunchByEmployee.get(employeeCode);
+          const bucket = punch ? getShiftBucketFromPunch(punch) : null;
+          return bucket ? [bucket] : [];
+        };
         
         const designationData = Array.from(attendanceByDesignation.entries())
           .map(([label, employeesPresent]) => ({
@@ -591,11 +623,20 @@ export const InsightsPage: React.FC = () => {
             designation,
             Array.from(employeeCodes).map((employeeCode) => {
               const employee = employeeByCode.get(employeeCode);
+              const assignedTime = shiftTimesByEmployee.get(employeeCode);
+              const punch = firstPunchByEmployee.get(employeeCode) ?? anyPunchByEmployee.get(employeeCode);
+              const shiftTime = assignedTime
+                ? assignedTime
+                : punch
+                  ? `${String(punch.getUTCHours()).padStart(2, '0')}:${String(punch.getUTCMinutes()).padStart(2, '0')} (punch)`
+                  : 'No shift assigned';
+
               return {
                 name: employee?.employeeName || employeeCode,
                 employeeCode: employee?.employeeCode || employeeCode,
                 subDesignation: employee?.subDesignation || '—',
-                shiftTime: shiftTimesByEmployee.get(employeeCode) || 'No shift assigned',
+                shiftTime,
+                shiftBuckets: getShiftBuckets(employeeCode),
               };
             }).sort((first, second) => first.name.localeCompare(second.name)),
           ]),
@@ -606,11 +647,20 @@ export const InsightsPage: React.FC = () => {
             department,
             Array.from(employeeCodes).map((employeeCode) => {
               const employee = employeeByCode.get(employeeCode);
+              const assignedTime = shiftTimesByEmployee.get(employeeCode);
+              const punch = firstPunchByEmployee.get(employeeCode) ?? anyPunchByEmployee.get(employeeCode);
+              const shiftTime = assignedTime
+                ? assignedTime
+                : punch
+                  ? `${String(punch.getUTCHours()).padStart(2, '0')}:${String(punch.getUTCMinutes()).padStart(2, '0')} (punch)`
+                  : 'No shift assigned';
+
               return {
                 name: employee?.employeeName || employeeCode,
                 employeeCode: employee?.employeeCode || employeeCode,
                 subDesignation: employee?.subDesignation || '—',
-                shiftTime: shiftTimesByEmployee.get(employeeCode) || 'No shift assigned',
+                shiftTime,
+                shiftBuckets: getShiftBuckets(employeeCode),
               };
             }).sort((first, second) => first.name.localeCompare(second.name)),
           ]),
@@ -640,8 +690,7 @@ export const InsightsPage: React.FC = () => {
         attendanceByDepartment.forEach((codes, department) => {
           const counts = departmentShiftMap.get(department) ?? { morning: 0, mid: 0, night: 0 };
           codes.forEach((code) => {
-            const buckets = categorizeShiftTime(shiftTimesByEmployee.get(code) || '');
-            buckets.forEach((bucket) => counts[bucket]++);
+            getShiftBuckets(code).forEach((bucket) => counts[bucket]++);
           });
           departmentShiftMap.set(department, counts);
         });
