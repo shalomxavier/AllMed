@@ -3,6 +3,7 @@ import { ArrowLeft, RefreshCw, Umbrella, Search, X, AlertTriangle, ChevronLeft, 
 import { useNavigate } from 'react-router-dom';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner, useToast } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import {
@@ -161,8 +162,12 @@ const getLeaveColor = (reason?: string) => {
 export const LeavesPage: React.FC = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const { currentUser, userData } = useAuthContext();
-  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR' || userData?.designation === 'Branch Manager';
+  const { currentUser } = useAuthContext();
+  const { isBranchManager } = useRole();
+  const { hasPermission: checkPermission } = usePermissions();
+  const canAddLeave = checkPermission('leaves', 'leaves', 'add');
+  const canEditLeave = checkPermission('leaves', 'leaves', 'edit');
+  const canDeleteLeave = checkPermission('leaves', 'leaves', 'delete');
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [weekOffs, setWeekOffs] = useState<WeekOffRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,7 +251,7 @@ export const LeavesPage: React.FC = () => {
       setBranchesList(branchesData);
 
       // Set manager branch if user is a branch manager
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -368,7 +373,7 @@ export const LeavesPage: React.FC = () => {
 
   const getBranchIdForEmployee = (employeeId?: string) => {
     if (!employeeId) return '';
-    if (userData?.designation === 'Branch Manager') return managerBranchId || '';
+    if (isBranchManager) return managerBranchId || '';
     return branchesList.find((branch) => branch.employeeIds.includes(employeeId))?.id || '';
   };
 
@@ -428,7 +433,7 @@ export const LeavesPage: React.FC = () => {
       const db = getFirestore();
       const employeeId = getEmployeeIdForLeave(deletingLeave);
       const branchId = getBranchIdForEmployee(employeeId);
-      if (userData?.designation === 'Branch Manager' && (!deletingLeave.branchId || !deletingLeave.employeeId) && branchId && employeeId) {
+      if (isBranchManager && (!deletingLeave.branchId || !deletingLeave.employeeId) && branchId && employeeId) {
         await updateDoc(doc(db, 'leaves', deletingLeave.id), { branchId, employeeId });
       }
       await deleteDoc(doc(db, 'leaves', deletingLeave.id));
@@ -931,7 +936,7 @@ export const LeavesPage: React.FC = () => {
       {/* Search & Date Filter */}
       <div className="pt-3 pb-4">
         <div className="flex items-center gap-3 mb-4 flex-wrap">
-          {canManageLeaves && (
+          {canAddLeave && (
             <button onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveLimitDialogOpen(false); setBulkLeaveModalOpen(true); }} className="btn-primary">
               <Umbrella size={16} />
               Add Leaves
@@ -977,9 +982,9 @@ export const LeavesPage: React.FC = () => {
               value={branchFilter}
               onChange={(e) => setBranchFilter(e.target.value)}
               className="px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-              disabled={userData?.designation === 'Branch Manager'}
+              disabled={isBranchManager}
             >
-              {userData?.designation === 'Branch Manager' ? (
+              {isBranchManager ? (
                 <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
               ) : (
                 <>
@@ -1204,7 +1209,7 @@ export const LeavesPage: React.FC = () => {
                 <X size={18} className="text-secondary-500" />
               </button>
             </div>
-            {canManageLeaves && (
+            {canAddLeave && (
               <div className="px-4 py-3 border-b border-secondary-100">
                 <button type="button" onClick={() => openBulkLeaveForDate(selectedCalendarDate)} className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-700 bg-white border border-purple-300 rounded-lg hover:bg-purple-50 transition-colors">
                   <Plus size={16} /> Add Leave
@@ -1271,14 +1276,18 @@ export const LeavesPage: React.FC = () => {
                           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${colors.badge} ${colors.text}`}>
                             {(detail as any).leaveType || 'Leave'}
                           </span>
-                          {matchingLeave && canManageLeaves && (
+                          {matchingLeave && (canEditLeave || canDeleteLeave) && (
                             <div className="flex items-center gap-1">
-                              <button type="button" onClick={(e) => openEditLeave(matchingLeave, e)} className="p-1 rounded hover:bg-secondary-200 text-secondary-600">
-                                <Pencil size={14} />
-                              </button>
-                              <button type="button" onClick={(e) => handleDeleteLeave(matchingLeave, e)} className="p-1 rounded hover:bg-red-100 text-red-600">
-                                <Trash2 size={14} />
-                              </button>
+                              {canEditLeave && (
+                                <button type="button" onClick={(e) => openEditLeave(matchingLeave, e)} className="p-1 rounded hover:bg-secondary-200 text-secondary-600">
+                                  <Pencil size={14} />
+                                </button>
+                              )}
+                              {canDeleteLeave && (
+                                <button type="button" onClick={(e) => handleDeleteLeave(matchingLeave, e)} className="p-1 rounded hover:bg-red-100 text-red-600">
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1392,7 +1401,7 @@ export const LeavesPage: React.FC = () => {
 
                     // Branch filter using branches collection as source of truth.
                     // Branch Managers are locked to their own branch; others follow the selected branch filter (if any).
-                    const effectiveBranch = userData?.designation === 'Branch Manager' ? managerBranch : branchFilter;
+                    const effectiveBranch = isBranchManager ? managerBranch : branchFilter;
                     if (effectiveBranch) {
                       const branchData = branchesList.find((b) => b.name === effectiveBranch);
                       const branchEmployeeIds = branchData?.employeeIds || [];
@@ -1483,10 +1492,12 @@ export const LeavesPage: React.FC = () => {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeBulkLeaveModal}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
-                  {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
-                </button>
+                {canAddLeave && (
+                  <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
+                    className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
+                    {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1601,10 +1612,12 @@ export const LeavesPage: React.FC = () => {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setEditLeaveOpen(false)}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={isSavingEdit || editLeaveForm.dates.length === 0 || !editLeaveForm.reason}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
-                  {isSavingEdit ? 'Saving...' : 'Save Changes'}
-                </button>
+                {canEditLeave && (
+                  <button type="submit" disabled={isSavingEdit || editLeaveForm.dates.length === 0 || !editLeaveForm.reason}
+                    className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
+                    {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -1636,14 +1649,16 @@ export const LeavesPage: React.FC = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={confirmDeleteLeave}
-                  disabled={isDeleting}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-60"
-                >
-                  {isDeleting ? 'Deleting...' : 'Delete'}
-                </button>
+                {canDeleteLeave && (
+                  <button
+                    type="button"
+                    onClick={confirmDeleteLeave}
+                    disabled={isDeleting}
+                    className="flex-1 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-60"
+                  >
+                    {isDeleting ? 'Deleting...' : 'Delete'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

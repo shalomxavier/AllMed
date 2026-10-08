@@ -4,13 +4,14 @@ import { User, Briefcase, Menu } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { ToastProvider } from '@/components/common';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, ROLE_NAMES } from '@/permissions';
 
 export const DashboardLayout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const { userData } = useAuthContext();
+  const { isWhatsAppMessager, roleId } = useRole();
   const location = useLocation();
   const isDmsWorkspace = location.pathname.startsWith('/dms/workspace');
-  const isWhatsAppMessager = userData?.designation === 'WhatsApp Messager';
   const isWhatsAppEnquiryPage = location.pathname === '/dms/whatsapp-enquiry';
 
   const handleSidebarClose = (): void => {
@@ -72,7 +73,7 @@ export const DashboardLayout: React.FC = () => {
                 <p className="text-sm font-medium text-secondary-900 leading-tight">{userData.name}</p>
                 <div className="flex items-center gap-1 text-xs text-secondary-500">
                   <Briefcase size={10} />
-                  <span>{userData.designation}</span>
+                  <span>{ROLE_NAMES[roleId || ''] || userData.designation || 'Unknown'}</span>
                 </div>
               </div>
             </div>

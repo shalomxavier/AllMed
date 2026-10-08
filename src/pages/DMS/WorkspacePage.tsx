@@ -8,6 +8,7 @@ import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { LostReasonModal } from './components/LostReasonModal';
 import { useToast } from '@/components/common';
 import { useWhatsApp } from '@/hooks/useWhatsApp';
+import { usePermissions } from '@/permissions';
 import { updateDeliveryStatus } from '@/services/whatsapp';
 import { enquiriesService } from '@/services/firestore/enquiriesService';
 import type { EnquiryStatus } from './types';
@@ -51,6 +52,9 @@ export const WorkspacePage: React.FC = () => {
   });
 
   const { showToast } = useToast();
+  const { hasPermission } = usePermissions();
+  const canSendMessage = hasPermission('dms', 'whatsappMessenger', 'send');
+  const canManageMessenger = hasPermission('dms', 'whatsappMessenger', 'manage');
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -304,9 +308,9 @@ export const WorkspacePage: React.FC = () => {
                 contact={activeConversation.contact}
                 onBack={handleBackToList}
                 enquiryStatus={status}
-                onDelivered={handleDeliveredClick}
-                onNotDelivered={handleNotDeliveredClick}
-                onActiveEnquiry={handleActiveEnquiry}
+                onDelivered={canManageMessenger ? handleDeliveredClick : undefined}
+                onNotDelivered={canManageMessenger ? handleNotDeliveredClick : undefined}
+                onActiveEnquiry={canManageMessenger ? handleActiveEnquiry : undefined}
                 lastEnquiryInfo={lastEnquiryInfo}
               />
 
@@ -326,7 +330,7 @@ export const WorkspacePage: React.FC = () => {
                   <div ref={messagesEndRef} />
                 </div>
 
-                <MessageInput onSendMessage={handleSendMessage} />
+                {canSendMessage && <MessageInput onSendMessage={handleSendMessage} />}
               </div>
             </>
           ) : (

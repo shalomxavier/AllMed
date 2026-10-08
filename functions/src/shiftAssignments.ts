@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions';
 import { db } from './config';
+import { hasRolePermission, isBranchManager } from './permissions';
 
 type Assignment = {
   assignmentId?: string;
@@ -24,7 +25,6 @@ type EmployeeIdentity = {
   employeeName: string;
 };
 
-const allowedRoles = ['Director', 'HR', 'Branch Manager'];
 const normalize = (value?: string): string => (value ?? '').trim().toLowerCase();
 const assignmentId = (): string => db.collection('_ids').doc().id;
 const validDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -44,15 +44,13 @@ const requireDateRange = (data: Record<string, unknown>): { fromDate: string; to
   return { fromDate, toDate };
 };
 
-const getCallerRole = async (uid: string): Promise<string> => {
-  const snapshot = await db.collection('users').doc(uid).get();
-  const designation = snapshot.data()?.designation;
-  if (!allowedRoles.includes(designation)) throw new functions.https.HttpsError('permission-denied', 'You cannot manage shift assignments.');
-  return designation;
+const requireShiftAssignmentPermission = async (uid: string, action: 'add' | 'edit' | 'delete'): Promise<void> => {
+  const allowed = await hasRolePermission(uid, 'employees', 'shiftAssignment', action);
+  if (!allowed) throw new functions.https.HttpsError('permission-denied', 'You cannot manage shift assignments.');
 };
 
-const authorize = async (uid: string, role: string, employeeId: string, shiftIds: string[]): Promise<void> => {
-  if (role === 'Director' || role === 'HR') return;
+const authorize = async (uid: string, employeeId: string, shiftIds: string[]): Promise<void> => {
+  if (!(await isBranchManager(uid))) return;
   const snapshot = await db.collection('branches').where('managerId', '==', uid).get();
   const allowed = snapshot.docs.some((document) => {
     const branch = document.data();
@@ -125,8 +123,8 @@ export const addExistingShiftAssignment = callable(async (data, uid) => {
   const employeeId = requireString(data, 'employeeId');
   const shiftId = requireString(data, 'shiftId');
   const dates = requireDateRange(data);
-  const role = await getCallerRole(uid);
-  await authorize(uid, role, employeeId, [shiftId]);
+  await requireShiftAssignmentPermission(uid, 'add');
+  await authorize(uid, employeeId, [shiftId]);
   const employee = await getEmployee(employeeId);
   const newId = assignmentId();
   await db.runTransaction(async (transaction) => {
@@ -148,8 +146,8 @@ export const updateExistingShiftAssignment = callable(async (data, uid) => {
   const destinationShiftId = requireString(data, 'destinationShiftId');
   const selectedAssignmentId = requireString(data, 'assignmentId');
   const dates = requireDateRange(data);
-  const role = await getCallerRole(uid);
-  await authorize(uid, role, employeeId, [sourceShiftId, destinationShiftId]);
+  await requireShiftAssignmentPermission(uid, 'edit');
+  await authorize(uid, employeeId, [sourceShiftId, destinationShiftId]);
   const employee = await getEmployee(employeeId);
   const legacyFromDate = typeof data.legacyFromDate === 'string' ? data.legacyFromDate : undefined;
   const legacyToDate = typeof data.legacyToDate === 'string' ? data.legacyToDate : undefined;
@@ -180,8 +178,8 @@ export const removeExistingShiftAssignment = callable(async (data, uid) => {
   const employeeId = requireString(data, 'employeeId');
   const shiftId = requireString(data, 'shiftId');
   const selectedAssignmentId = requireString(data, 'assignmentId');
-  const role = await getCallerRole(uid);
-  await authorize(uid, role, employeeId, [shiftId]);
+  await requireShiftAssignmentPermission(uid, 'delete');
+  await authorize(uid, employeeId, [shiftId]);
   const employee = await getEmployee(employeeId);
   const legacyFromDate = typeof data.legacyFromDate === 'string' ? data.legacyFromDate : undefined;
   const legacyToDate = typeof data.legacyToDate === 'string' ? data.legacyToDate : undefined;
@@ -202,8 +200,8 @@ export const changeExistingShiftAssignmentForDate = callable(async (data, uid) =
   const selectedAssignmentId = requireString(data, 'assignmentId');
   const date = requireString(data, 'date');
   if (!validDate(date)) throw new functions.https.HttpsError('invalid-argument', 'Invalid shift date.');
-  const role = await getCallerRole(uid);
-  await authorize(uid, role, employeeId, [sourceShiftId, destinationShiftId]);
+  await requireShiftAssignmentPermission(uid, 'edit');
+  await authorize(uid, employeeId, [sourceShiftId, destinationShiftId]);
   const employee = await getEmployee(employeeId);
   await db.runTransaction(async (transaction) => {
     const slots = await readSlots(transaction);

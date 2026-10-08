@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Building, X, Plus, Pencil, Trash2, Eye, User } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { usePermissions, useRole } from '@/permissions';
 import { MultiSelectDropdown, RedSpinner, useToast } from '@/components/common';
 import {
   getFirestore,
@@ -48,6 +49,11 @@ interface Shift {
 export const BranchesPage: React.FC = () => {
   const { showToast } = useToast();
   const { currentUser, userData } = useAuthContext();
+  const { isBranchManager } = useRole();
+  const { hasPermission } = usePermissions();
+  const canAdd = hasPermission('masters', 'branches', 'add');
+  const canEdit = hasPermission('masters', 'branches', 'edit');
+  const canDelete = hasPermission('masters', 'branches', 'delete');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -87,7 +93,7 @@ export const BranchesPage: React.FC = () => {
     if (!currentUser) return;
     try {
       const db = getFirestore();
-      const q = query(collection(db, 'users'), where('designation', '==', 'Branch Manager'), orderBy('name'));
+      const q = query(collection(db, 'users'), where('roleId', '==', 'branch-manager'), orderBy('name'));
       const snapshot = await getDocs(q);
       const data: Manager[] = [];
       snapshot.forEach((d) => {
@@ -140,7 +146,7 @@ export const BranchesPage: React.FC = () => {
       let allowedShiftIds: string[] | null = null;
       
       // If user is Branch Manager, fetch the branch(es) they manage
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -292,13 +298,15 @@ export const BranchesPage: React.FC = () => {
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-secondary-900">Branches</h1>
         </div>
-        <button
-          onClick={openAddModal}
-          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <Plus size={18} />
-          Add Branch
-        </button>
+        {canAdd && (
+          <button
+            onClick={openAddModal}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <Plus size={18} />
+            Add Branch
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto py-6">
@@ -348,20 +356,24 @@ export const BranchesPage: React.FC = () => {
                   >
                     <Eye size={16} />
                   </button>
-                  <button
-                    onClick={() => openEditModal(branch)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-                    aria-label="Edit"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteClick(branch)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => openEditModal(branch)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+                      aria-label="Edit"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDeleteClick(branch)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -447,13 +459,15 @@ export const BranchesPage: React.FC = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !name.trim()}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
-                >
-                  {saving ? 'Saving...' : editingBranch ? 'Update' : 'Save'}
-                </button>
+                {(editingBranch ? canEdit : canAdd) && (
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !name.trim()}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
+                  >
+                    {saving ? 'Saving...' : editingBranch ? 'Update' : 'Save'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

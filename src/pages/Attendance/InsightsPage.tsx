@@ -5,6 +5,7 @@ import { Timestamp, collection, getDocs, getFirestore, orderBy, query, where } f
 import { PageContainer, RedSpinner } from '@/components/common';
 import { PieChart } from '@/pages/DMS/dashboard/PieChart';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole } from '@/permissions';
 
 interface Employee {
   employeeCode?: string;
@@ -349,6 +350,7 @@ const DepartmentShiftTable: React.FC<{ rows: [string, DepartmentShiftCounts][]; 
 export const InsightsPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
+  const { isBranchManager } = useRole();
   const [selectedDate, setSelectedDate] = useState(getToday);
   const [charts, setCharts] = useState<AttendanceChart[]>([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
@@ -366,7 +368,7 @@ export const InsightsPage: React.FC = () => {
       setError(null);
       try {
         const firestore = getFirestore();
-        if (userData?.designation === 'Branch Manager' && currentUser) {
+        if (isBranchManager && currentUser) {
           const branchQuery = query(collection(firestore, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
           const branchName = branchSnapshot.empty ? '' : (branchSnapshot.docs[0].data().name || '');
@@ -773,12 +775,12 @@ export const InsightsPage: React.FC = () => {
                 id="insights-branch"
                 value={branchFilter}
                 onChange={(event) => setBranchFilter(event.target.value)}
-                disabled={userData?.designation === 'Branch Manager' || branchesLoading}
+                disabled={isBranchManager || branchesLoading}
                 className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
               >
                 {branchesLoading ? (
                   <option value="">Loading branches...</option>
-                ) : userData?.designation === 'Branch Manager' ? (
+                ) : isBranchManager ? (
                   <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
                 ) : (
                   <>

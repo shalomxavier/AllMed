@@ -1,126 +1,274 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Only Director (admin) and HR designations may add/edit/delete punch records
-    function canManagePunches() {
-      return request.auth != null &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    // ---------------------------------------------------------------------
+    // RBAC helpers
+    // ---------------------------------------------------------------------
+
+    function authenticated() {
+      return request.auth != null;
     }
 
-    function canManageAllLeaves() {
-      return request.auth != null &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
     }
 
+    function getUserDesignation(uid) {
+      return getUserData(uid) != null && 'designation' in getUserData(uid)
+        ? getUserData(uid).designation
+        : '';
+    }
+
+    function getRoleData(roleId) {
+      return get(/databases/$(database)/documents/roles/$(roleId)).data;
+    }
+
+    function getRolePermissions(roleId) {
+      return getRoleData(roleId) != null && 'permissions' in getRoleData(roleId)
+        ? getRoleData(roleId).permissions
+        : null;
+    }
+
+    function getEffectiveRoleId(uid) {
+      return getUserData(uid) != null && 'roleId' in getUserData(uid) && getUserData(uid).roleId != ''
+        ? getUserData(uid).roleId
+        : getUserDesignation(uid) == 'Director' ? 'director'
+        : getUserDesignation(uid) == 'HR' ? 'hr'
+        : getUserDesignation(uid) == 'Operations Manager' ? 'operations-manager'
+        : getUserDesignation(uid) == 'Branch Manager' ? 'branch-manager'
+        : getUserDesignation(uid) == 'WhatsApp Messager' ? 'whatsapp-messager'
+        : '';
+    }
+
+    function normalizeAction(action) {
+      return action == 'access' ? 'view' : action;
+    }
+
+    // Legacy designation fallback used only while the roles collection is being seeded.
+    // Mirrors DEFAULT_ROLE_PERMISSIONS so pre-migration effective access matches RBAC.
+    function hasLegacyAccess(uid, module, item, action) {
+      return getUserDesignation(uid) == 'Director' ||
+        (getUserDesignation(uid) == 'HR' &&
+          module in ['employees', 'attendanceLogs', 'shifts', 'leaves', 'reports', 'insights', 'devices', 'masters', 'users']) ||
+        (getUserDesignation(uid) == 'Operations Manager' &&
+          (module == 'dms' ||
+            (module == 'users' && item == 'userManagement' &&
+              normalizeAction(action) in ['view', 'add', 'edit']))) ||
+        (getUserDesignation(uid) == 'WhatsApp Messager' && module == 'dms') ||
+        (getUserDesignation(uid) == 'Branch Manager' && (
+          (module == 'employees' && (
+            (item == 'employeeManagement' && normalizeAction(action) in ['view', 'edit']) ||
+            (item == 'shiftAssignment' && normalizeAction(action) in ['view', 'add', 'edit', 'delete']))) ||
+          (module == 'attendanceLogs' && item == 'rawPunches' && normalizeAction(action) == 'view') ||
+          (module == 'shifts' && item == 'shifts' && normalizeAction(action) in ['view', 'edit']) ||
+          (module == 'leaves' && (
+            (item == 'leaves' && normalizeAction(action) in ['view', 'add', 'edit']) ||
+            (item == 'weekOffs' && normalizeAction(action) in ['view', 'add', 'edit']) ||
+            (item == 'leaveLimits' && normalizeAction(action) == 'view'))) ||
+          (module == 'reports' && normalizeAction(action) in ['view', 'export']) ||
+          (module == 'insights' && normalizeAction(action) == 'view')));
+    }
+
+    function modulePermissionCheck(perms, module, item, action) {
+      return module in perms && (
+        ('accessMode' in perms[module] && perms[module].accessMode == 'full') ||
+        ('items' in perms[module] &&
+          item in perms[module].items &&
+          'actions' in perms[module].items[item] &&
+          normalizeAction(action) in perms[module].items[item].actions)
+      );
+    }
+
+    function hasRolePermission(uid, module, item, action) {
+      return getEffectiveRoleId(uid) != '' &&
+        (getRolePermissions(getEffectiveRoleId(uid)) != null
+          ? modulePermissionCheck(getRolePermissions(getEffectiveRoleId(uid)), module, item, action)
+          : hasLegacyAccess(uid, module, item, action));
+    }
+
+    function perm(module, item, action) {
+      return authenticated() && hasRolePermission(request.auth.uid, module, item, action);
+    }
+
+    function isDirector(uid) {
+      return getEffectiveRoleId(uid) == 'director';
+    }
+
+    // Branch Managers may only touch leave records that belong to their branch.
     function canManageBranchEmployee(leave) {
-      return request.auth != null &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation == 'Branch Manager' &&
+      return authenticated() &&
+        getEffectiveRoleId(request.auth.uid) == 'branch-manager' &&
         leave.branchId is string &&
         leave.employeeId is string &&
         get(/databases/$(database)/documents/branches/$(leave.branchId)).data.managerId == request.auth.uid &&
         leave.employeeId in get(/databases/$(database)/documents/branches/$(leave.branchId)).data.employeeIds;
     }
 
-    function canManageShifts() {
-      return request.auth != null &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.designation in ['Director', 'HR'];
+    // Non-BM roles are unrestricted by scope; BM must satisfy branch scope.
+    function withinBranchScopeIfBranchManager(data) {
+      return getEffectiveRoleId(request.auth.uid) != 'branch-manager' || canManageBranchEmployee(data);
     }
 
-    // Allow authenticated users to read conversations
+    // ---------------------------------------------------------------------
+    // Users and roles
+    // ---------------------------------------------------------------------
+
+    match /users/{userId} {
+      // Any authenticated user can read user documents (preserves prior behavior).
+      allow read: if authenticated();
+
+      allow create: if authenticated() &&
+        request.auth.uid != userId &&
+        (hasRolePermission(request.auth.uid, 'users', 'userManagement', 'add') ||
+          getUserDesignation(request.auth.uid) in ['Director', 'HR', 'Operations Manager']);
+
+      allow update: if authenticated() && (
+        // Admin update of another user's document
+        (request.auth.uid != userId &&
+          (hasRolePermission(request.auth.uid, 'users', 'userManagement', 'edit') ||
+            getUserDesignation(request.auth.uid) in ['Director', 'HR', 'Operations Manager'])) ||
+        // Self-update that does not touch protected fields
+        (request.auth.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['roleId', 'designation', 'email', 'branch'])) ||
+        // Self-migration: set own roleId to the value its designation maps to
+        (request.auth.uid == userId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['roleId']) &&
+          'roleId' in request.resource.data &&
+          request.resource.data.roleId == getEffectiveRoleId(userId))
+      );
+
+      allow delete: if authenticated() &&
+        request.auth.uid != userId &&
+        (hasRolePermission(request.auth.uid, 'users', 'userManagement', 'delete') ||
+          getUserDesignation(request.auth.uid) == 'Director');
+    }
+
+    match /roles/{roleId} {
+      // Roles must be readable by all authenticated users so AuthContext can resolve permissions.
+      allow read: if authenticated();
+      // Only Directors may modify role definitions.
+      allow write: if authenticated() && isDirector(request.auth.uid);
+    }
+
+    // ---------------------------------------------------------------------
+    // DMS / WhatsApp
+    // ---------------------------------------------------------------------
+
     match /whatsapp_conversations/{conversationId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow write: if authenticated();
     }
 
-    // Allow authenticated users to read messages
     match /whatsapp_messages/{messageId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow write: if authenticated();
     }
 
-    // Allow authenticated users to read employees
+    // ---------------------------------------------------------------------
+    // Attendance — per-action enforcement (add/edit/delete are independent)
+    // ---------------------------------------------------------------------
+
     match /employees/{employeeId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow create: if perm('employees', 'employeeManagement', 'add');
+      allow update: if perm('employees', 'employeeManagement', 'edit');
+      allow delete: if perm('employees', 'employeeManagement', 'delete');
     }
 
-    // Allow authenticated users to read raw punches; only Director/HR can add, edit or delete
     match /rawPunches/{docId} {
-      allow read: if request.auth != null;
-      allow write: if canManagePunches();
+      allow read: if authenticated();
+      allow create: if perm('attendanceLogs', 'rawPunches', 'add');
+      allow update: if perm('attendanceLogs', 'rawPunches', 'edit');
+      allow delete: if perm('attendanceLogs', 'rawPunches', 'delete');
     }
 
-    // Allow authenticated users to read the punch audit log (change tracker); only Director/HR can write
     match /punchAuditLog/{docId} {
-      allow read: if request.auth != null;
-      allow write: if canManagePunches();
+      allow read: if authenticated();
+      // Audit rows are written only as a side-effect of editing punches.
+      allow write: if perm('attendanceLogs', 'rawPunches', 'edit');
     }
 
-    // Allow authenticated users to read shifts; only Director/HR may mutate valid slot documents
     match /shifts/{shiftId} {
-      allow read: if request.auth != null;
-      allow create, update: if canManageShifts()
+      allow read: if authenticated();
+      allow create: if perm('shifts', 'shifts', 'add')
         && request.resource.data.startTime is string
         && request.resource.data.endTime is string
         && request.resource.data.employees is list;
-      allow delete: if canManageShifts();
+      // Branch Managers must not mutate the employees[] roster via direct writes;
+      // all their assignment changes go through the scoped callable functions.
+      allow update: if perm('shifts', 'shifts', 'edit')
+        && request.resource.data.startTime is string
+        && request.resource.data.endTime is string
+        && request.resource.data.employees is list
+        && (getEffectiveRoleId(request.auth.uid) != 'branch-manager'
+          || request.resource.data.employees == resource.data.employees);
+      allow delete: if perm('shifts', 'shifts', 'delete');
     }
 
-    // Allow authenticated users to read leaves; Director/HR may mutate all records,
-    // while Branch Managers may mutate records only for employees in their branch.
     match /leaves/{leaveId} {
-      allow read: if request.auth != null;
-      allow create: if canManageAllLeaves() || canManageBranchEmployee(request.resource.data);
-      allow update: if canManageAllLeaves() || canManageBranchEmployee(request.resource.data);
-      allow delete: if canManageAllLeaves() || canManageBranchEmployee(resource.data);
+      allow read: if authenticated();
+      // Week-off documents (type == 'weekoff') live in this collection and are
+      // governed by the 'weekOffs' permission item; everything else uses 'leaves'.
+      allow create: if (!('type' in request.resource.data) || request.resource.data.type != 'weekoff'
+          ? perm('leaves', 'leaves', 'add')
+          : perm('leaves', 'weekOffs', 'add'))
+        && withinBranchScopeIfBranchManager(request.resource.data);
+      allow update: if (!('type' in resource.data) || resource.data.type != 'weekoff'
+          ? perm('leaves', 'leaves', 'edit')
+          : perm('leaves', 'weekOffs', 'edit'))
+        && withinBranchScopeIfBranchManager(request.resource.data);
+      allow delete: if (!('type' in resource.data) || resource.data.type != 'weekoff'
+          ? perm('leaves', 'leaves', 'delete')
+          : perm('leaves', 'weekOffs', 'delete'))
+        && withinBranchScopeIfBranchManager(resource.data);
     }
 
-    // Allow authenticated users to read leave limits; only Director/HR may mutate them
     match /leaveLimits/{limitId} {
-      allow read: if request.auth != null;
-      allow write: if canManageAllLeaves();
+      allow read: if authenticated();
+      allow create: if perm('leaves', 'leaveLimits', 'add');
+      allow update: if perm('leaves', 'leaveLimits', 'edit');
+      allow delete: if perm('leaves', 'leaveLimits', 'delete');
     }
 
-    // Allow authenticated users to read and write week offs
     match /weekOffs/{weekOffId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow create: if perm('leaves', 'weekOffs', 'add') && withinBranchScopeIfBranchManager(request.resource.data);
+      allow update: if perm('leaves', 'weekOffs', 'edit') && withinBranchScopeIfBranchManager(request.resource.data);
+      allow delete: if perm('leaves', 'weekOffs', 'delete') && withinBranchScopeIfBranchManager(resource.data);
     }
 
-    // Allow authenticated users to read and write devices
     match /devices/{deviceId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow create: if perm('devices', 'devices', 'add');
+      allow update: if perm('devices', 'devices', 'edit');
+      allow delete: if perm('devices', 'devices', 'delete');
     }
 
-    // Allow authenticated users to read and write designations
     match /designations/{designationId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow create: if perm('masters', 'designations', 'add');
+      allow update: if perm('masters', 'designations', 'edit');
+      allow delete: if perm('masters', 'designations', 'delete');
     }
 
-    // Allow authenticated users to read and write departments
     match /departments/{departmentId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow create: if perm('masters', 'departments', 'add');
+      allow update: if perm('masters', 'departments', 'edit');
+      allow delete: if perm('masters', 'departments', 'delete');
     }
 
-    // Allow authenticated users to read and write branches
     match /branches/{branchId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow create: if perm('masters', 'branches', 'add');
+      allow update: if perm('masters', 'branches', 'edit');
+      allow delete: if perm('masters', 'branches', 'delete');
     }
 
-    // Allow authenticated users to read and write enquiries
     match /enquiries/{enquiryId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
-    }
-
-    // Allow authenticated users to read and write users
-    match /users/{userId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if authenticated();
+      allow write: if authenticated();
     }
   }
 }

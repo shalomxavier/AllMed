@@ -271,6 +271,53 @@ const changeAssignmentForDate = async (
   });
 };
 
+/**
+ * Change an employee's shift for a single date.
+ * Branch Managers must go through the callable so the operation is checked
+ * against employees.shiftAssignment.edit and scoped to their branch; other
+ * roles keep using the direct Firestore transaction.
+ */
+const changeAssignmentForDateScoped = async (
+  isBranchManager: boolean,
+  args: {
+    employeeCode: string;
+    employeeId?: string;
+    date: string;
+    destinationShiftId: string;
+    startTime: string;
+    endTime: string;
+  },
+): Promise<void> => {
+  if (!isBranchManager) {
+    await changeAssignmentForDate(args.employeeCode, args.date, args.startTime, args.endTime);
+    return;
+  }
+  const slots = await readSlots();
+  const resolution = resolveShiftAssignment(
+    flattenShiftAssignments(slots, args.employeeCode),
+    args.employeeCode,
+    args.date,
+  );
+  if (resolution.status !== 'resolved') {
+    throw new Error(resolution.status === 'none'
+      ? 'No shift assignment covers the selected date.'
+      : 'Multiple shifts cover the selected date. Run the shift audit before changing it.');
+  }
+  const employeeId = args.employeeId ?? resolution.assignment.employeeId;
+  if (!employeeId) throw new Error('Employee record not found.');
+  await changeExistingAssignmentForDate(
+    {
+      employeeId,
+      shiftId: resolution.assignment.slotId,
+      assignmentId: resolution.assignment.assignmentId,
+      fromDate: resolution.assignment.fromDate,
+      toDate: resolution.assignment.toDate,
+    },
+    args.destinationShiftId,
+    args.date,
+  );
+};
+
 const addExistingAssignment = async (assignment: ExistingShiftAssignment): Promise<string> => {
   try {
     const result = await addExistingAssignmentFn(assignment);
@@ -340,6 +387,7 @@ export const shiftAssignmentsService = {
   removeAssignment,
   moveAssignment,
   changeAssignmentForDate,
+  changeAssignmentForDateScoped,
   addExistingAssignment,
   updateExistingAssignment,
   removeExistingAssignment,

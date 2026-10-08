@@ -1,4 +1,4 @@
-import { CheckCircle, XCircle, AlertCircle, X } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, X, ShieldAlert } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
 export type ToastType = 'success' | 'error' | 'warning';
@@ -75,12 +75,57 @@ interface ToastContextValue {
   showToast: (type: ToastType, message: string) => void;
 }
 
+const PERMISSION_ERROR_PATTERNS = [
+  'permission-denied',
+  'permission denied',
+  'insufficient permissions',
+  'missing or insufficient permissions',
+  'you can only manage',
+  'not authorized',
+  'unauthorized',
+];
+
+export const isPermissionError = (message: string): boolean => {
+  const m = message.toLowerCase();
+  return PERMISSION_ERROR_PATTERNS.some((p) => m.includes(p));
+};
+
+const PermissionDeniedDialog: React.FC<{ detail: string; onClose: () => void }> = ({ detail, onClose }) => (
+  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+    <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 text-center">
+      <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+        <ShieldAlert className="w-7 h-7 text-red-600" />
+      </div>
+      <h3 className="text-lg font-semibold text-secondary-900 mb-2">Permission Denied</h3>
+      <p className="text-sm text-secondary-600 mb-3">
+        You don't have permission to perform this action. Please contact your administrator.
+      </p>
+      {detail && (
+        <p className="text-xs text-secondary-400 bg-secondary-50 rounded-lg px-3 py-2 mb-4 break-words">
+          {detail}
+        </p>
+      )}
+      <button
+        onClick={onClose}
+        className="w-full px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
+      >
+        OK
+      </button>
+    </div>
+  </div>
+);
+
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const showToast = useCallback((type: ToastType, message: string) => {
+    if (type === 'error' && isPermissionError(message)) {
+      setPermissionError(message);
+      return;
+    }
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setToasts((prev) => [...prev, { id, type, message }]);
   }, []);
@@ -102,6 +147,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           />
         ))}
       </div>
+      {permissionError && (
+        <PermissionDeniedDialog detail={permissionError} onClose={() => setPermissionError(null)} />
+      )}
     </ToastContext.Provider>
   );
 };

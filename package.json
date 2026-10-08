@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -22,6 +22,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
     "@types/react": "^18.2.43",
     "@types/react-datepicker": "^6.0.0",
     "@types/react-dom": "^18.2.17",
@@ -35,6 +36,7 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^7.18.0",
     "vite": "^5.0.8",
     "vite-plugin-pwa": "^0.17.4",
     "vitest": "^3.2.7"

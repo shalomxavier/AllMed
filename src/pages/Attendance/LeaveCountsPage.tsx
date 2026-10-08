@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { addDays, intervalToDuration, parseISO } from 'date-fns';
 import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner } from '@/components/common';
 import {
   findOverlappingLeaveLimits,
@@ -61,6 +62,8 @@ const kebabCase = (value: string): string => value.toLowerCase().replace(/\s+/g,
 export const LeaveCountsPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
+  const { isBranchManager } = useRole();
+  const { hasPermission: checkPermission } = usePermissions();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [leaves, setLeaves] = useState<LeaveRecord[]>([]);
   const [limits, setLimits] = useState<LeaveLimit[]>([]);
@@ -104,7 +107,7 @@ export const LeaveCountsPage: React.FC = () => {
 
         let allowedEmployeeIds: string[] | null = null;
         let resolvedManagerBranch = '';
-        if (userData?.designation === 'Branch Manager') {
+        if (isBranchManager) {
           const branchSnapshot = await getDocs(query(collection(db, 'branches'), where('managerId', '==', currentUser.uid)));
           if (!branchSnapshot.empty) {
             const branchData = branchSnapshot.docs[0].data();
@@ -139,7 +142,10 @@ export const LeaveCountsPage: React.FC = () => {
     fetchData();
   }, [currentUser, userData]);
 
-  const canManageLimits = userData?.designation === 'Director' || userData?.designation === 'HR';
+  const canAddLimit = checkPermission('leaves', 'leaveLimits', 'add');
+  const canEditLimit = checkPermission('leaves', 'leaveLimits', 'edit');
+  const canDeleteLimit = checkPermission('leaves', 'leaveLimits', 'delete');
+  const canManageLimits = canAddLimit || canEditLimit || canDeleteLimit;
 
   const getEmployeeLimits = (employee?: Employee | null) => {
     const employeeCode = normalizeLeaveEmployeeCode(employee?.employeeCode);
@@ -149,7 +155,7 @@ export const LeaveCountsPage: React.FC = () => {
   };
 
   const openAddLimit = (employee: Employee, fromManage = false) => {
-    if (!canManageLimits) return;
+    if (!canAddLimit) return;
     setEditingEmployee(employee);
     setEditingLimit(null);
     setReturnToManage(fromManage);
@@ -167,7 +173,7 @@ export const LeaveCountsPage: React.FC = () => {
   };
 
   const openEditLimit = (employee: Employee, limit: LeaveLimit) => {
-    if (!canManageLimits) return;
+    if (!canEditLimit) return;
     const prefilledLimits: Record<string, string> = {};
     Object.entries(limit.limits || {}).forEach(([type, value]) => {
       prefilledLimits[type] = String(value);
@@ -262,7 +268,7 @@ export const LeaveCountsPage: React.FC = () => {
   };
 
   const handleDeleteLimit = async (limitId: string) => {
-    if (!canManageLimits || !window.confirm('Delete this leave-limit period? This action cannot be undone.')) return;
+    if (!canDeleteLimit || !window.confirm('Delete this leave-limit period? This action cannot be undone.')) return;
     setDeletingLimit(limitId);
     setManageLimitError('');
     try {
@@ -279,7 +285,7 @@ export const LeaveCountsPage: React.FC = () => {
 
   const employeeStats = useMemo(() => {
     const search = searchQuery.trim().toLowerCase();
-    const effectiveBranch = userData?.designation === 'Branch Manager' ? (managerBranch ?? '') : branchFilter;
+    const effectiveBranch = isBranchManager ? (managerBranch ?? '') : branchFilter;
     const selectedBranch = effectiveBranch ? branchesList.find((branch) => branch.name === effectiveBranch) : undefined;
 
     return employees
@@ -304,7 +310,7 @@ export const LeaveCountsPage: React.FC = () => {
         };
       })
       .sort((a, b) => (a.employeeName || '').localeCompare(b.employeeName || ''));
-  }, [employees, limits, searchQuery, branchFilter, managerBranch, branchesList, userData?.designation]);
+  }, [employees, limits, searchQuery, branchFilter, managerBranch, branchesList, isBranchManager]);
 
   if (loading) {
     return (
@@ -346,10 +352,10 @@ export const LeaveCountsPage: React.FC = () => {
           <select
             value={branchFilter}
             onChange={(e) => setBranchFilter(e.target.value)}
-            disabled={userData?.designation === 'Branch Manager'}
+            disabled={isBranchManager}
             className="w-full sm:w-56 px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
           >
-            {userData?.designation === 'Branch Manager' ? (
+            {isBranchManager ? (
               <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
             ) : (
               <>
@@ -401,13 +407,15 @@ export const LeaveCountsPage: React.FC = () => {
               <div className="flex items-center gap-1">
                 {canManageLimits && (
                   <>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); openAddLimit(emp); }}
-                      className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50 transition-colors"
-                      aria-label="Add new limit"
-                    >
-                      <Plus size={16} />
-                    </button>
+                    {canAddLimit && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); openAddLimit(emp); }}
+                        className="p-1.5 rounded-lg text-secondary-500 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                        aria-label="Add new limit"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); openManageLimits(emp); }}
                       className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
@@ -575,8 +583,12 @@ export const LeaveCountsPage: React.FC = () => {
                         <div className="flex items-center gap-1">
                           <span className="text-sm font-medium text-secondary-600 whitespace-nowrap">Leave/Off:</span>
                           <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 whitespace-nowrap">{formatLeaveCount(totalAssigned)}</span>
-                          <button type="button" onClick={() => openEditLimit(managingEmployee, limit)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 disabled:opacity-50" aria-label="Edit limit period"><Pencil size={16} /></button>
-                          <button type="button" onClick={() => handleDeleteLimit(limit.id)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50" aria-label="Delete limit period"><Trash2 size={16} /></button>
+                          {canEditLimit && (
+                            <button type="button" onClick={() => openEditLimit(managingEmployee, limit)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 disabled:opacity-50" aria-label="Edit limit period"><Pencil size={16} /></button>
+                          )}
+                          {canDeleteLimit && (
+                            <button type="button" onClick={() => handleDeleteLimit(limit.id)} disabled={deletingLimit === limit.id} className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 disabled:opacity-50" aria-label="Delete limit period"><Trash2 size={16} /></button>
+                          )}
                           <button type="button" onClick={() => setExpandedLimitId(isExpanded ? null : limit.id)} className="p-1.5 rounded-lg text-secondary-700 hover:text-purple-600 hover:bg-purple-50" aria-label={isExpanded ? 'Collapse limit details' : 'Expand limit details'} aria-expanded={isExpanded}>
                             {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                           </button>
@@ -621,9 +633,11 @@ export const LeaveCountsPage: React.FC = () => {
                 })}
               </div>
               <div className="p-4 border-t border-secondary-200">
-                <button type="button" onClick={() => openAddLimit(managingEmployee, true)} className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700">
-                  <Plus size={16} /> Add another limit period
-                </button>
+                {canAddLimit && (
+                  <button type="button" onClick={() => openAddLimit(managingEmployee, true)} className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700">
+                    <Plus size={16} /> Add another limit period
+                  </button>
+                )}
               </div>
             </div>
           </div>

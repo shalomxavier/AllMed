@@ -5,15 +5,18 @@ import { useWhatsApp } from '@/hooks/useWhatsApp';
 import { ConversationList, ChatHeader, MessageBubble, MessageInput } from '@/components/whatsapp';
 import { format } from 'date-fns';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner } from '@/components/common';
 
 export const WhatsAppEnquiryPage: React.FC = () => {
   const navigate = useNavigate();
-  const { userData, logout } = useAuthContext();
+  const { logout } = useAuthContext();
+  const { isWhatsAppMessager } = useRole();
+  const { hasPermission } = usePermissions();
+  const canSendMessage = hasPermission('dms', 'whatsappEnquiry', 'edit');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showMobileChat, setShowMobileChat] = useState(false);
-  const isWhatsAppMessager = userData?.designation === 'WhatsApp Messager';
 
   const {
     conversations,
@@ -290,11 +293,13 @@ export const WhatsAppEnquiryPage: React.FC = () => {
               </div>
 
               {/* Input Area */}
-              <MessageInput
-                onSendMessage={handleSendMessage}
-                disabled={loading}
-                placeholder="Type a message..."
-              />
+              {canSendMessage && (
+                <MessageInput
+                  onSendMessage={handleSendMessage}
+                  disabled={loading}
+                  placeholder="Type a message..."
+                />
+              )}
             </>
           ) : (
             /* Empty State */

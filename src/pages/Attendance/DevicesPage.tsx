@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, RefreshCw, Plus, Fingerprint, X, Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { usePermissions } from '@/permissions';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { RedSpinner, useToast } from '@/components/common';
 
@@ -9,6 +10,10 @@ export const DevicesPage: React.FC = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const { currentUser } = useAuthContext();
+  const { hasPermission } = usePermissions();
+  const canAdd = hasPermission('devices', 'devices', 'add');
+  const canEdit = hasPermission('devices', 'devices', 'edit');
+  const canDelete = hasPermission('devices', 'devices', 'delete');
   const [devices, setDevices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -153,13 +158,15 @@ export const DevicesPage: React.FC = () => {
             />
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={openAddModal}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-            >
-              <Plus size={16} />
-              Register Device
-            </button>
+            {canAdd && (
+              <button
+                onClick={openAddModal}
+                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+              >
+                <Plus size={16} />
+                Register Device
+              </button>
+            )}
           </div>
         </div>
 
@@ -190,18 +197,22 @@ export const DevicesPage: React.FC = () => {
                 className="card p-5 hover:shadow-md transition-shadow relative"
               >
                 <div className="absolute top-4 right-4 flex gap-1">
-                  <button
-                    onClick={() => handleEditClick(device)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-                  >
-                    <Edit size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteClick(device)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => handleEditClick(device)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+                    >
+                      <Edit size={16} />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDeleteClick(device)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-start mb-3">
                   <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
@@ -267,13 +278,15 @@ export const DevicesPage: React.FC = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleRegisterDevice}
-                  disabled={saving || !deviceId.trim() || !location.trim()}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
-                >
-                  {saving ? 'Saving...' : 'Register'}
-                </button>
+                {(editingDevice ? canEdit : canAdd) && (
+                  <button
+                    onClick={handleRegisterDevice}
+                    disabled={saving || !deviceId.trim() || !location.trim()}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
+                  >
+                    {saving ? 'Saving...' : 'Register'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

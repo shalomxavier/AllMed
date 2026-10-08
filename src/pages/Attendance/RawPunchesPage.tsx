@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { collection, getDocs, query, orderBy, limit, startAfter, where, Timestamp, QueryDocumentSnapshot, DocumentData, doc, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner, useToast } from '@/components/common';
 
 interface RawPunch {
@@ -106,9 +107,13 @@ const ANALYSIS_THRESHOLD_MINUTES = 120;
 export const RawPunchesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
+  const { isBranchManager } = useRole();
+  const { hasPermission: checkPermission } = usePermissions();
   const { showToast } = useToast();
-  // Only Director (admin) and HR are allowed to add, edit, or delete punch records.
-  const canManagePunches = userData?.designation === 'Director' || userData?.designation === 'HR';
+  const canAddPunch = checkPermission('attendanceLogs', 'rawPunches', 'add');
+  const canEditPunch = checkPermission('attendanceLogs', 'rawPunches', 'edit');
+  const canDeletePunch = checkPermission('attendanceLogs', 'rawPunches', 'delete');
+  const canViewChangeTracker = checkPermission('attendanceLogs', 'changeTracker', 'view');
 
   const [allPunches, setAllPunches] = useState<RawPunch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -206,7 +211,7 @@ export const RawPunchesPage: React.FC = () => {
     const hasMultiple = punches.length > 1;
     if (punches.length === 0) return (
       <div className="flex items-center justify-center w-[42px]">
-        {canManagePunches && (
+        {canAddPunch && (
           <button
             onClick={(e) => { e.stopPropagation(); setAddingPunch({ record, direction: type }); setAddTimeValue(''); }}
             className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
@@ -221,16 +226,18 @@ export const RawPunchesPage: React.FC = () => {
     const renderPunchItem = (punch: PunchRef, isSecondary: boolean = false) => (
       <div key={punch.id} className="group/punch flex items-center gap-1">
         <span className={`${isSecondary ? 'text-secondary-500' : ''} ${punch.isEdited ? 'text-amber-700 font-medium' : ''}`}>{formatTimeHHMM(punch.time)}</span>
-        {canManagePunches && (
+        {(canEditPunch || canDeletePunch) && (
           <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
-            <button
-              onClick={(e) => { e.stopPropagation(); openEditPunch(punch, record); }}
-              className="p-0.5 rounded text-blue-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-              title="Edit time"
-            >
-              <Pencil size={12} />
-            </button>
-            {hasMultiple && (
+            {canEditPunch && (
+              <button
+                onClick={(e) => { e.stopPropagation(); openEditPunch(punch, record); }}
+                className="p-0.5 rounded text-blue-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+                title="Edit time"
+              >
+                <Pencil size={12} />
+              </button>
+            )}
+            {hasMultiple && canDeletePunch && (
               <button
                 onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch, record }); }}
                 className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
@@ -261,22 +268,26 @@ export const RawPunchesPage: React.FC = () => {
           )}
           {expanded && (
             <>
-              {canManagePunches && (
+              {(canEditPunch || canDeletePunch) && (
                 <div className="flex items-center gap-0.5 ml-0.5 opacity-0 group-hover/punch:opacity-100 transition-opacity">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
-                    className="p-0.5 rounded text-blue-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-                    title="Edit time"
-                  >
-                    <Pencil size={12} />
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
-                    className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
-                    title="Delete punch"
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  {canEditPunch && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openEditPunch(punches[0], record); }}
+                      className="p-0.5 rounded text-blue-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+                      title="Edit time"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  )}
+                  {canDeletePunch && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeletingPunch({ punch: punches[0], record }); }}
+                      className="p-0.5 rounded text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                      title="Delete punch"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                 </div>
               )}
               <button
@@ -303,7 +314,7 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleSaveEdit = async () => {
-    if (!editingPunch || !editTimeValue || !currentUser || !canManagePunches) return;
+    if (!editingPunch || !editTimeValue || !currentUser || !canEditPunch) return;
     setIsSavingEdit(true);
     try {
       const { punch, record } = editingPunch;
@@ -355,7 +366,7 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleConfirmDelete = async () => {
-    if (!deletingPunch || !currentUser || !canManagePunches) return;
+    if (!deletingPunch || !currentUser || !canDeletePunch) return;
     setIsSavingEdit(true);
     try {
       const { punch, record } = deletingPunch;
@@ -389,7 +400,7 @@ export const RawPunchesPage: React.FC = () => {
   };
 
   const handleAddPunch = async () => {
-    if (!addingPunch || !addTimeValue || !currentUser || !canManagePunches) return;
+    if (!addingPunch || !addTimeValue || !currentUser || !canAddPunch) return;
     setIsSavingEdit(true);
     try {
       const { record, direction } = addingPunch;
@@ -607,7 +618,7 @@ export const RawPunchesPage: React.FC = () => {
 
   useEffect(() => {
     const resolveManagerBranch = async () => {
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -1242,7 +1253,7 @@ export const RawPunchesPage: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {userData?.designation !== 'Branch Manager' && (
+          {!isBranchManager && canViewChangeTracker && (
             <button
               onClick={() => navigate('/attendance/change-tracker')}
               className="btn-secondary"
@@ -1251,7 +1262,7 @@ export const RawPunchesPage: React.FC = () => {
               Alterations
             </button>
           )}
-          {userData?.designation !== 'Branch Manager' && (
+          {!isBranchManager && canEditPunch && (
             <button
               onClick={openAnalyzeModal}
               className="btn-primary"
@@ -1305,10 +1316,10 @@ export const RawPunchesPage: React.FC = () => {
             <select
               value={locationFilter}
               onChange={(e) => setLocationFilter(e.target.value)}
-              disabled={userData?.designation === 'Branch Manager'}
+              disabled={isBranchManager}
               className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
             >
-              {userData?.designation === 'Branch Manager' ? (
+              {isBranchManager ? (
                 <option value={managerBranch ?? ''}>{managerBranch || 'No branch assigned'}</option>
               ) : (
                 <>
@@ -1725,13 +1736,15 @@ export const RawPunchesPage: React.FC = () => {
                   />
                 </div>
               </div>
-              <button
-                onClick={handleFixAnomalies}
-                disabled={isFixing || filteredAnalyzeResults.length === 0}
-                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isFixing ? 'Fixing...' : 'Fix'}
-              </button>
+              {canEditPunch && (
+                <button
+                  onClick={handleFixAnomalies}
+                  disabled={isFixing || filteredAnalyzeResults.length === 0}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isFixing ? 'Fixing...' : 'Fix'}
+                </button>
+              )}
             </div>
             {filteredAnalyzeResults.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">

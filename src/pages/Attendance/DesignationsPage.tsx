@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Briefcase, Eye, Pencil, Trash2 } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { usePermissions } from '@/permissions';
 import { getFirestore, collection, addDoc, getDocs, serverTimestamp, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { RedSpinner, useToast } from '@/components/common';
 
 export const DesignationsPage: React.FC = () => {
   const { showToast } = useToast();
   const { currentUser } = useAuthContext();
+  const { hasPermission } = usePermissions();
+  const canAdd = hasPermission('masters', 'designations', 'add');
+  const canEdit = hasPermission('masters', 'designations', 'edit');
+  const canDelete = hasPermission('masters', 'designations', 'delete');
   const [modalOpen, setModalOpen] = useState(false);
   const [designation, setDesignation] = useState('');
   const [subDesignations, setSubDesignations] = useState<string[]>(['']);
@@ -138,12 +143,14 @@ export const DesignationsPage: React.FC = () => {
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-secondary-900">Designations</h1>
         </div>
-        <button
-          onClick={openAddModal}
-          className="px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          Add Designation
-        </button>
+        {canAdd && (
+          <button
+            onClick={openAddModal}
+            className="px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            Add Designation
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto py-6">
@@ -177,20 +184,24 @@ export const DesignationsPage: React.FC = () => {
                   >
                     <Eye size={16} />
                   </button>
-                  <button
-                    onClick={() => openEditModal(item)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-                    aria-label="Edit"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteClick(item)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => openEditModal(item)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+                      aria-label="Edit"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDeleteClick(item)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -259,13 +270,15 @@ export const DesignationsPage: React.FC = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !designation.trim() || !subDesignations.some((s) => s.trim())}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
-                >
-                  {saving ? 'Saving...' : editingDesignation ? 'Update' : 'Save'}
-                </button>
+                {(editingDesignation ? canEdit : canAdd) && (
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !designation.trim() || !subDesignations.some((s) => s.trim())}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
+                  >
+                    {saving ? 'Saving...' : editingDesignation ? 'Update' : 'Save'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
