@@ -1,7 +1,7 @@
 import * as admin from 'firebase-admin';
 import * as functions from 'firebase-functions';
 import { db } from './config';
-import { hasRolePermission, isBranchManager } from './permissions';
+import { hasUserPermission, isBranchManager } from './permissions';
 
 type Assignment = {
   assignmentId?: string;
@@ -45,7 +45,7 @@ const requireDateRange = (data: Record<string, unknown>): { fromDate: string; to
 };
 
 const requireShiftAssignmentPermission = async (uid: string, action: 'add' | 'edit' | 'delete'): Promise<void> => {
-  const allowed = await hasRolePermission(uid, 'employees', 'shiftAssignment', action);
+  const allowed = await hasUserPermission(uid, 'employees', 'shiftAssignment', action);
   if (!allowed) throw new functions.https.HttpsError('permission-denied', 'You cannot manage shift assignments.');
 };
 

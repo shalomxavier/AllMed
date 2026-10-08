@@ -59,7 +59,7 @@ const masterSubItems: SubNavItem[] = [
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
-  const { logout, userData, permissions: rolePermissions } = useAuthContext();
+  const { logout, permissions } = useAuthContext();
   const [masterExpanded, setMasterExpanded] = useState(false);
 
   // Auto-collapse Master section when main nav items are selected
@@ -70,48 +70,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     }
   }, [location.pathname]);
 
-  const effectivePermissions = (() => {
-    // AuthContext already exposes resolved permissions; fall back to designation-based
-    // derivation if permissions are somehow unavailable during migration.
-    if (rolePermissions) return rolePermissions;
-    if (!userData) return null;
-    switch (userData.designation) {
-      case 'HR':
-        return { employees: { accessMode: 'full' as const }, users: { accessMode: 'full' as const } };
-      case 'Operations Manager':
-        return { dms: { accessMode: 'full' as const }, users: { accessMode: 'full' as const } };
-      case 'WhatsApp Messager':
-        return { dms: { accessMode: 'full' as const } };
-      case 'Branch Manager':
-        return {
-          employees: { accessMode: 'full' as const },
-          attendanceLogs: { accessMode: 'full' as const },
-          shifts: { accessMode: 'full' as const },
-          leaves: { accessMode: 'full' as const },
-          reports: { accessMode: 'full' as const },
-          insights: { accessMode: 'full' as const },
-        };
-      case 'Director':
-        return {};
-      default:
-        return null;
-    }
-  })();
+  const visibleNavItems = permissions
+    ? navItems.filter((item) => {
+        const key = item.path.replace('/', '') as 'attendance' | 'dms' | 'users';
+        return hasTopLevelModuleAccess(permissions, key);
+      })
+    : [];
 
-  const visibleNavItems = (() => {
-    if (effectivePermissions === null) return [];
-    if (Object.keys(effectivePermissions).length === 0) return navItems;
-    return navItems.filter((item) => {
-      const key = item.path.replace('/', '') as 'attendance' | 'dms' | 'users';
-      return hasTopLevelModuleAccess(effectivePermissions, key);
-    });
-  })();
-
-  const visibleMasterSubItems = (() => {
-    if (!rolePermissions) return masterSubItems;
-    return masterSubItems.filter((item) =>
-      hasPermission(rolePermissions, 'masters', item.item, 'view'));
-  })();
+  const visibleMasterSubItems = permissions
+    ? masterSubItems.filter((item) => hasPermission(permissions, 'masters', item.item, 'view'))
+    : [];
 
   return (
     <>
@@ -175,9 +143,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             );
           })}
 
-          {/* Master Section - Hidden for Branch Manager and HR, shown based on RBAC masters permission when available */}
-          {((rolePermissions && hasModuleAccess(rolePermissions, 'masters')) ||
-            (!rolePermissions && userData?.designation !== 'Branch Manager' && userData?.designation !== 'HR')) && (
+          {/* Master Section - visible only when the user has masters permission */}
+          {permissions && hasModuleAccess(permissions, 'masters') && (
             <div className="mt-4">
               <button
                 onClick={() => setMasterExpanded(!masterExpanded)}

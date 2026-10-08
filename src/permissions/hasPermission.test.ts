@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { hasPermission, hasModuleAccess } from './hasPermission';
 import { normalizeRoleId } from './useRole';
-import { DEFAULT_ROLE_PERMISSIONS } from './definitions';
-import type { RolePermissions } from './types';
+import { EXAMPLE_USER_PERMISSIONS } from './testFixtures';
+import type { UserPermissions } from './types';
 
 describe('hasPermission', () => {
   it('grants full module access to all current and future items', () => {
-    const perms: RolePermissions = {
+    const perms: UserPermissions = {
       employees: { accessMode: 'full' },
     };
     expect(hasPermission(perms, 'employees', 'employeeManagement', 'view')).toBe(true);
@@ -16,7 +16,7 @@ describe('hasPermission', () => {
   });
 
   it('does not grant future items under custom module access', () => {
-    const perms: RolePermissions = {
+    const perms: UserPermissions = {
       employees: {
         accessMode: 'custom',
         items: {
@@ -32,8 +32,13 @@ describe('hasPermission', () => {
     expect(hasPermission({}, 'employees', 'employeeManagement', 'view')).toBe(false);
   });
 
+  it('denies access when permissions are null or undefined', () => {
+    expect(hasPermission(null, 'employees', 'employeeManagement', 'view')).toBe(false);
+    expect(hasPermission(undefined, 'employees', 'employeeManagement', 'view')).toBe(false);
+  });
+
   it('denies access when item is not granted in custom mode', () => {
-    const perms: RolePermissions = {
+    const perms: UserPermissions = {
       employees: {
         accessMode: 'custom',
         items: {
@@ -46,7 +51,7 @@ describe('hasPermission', () => {
   });
 
   it('treats access as equivalent to view', () => {
-    const perms: RolePermissions = {
+    const perms: UserPermissions = {
       dms: {
         accessMode: 'custom',
         items: {
@@ -59,34 +64,72 @@ describe('hasPermission', () => {
   });
 });
 
-describe('default role permissions', () => {
-  it('Director has full access to everything', () => {
-    const perms = DEFAULT_ROLE_PERMISSIONS.director;
+describe('example user permission sets', () => {
+  it('a Director-style user has full access to everything', () => {
+    const perms = EXAMPLE_USER_PERMISSIONS.director;
     expect(hasPermission(perms, 'employees', 'employeeManagement', 'delete')).toBe(true);
     expect(hasPermission(perms, 'dms', 'whatsappMessenger', 'send')).toBe(true);
     expect(hasPermission(perms, 'users', 'roleManagement', 'edit')).toBe(true);
   });
 
-  it('HR has full attendance access but no DMS access', () => {
-    const perms = DEFAULT_ROLE_PERMISSIONS.hr;
+  it('an HR-style user has full attendance access but no DMS access', () => {
+    const perms = EXAMPLE_USER_PERMISSIONS.hr;
     expect(hasPermission(perms, 'employees', 'employeeManagement', 'delete')).toBe(true);
     expect(hasPermission(perms, 'reports', 'monthlyReport', 'export')).toBe(true);
     expect(hasPermission(perms, 'dms', 'whatsappMessenger', 'access')).toBe(false);
   });
 
-  it('Branch Manager can view but not delete raw punches', () => {
-    const perms = DEFAULT_ROLE_PERMISSIONS['branch-manager'];
+  it('a Branch-Manager-style user can view but not delete raw punches', () => {
+    const perms = EXAMPLE_USER_PERMISSIONS['branch-manager'];
     expect(hasPermission(perms, 'attendanceLogs', 'rawPunches', 'view')).toBe(true);
     expect(hasPermission(perms, 'attendanceLogs', 'rawPunches', 'add')).toBe(false);
   });
 
-  it('WhatsApp Messager has full DMS access to preserve legacy route list', () => {
-    const perms = DEFAULT_ROLE_PERMISSIONS['whatsapp-messager'];
+  it('a WhatsApp-Messager-style user has full DMS access', () => {
+    const perms = EXAMPLE_USER_PERMISSIONS['whatsapp-messager'];
     expect(hasPermission(perms, 'dms', 'whatsappMessenger', 'access')).toBe(true);
     expect(hasPermission(perms, 'dms', 'whatsappMessenger', 'send')).toBe(true);
     expect(hasPermission(perms, 'dms', 'conversionInsights', 'view')).toBe(true);
     expect(hasPermission(perms, 'dms', 'futureDmsItem', 'view')).toBe(true);
     expect(hasPermission(perms, 'employees', 'employeeManagement', 'view')).toBe(false);
+  });
+});
+
+describe('user permission isolation', () => {
+  it('two users with the same role can have different permissions', () => {
+    const userA: UserPermissions = {
+      employees: {
+        accessMode: 'custom',
+        items: { employeeManagement: { actions: ['view', 'edit'] } },
+      },
+    };
+    const userB: UserPermissions = {
+      employees: {
+        accessMode: 'custom',
+        items: { employeeManagement: { actions: ['view'] } },
+      },
+      dms: {
+        accessMode: 'custom',
+        items: { whatsappMessenger: { actions: ['view', 'send'] } },
+      },
+    };
+
+    expect(hasPermission(userA, 'employees', 'employeeManagement', 'edit')).toBe(true);
+    expect(hasPermission(userB, 'employees', 'employeeManagement', 'edit')).toBe(false);
+    expect(hasPermission(userB, 'dms', 'whatsappMessenger', 'send')).toBe(true);
+    expect(hasPermission(userA, 'dms', 'whatsappMessenger', 'send')).toBe(false);
+  });
+
+  it('mutating one user permission tree never changes another user', () => {
+    const userA: UserPermissions = {
+      employees: { accessMode: 'custom', items: { employeeManagement: { actions: ['view'] } } },
+    };
+    const userB: UserPermissions = {
+      employees: { accessMode: 'custom', items: { employeeManagement: { actions: ['view'] } } },
+    };
+    userA.employees!.items!.employeeManagement.actions.push('delete');
+    expect(hasPermission(userA, 'employees', 'employeeManagement', 'delete')).toBe(true);
+    expect(hasPermission(userB, 'employees', 'employeeManagement', 'delete')).toBe(false);
   });
 });
 

@@ -1,21 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { hasPermission } from './hasPermission';
-import { DEFAULT_ROLE_PERMISSIONS, ROLE_IDS } from './definitions';
-import type { PermissionAction, RolePermissions } from './types';
+import { EXAMPLE_USER_PERMISSIONS } from './testFixtures';
+import { ROLE_IDS } from './definitions';
+import type { PermissionAction, UserPermissions } from './types';
 
 /**
- * Regression coverage for the RBAC UI-visibility audit.
+ * Regression coverage for the UI-visibility audit.
  *
  * Every gated UI control renders if and only if hasPermission() returns true
  * for its mapped permission. This matrix pins the expected visibility of each
- * audited control for the five canonical roles, so a change to role defaults
- * or permission mapping is caught here rather than in the UI.
+ * audited control for representative user permission sets, so a change to the
+ * permission mapping is caught here rather than in the UI.
+ *
+ * UI visibility is driven entirely by the user's own permission tree.
  */
 
-const perms = (roleId: string): RolePermissions => DEFAULT_ROLE_PERMISSIONS[roleId];
-
-const visible = (roleId: string, module: string, item: string, action: PermissionAction) =>
-  hasPermission(perms(roleId), module, item, action);
+const visible = (
+  permissions: UserPermissions,
+  module: string,
+  item: string,
+  action: PermissionAction
+) => hasPermission(permissions, module, item, action);
 
 interface Case {
   control: string;
@@ -147,25 +152,53 @@ const CASES: Case[] = [
     expected: { ...NONE, director: true, hr: true, 'operations-manager': true } },
   { control: 'UsersPage: Edit user + Save Changes + view-modal Edit', module: 'users', item: 'userManagement', action: 'edit',
     expected: { ...NONE, director: true, hr: true, 'operations-manager': true } },
-  { control: 'UsersPage: Migration Preview / Run Migration + role permission editor', module: 'users', item: 'roleManagement', action: 'edit',
+  { control: 'UsersPage: user permission assignment authority', module: 'users', item: 'roleManagement', action: 'edit',
     expected: { ...NONE, director: true } },
 ];
 
-describe('RBAC UI-visibility matrix', () => {
+describe('UI-visibility matrix', () => {
   for (const c of CASES) {
     it(`${c.control} → ${c.module}.${c.item}.${c.action}`, () => {
-      for (const roleId of Object.values(ROLE_IDS)) {
+      for (const key of Object.values(ROLE_IDS)) {
         expect(
-          visible(roleId, c.module, c.item, c.action),
-          `${roleId} ${c.control}`,
-        ).toBe(c.expected[roleId]);
+          visible(EXAMPLE_USER_PERMISSIONS[key], c.module, c.item, c.action),
+          `${key} ${c.control}`,
+        ).toBe(c.expected[key]);
       }
     });
   }
 
-  it('Director (full access) sees every audited control', () => {
+  it('a full-access user sees every audited control', () => {
     for (const c of CASES) {
-      expect(visible(ROLE_IDS.DIRECTOR, c.module, c.item, c.action), c.control).toBe(true);
+      expect(visible(EXAMPLE_USER_PERMISSIONS.director, c.module, c.item, c.action), c.control).toBe(true);
+    }
+  });
+});
+
+describe('UI visibility driven by direct user permissions', () => {
+  it('a user with an individually granted action sees the control', () => {
+    const userPermissions: UserPermissions = {
+      attendanceLogs: {
+        accessMode: 'custom',
+        items: { rawPunches: { actions: ['delete'] } },
+      },
+    };
+    expect(visible(userPermissions, 'attendanceLogs', 'rawPunches', 'delete')).toBe(true);
+  });
+
+  it('a user without the grant does not see the control, regardless of role', () => {
+    const userPermissions: UserPermissions = {
+      attendanceLogs: {
+        accessMode: 'custom',
+        items: { rawPunches: { actions: ['view'] } },
+      },
+    };
+    expect(visible(userPermissions, 'attendanceLogs', 'rawPunches', 'delete')).toBe(false);
+  });
+
+  it('a user granted nothing sees no controls', () => {
+    for (const c of CASES) {
+      expect(visible({}, c.module, c.item, c.action), c.control).toBe(false);
     }
   });
 });

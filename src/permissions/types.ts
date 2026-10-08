@@ -19,16 +19,18 @@ export interface ModulePermissions {
   items?: Record<string, PermissionItem>;
 }
 
-export interface RolePermissions {
+export interface UserPermissions {
   [module: string]: ModulePermissions | undefined;
 }
+
+export type RolePermissions = UserPermissions;
 
 export interface Role {
   id: string;
   name: string;
   description?: string;
   isFixed: boolean;
-  permissions: RolePermissions;
+  permissions?: UserPermissions;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -40,4 +42,5 @@ export interface UserRoleData {
   designation: string;
   branch: string;
   roleId?: string;
+  permissions: UserPermissions;
 }

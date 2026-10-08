@@ -9,10 +9,8 @@ import {
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebase';
 import {
-  DEFAULT_ROLE_PERMISSIONS,
-  ROLE_IDS,
   type Role,
-  type RolePermissions,
+  type UserPermissions,
   type UserRoleData,
 } from '@/permissions';
 
@@ -22,7 +20,7 @@ export interface AuthContextType {
   currentUser: FirebaseUser | null;
   userData: UserData | null;
   role: Role | null;
-  permissions: RolePermissions | null;
+  permissions: UserPermissions | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -74,128 +72,41 @@ const getAuthErrorMessage = (errorCode: string): string => {
   }
 };
 
-/**
- * Fallback mapping from legacy designation string to RBAC permissions.
- * Used only during migration while users do not yet have a roleId.
- */
-const getLegacyPermissions = (designation: string): RolePermissions => {
-  switch (designation) {
-    case 'Director':
-      return DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.DIRECTOR];
-    case 'HR':
-      return DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.HR];
-    case 'Operations Manager':
-      return DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.OPERATIONS_MANAGER];
-    case 'Branch Manager':
-      return DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.BRANCH_MANAGER];
-    case 'WhatsApp Messager':
-      return DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.WHATSAPP_MESSAGER];
-    default:
-      // Unknown designations must not receive full access.
-      return {};
-  }
-};
-
-const getRoleIdFromDesignation = (designation: string): string => {
-  switch (designation) {
-    case 'Director':
-      return ROLE_IDS.DIRECTOR;
-    case 'HR':
-      return ROLE_IDS.HR;
-    case 'Operations Manager':
-      return ROLE_IDS.OPERATIONS_MANAGER;
-    case 'Branch Manager':
-      return ROLE_IDS.BRANCH_MANAGER;
-    case 'WhatsApp Messager':
-      return ROLE_IDS.WHATSAPP_MESSAGER;
-    default:
-      return '';
-  }
-};
-
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [role, setRole] = useState<Role | null>(null);
-  const [permissions, setPermissions] = useState<RolePermissions | null>(null);
+  const [role] = useState<Role | null>(null);
+  const [permissions, setPermissions] = useState<UserPermissions | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let userUnsubscribe: (() => void) | undefined;
-    let roleUnsubscribe: (() => void) | undefined;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
-
-      if (userUnsubscribe) {
-        userUnsubscribe();
-        userUnsubscribe = undefined;
-      }
-      if (roleUnsubscribe) {
-        roleUnsubscribe();
-        roleUnsubscribe = undefined;
-      }
+      userUnsubscribe?.();
+      userUnsubscribe = undefined;
 
       if (!user) {
         setUserData(null);
-        setRole(null);
         setPermissions(null);
         setLoading(false);
         return;
       }
 
       setLoading(true);
-
       userUnsubscribe = onSnapshot(
         doc(db, 'users', user.uid),
         (userDoc) => {
           const data = userDoc.exists() ? ({ id: userDoc.id, ...userDoc.data() } as UserData) : null;
           setUserData(data);
-
-          if (!data) {
-            setRole(null);
-            setPermissions(null);
-            setLoading(false);
-            return;
-          }
-
-          const roleId = data.roleId || getRoleIdFromDesignation(data.designation);
-
-          if (roleId) {
-            if (roleUnsubscribe) roleUnsubscribe();
-            roleUnsubscribe = onSnapshot(
-              doc(db, 'roles', roleId),
-              (roleDoc) => {
-                if (roleDoc.exists()) {
-                  const roleData = { id: roleDoc.id, ...roleDoc.data() } as Role;
-                  setRole(roleData);
-                  setPermissions(roleData.permissions || {});
-                } else {
-                  // roleId present but role document missing: fall back to designation
-                  setRole(null);
-                  setPermissions(getLegacyPermissions(data.designation));
-                }
-                setLoading(false);
-              },
-              (err) => {
-                console.error('Error loading role:', err);
-                setRole(null);
-                setPermissions(getLegacyPermissions(data.designation));
-                setLoading(false);
-              }
-            );
-          } else {
-            // No roleId and no recognized designation: no permissions
-            setRole(null);
-            setPermissions({});
-            setLoading(false);
-          }
+          setPermissions(data?.permissions ?? null);
+          setLoading(false);
         },
         (err) => {
           console.error('Error loading user data:', err);
           setUserData(null);
-          setRole(null);
           setPermissions(null);
           setLoading(false);
         }
@@ -204,8 +115,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     return () => {
       unsubscribeAuth();
-      if (userUnsubscribe) userUnsubscribe();
-      if (roleUnsubscribe) roleUnsubscribe();
+      userUnsubscribe?.();
     };
   }, []);
 

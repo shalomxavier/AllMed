@@ -1,5 +1,5 @@
 import { hasModuleAccess, hasPermission } from './hasPermission';
-import type { PermissionAction, RolePermissions } from './types';
+import type { PermissionAction, UserPermissions } from './types';
 
 interface RoutePermission {
   path: string;
@@ -55,10 +55,10 @@ function pathMatches(routePath: string, currentPath: string): boolean {
 }
 
 export function checkRoutePermission(
-  rolePermissions: RolePermissions | null | undefined,
+  permissions: UserPermissions | null | undefined,
   currentPath: string
 ): boolean {
-  if (!rolePermissions) return false;
+  if (!permissions) return false;
 
   // Find the most specific matching route permission.
   const matching = ROUTE_PERMISSIONS
@@ -66,12 +66,12 @@ export function checkRoutePermission(
     .sort((a, b) => b.path.length - a.path.length)[0];
 
   if (matching) {
-    return hasPermission(rolePermissions, matching.module, matching.item, matching.action);
+    return hasPermission(permissions, matching.module, matching.item, matching.action);
   }
 
   // For unmapped routes, allow only users with full access to everything (Director equivalent).
   const hasFullAccess = ROUTE_PERMISSIONS.every((route) =>
-    hasPermission(rolePermissions, route.module, route.item, route.action)
+    hasPermission(permissions, route.module, route.item, route.action)
   );
   return hasFullAccess;
 }
@@ -81,30 +81,30 @@ export function checkRoutePermission(
  * (useful for sidebar visibility).
  */
 export function hasTopLevelModuleAccess(
-  rolePermissions: RolePermissions | null | undefined,
+  permissions: UserPermissions | null | undefined,
   moduleKey: 'attendance' | 'dms' | 'users'
 ): boolean {
-  if (!rolePermissions) return false;
+  if (!permissions) return false;
 
   if (moduleKey === 'dms') {
-    return hasModuleAccess(rolePermissions, 'dms');
+    return hasModuleAccess(permissions, 'dms');
   }
 
   if (moduleKey === 'users') {
-    return hasModuleAccess(rolePermissions, 'users');
+    return hasModuleAccess(permissions, 'users');
   }
 
   // Attendance top-level nav should be visible if the user has access to any
   // attendance-related module (employees, attendanceLogs, shifts, leaves, reports,
   // insights, devices, or masters).
   return (
-    hasModuleAccess(rolePermissions, 'employees') ||
-    hasModuleAccess(rolePermissions, 'attendanceLogs') ||
-    hasModuleAccess(rolePermissions, 'shifts') ||
-    hasModuleAccess(rolePermissions, 'leaves') ||
-    hasModuleAccess(rolePermissions, 'reports') ||
-    hasModuleAccess(rolePermissions, 'insights') ||
-    hasModuleAccess(rolePermissions, 'devices') ||
-    hasModuleAccess(rolePermissions, 'masters')
+    hasModuleAccess(permissions, 'employees') ||
+    hasModuleAccess(permissions, 'attendanceLogs') ||
+    hasModuleAccess(permissions, 'shifts') ||
+    hasModuleAccess(permissions, 'leaves') ||
+    hasModuleAccess(permissions, 'reports') ||
+    hasModuleAccess(permissions, 'insights') ||
+    hasModuleAccess(permissions, 'devices') ||
+    hasModuleAccess(permissions, 'masters')
   );
 }

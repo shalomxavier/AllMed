@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, RefreshCw, UserPlus, User, Search, X, Pencil, Eye, ShieldCheck, Play } from 'lucide-react';
+import { ArrowLeft, RefreshCw, UserPlus, User, Search, X, Pencil, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { doc, setDoc, getDocs, collection, query, orderBy, updateDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, getDocs, collection, query, orderBy, updateDoc } from 'firebase/firestore';
 import { db, firebaseConfig } from '@/firebase/firebase';
 import { RedSpinner } from '@/components/common';
 import { PermissionEditor } from '@/components/permissions/PermissionEditor';
 import { useAuthContext } from '@/contexts/AuthContext';
 import {
   ROLE_NAMES,
-  ROLE_IDS,
-  DEFAULT_ROLE_PERMISSIONS,
+  PERMISSION_MODULES,
   hasPermission,
+  usePermissions,
   type Role,
-  type RolePermissions,
+  type UserPermissions,
 } from '@/permissions';
 
 interface User {
@@ -21,6 +21,7 @@ interface User {
   email: string;
   designation: string;
   roleId?: string;
+  permissions?: UserPermissions;
   branch: string;
   createdAt?: string;
 }
@@ -36,19 +37,10 @@ const getRoleIdFromDesignation = (designation: string): string => {
   }
 };
 
-interface MigrationPlan {
-  totalUsers: number;
-  byDesignation: Record<string, number>;
-  alreadyHaveRoleId: number;
-  willMigrate: number;
-  unknown: { id: string; designation: string; name?: string; email?: string }[];
-  migrations: { id: string; designation: string; roleId: string; name?: string; email?: string }[];
-  roleReports: { roleId: string; exists: boolean; needsCreate: boolean; needsUpdate: boolean }[];
-}
-
 export const UsersPage: React.FC = () => {
   const navigate = useNavigate();
-  const { permissions: currentUserPermissions } = useAuthContext();
+  const { currentUser } = useAuthContext();
+  const { hasPermission: checkPermission } = usePermissions();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -66,25 +58,8 @@ export const UsersPage: React.FC = () => {
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
-  const [addUserRolePermissions, setAddUserRolePermissions] = useState<RolePermissions | null>(null);
-  const [editUserRolePermissions, setEditUserRolePermissions] = useState<RolePermissions | null>(null);
-  const [canManageRolePermissions, setCanManageRolePermissions] = useState(false);
-  const [migrationPreviewOpen, setMigrationPreviewOpen] = useState(false);
-  const [migrationPreviewLoading, setMigrationPreviewLoading] = useState(false);
-  const [migrationPreview, setMigrationPreview] = useState<MigrationPlan | null>(null);
-  const [migrationRunOpen, setMigrationRunOpen] = useState(false);
-  const [migrationRunLoading, setMigrationRunLoading] = useState(false);
-  const [migrationRunPlan, setMigrationRunPlan] = useState<MigrationPlan | null>(null);
-  const [migrationRunning, setMigrationRunning] = useState(false);
-  const [migrationResult, setMigrationResult] = useState<{
-    rolesCreated: string[];
-    rolesUpdated: string[];
-    rolesUpToDate: string[];
-    usersMigrated: { id: string; designation: string; roleId: string; name?: string; email?: string }[];
-    usersSkipped: number;
-    unknown: { id: string; designation: string; name?: string; email?: string }[];
-  } | null>(null);
-  const [migrationError, setMigrationError] = useState('');
+  const [addUserPermissions, setAddUserPermissions] = useState<UserPermissions>({});
+  const [editUserPermissions, setEditUserPermissions] = useState<UserPermissions>({});
 
   const fetchRoles = async () => {
     setRolesLoading(true);
@@ -124,14 +99,14 @@ export const UsersPage: React.FC = () => {
     fetchRoles();
   }, []);
 
-  useEffect(() => {
-    setCanManageRolePermissions(
-      currentUserPermissions ? hasPermission(currentUserPermissions, 'users', 'roleManagement', 'edit') : false
-    );
-  }, [currentUserPermissions]);
+  // users.roleManagement.edit holders (in practice Directors) may assign roles
+  // and permissions. Permissions are stored directly on each user document.
+  const canManageUserPermissions = checkPermission('users', 'roleManagement', 'edit');
+  const canAddUser = checkPermission('users', 'userManagement', 'add');
+  const canEditUser = checkPermission('users', 'userManagement', 'edit');
 
-  const canAddUser = currentUserPermissions ? hasPermission(currentUserPermissions, 'users', 'userManagement', 'add') : false;
-  const canEditUser = currentUserPermissions ? hasPermission(currentUserPermissions, 'users', 'userManagement', 'edit') : false;
+  const viewingRoleId = viewingUser ? viewingUser.roleId || getRoleIdFromDesignation(viewingUser.designation) : '';
+  const viewingPermissions = viewingUser?.permissions ?? {};
 
   const fetchBranches = async () => {
     try {
@@ -146,163 +121,6 @@ export const UsersPage: React.FC = () => {
       setBranchOptions(branchesData.sort());
     } catch (error) {
       console.error('Error fetching branches:', error);
-    }
-  };
-
-  const roleIdFromDesignation = (designation: string): string | null => {
-    const map: Record<string, string> = {
-      'Director': ROLE_IDS.DIRECTOR,
-      'HR': ROLE_IDS.HR,
-      'Operations Manager': ROLE_IDS.OPERATIONS_MANAGER,
-      'Branch Manager': ROLE_IDS.BRANCH_MANAGER,
-      'WhatsApp Messager': ROLE_IDS.WHATSAPP_MESSAGER,
-    };
-    const normalized = designation?.trim();
-    return map[normalized] || null;
-  };
-
-  const computeMigrationPlan = async (): Promise<MigrationPlan> => {
-    const usersSnapshot = await getDocs(collection(db, 'users'));
-    const rolesSnapshot = await getDocs(collection(db, 'roles'));
-
-    const existingRoleIds = new Set(rolesSnapshot.docs.map((d) => d.id));
-    const roleReports = Object.values(ROLE_IDS).map((roleId) => {
-      const existing = rolesSnapshot.docs.find((d) => d.id === roleId);
-      const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[roleId];
-      const needsCreate = !existing;
-      const needsUpdate = existing ? JSON.stringify(existing.data().permissions) !== JSON.stringify(defaultPermissions) : false;
-      return {
-        roleId,
-        exists: !!existingRoleIds.has(roleId),
-        needsCreate,
-        needsUpdate,
-      };
-    });
-
-    const byDesignation: Record<string, number> = {};
-    const migrations: { id: string; designation: string; roleId: string; name?: string; email?: string }[] = [];
-    const unknown: { id: string; designation: string; name?: string; email?: string }[] = [];
-    let alreadyHaveRoleId = 0;
-
-    usersSnapshot.docs.forEach((d) => {
-      const data = d.data();
-      const designation = data.designation || '(missing)';
-      byDesignation[designation] = (byDesignation[designation] || 0) + 1;
-
-      if (data.roleId && typeof data.roleId === 'string') {
-        alreadyHaveRoleId++;
-        return;
-      }
-
-      const roleId = roleIdFromDesignation(data.designation);
-      if (!roleId) {
-        unknown.push({ id: d.id, designation: data.designation || '(missing)', name: data.name, email: data.email });
-        return;
-      }
-
-      migrations.push({ id: d.id, designation: data.designation || '(missing)', roleId, name: data.name, email: data.email });
-    });
-
-    return {
-      totalUsers: usersSnapshot.size,
-      byDesignation,
-      alreadyHaveRoleId,
-      willMigrate: migrations.length,
-      unknown,
-      migrations,
-      roleReports,
-    };
-  };
-
-  const runMigrationPreview = async () => {
-    setMigrationPreviewLoading(true);
-    try {
-      setMigrationPreview(await computeMigrationPlan());
-      setMigrationPreviewOpen(true);
-    } catch (error) {
-      console.error('Error running migration preview:', error);
-    } finally {
-      setMigrationPreviewLoading(false);
-    }
-  };
-
-  const openMigrationRun = async () => {
-    setMigrationRunLoading(true);
-    setMigrationError('');
-    setMigrationResult(null);
-    try {
-      setMigrationRunPlan(await computeMigrationPlan());
-      setMigrationRunOpen(true);
-    } catch (error) {
-      console.error('Error computing migration plan:', error);
-    } finally {
-      setMigrationRunLoading(false);
-    }
-  };
-
-  const executeMigration = async () => {
-    setMigrationRunning(true);
-    setMigrationError('');
-    try {
-      const usersSnapshot = await getDocs(collection(db, 'users'));
-      const rolesSnapshot = await getDocs(collection(db, 'roles'));
-
-      // Seed the five fixed role documents. Never creates roles beyond ROLE_IDS.
-      const rolesCreated: string[] = [];
-      const rolesUpdated: string[] = [];
-      const rolesUpToDate: string[] = [];
-      for (const roleId of Object.values(ROLE_IDS)) {
-        const existing = rolesSnapshot.docs.find((d) => d.id === roleId);
-        const expectedPermissions = DEFAULT_ROLE_PERMISSIONS[roleId];
-        if (!existing) {
-          rolesCreated.push(roleId);
-        } else if (JSON.stringify(existing.data().permissions) !== JSON.stringify(expectedPermissions)) {
-          rolesUpdated.push(roleId);
-        } else {
-          rolesUpToDate.push(roleId);
-          continue;
-        }
-        await setDoc(doc(db, 'roles', roleId), {
-          name: ROLE_NAMES[roleId],
-          description: `Fixed application role: ${ROLE_NAMES[roleId]}`,
-          isFixed: true,
-          permissions: expectedPermissions,
-          ...(!existing ? { createdAt: serverTimestamp() } : {}),
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
-      }
-
-      // Add roleId only to users that do not already have one. No other field is touched.
-      const migrated: { id: string; designation: string; roleId: string; name?: string; email?: string }[] = [];
-      const unknown: { id: string; designation: string; name?: string; email?: string }[] = [];
-      let usersSkipped = 0;
-      const batch = writeBatch(db);
-      usersSnapshot.docs.forEach((d) => {
-        const data = d.data();
-        if (data.roleId && typeof data.roleId === 'string') {
-          usersSkipped++;
-          return;
-        }
-        const roleId = roleIdFromDesignation(data.designation);
-        if (!roleId) {
-          unknown.push({ id: d.id, designation: data.designation || '(missing)', name: data.name, email: data.email });
-          return;
-        }
-        batch.update(d.ref, { roleId });
-        migrated.push({ id: d.id, designation: data.designation || '(missing)', roleId, name: data.name, email: data.email });
-      });
-      if (migrated.length > 0) {
-        await batch.commit();
-      }
-
-      setMigrationResult({ rolesCreated, rolesUpdated, rolesUpToDate, usersMigrated: migrated, usersSkipped, unknown });
-      fetchUsers();
-      fetchRoles();
-    } catch (error) {
-      console.error('Error running migration:', error);
-      setMigrationError('Migration failed. Check the console for details.');
-    } finally {
-      setMigrationRunning(false);
     }
   };
 
@@ -343,25 +161,23 @@ export const UsersPage: React.FC = () => {
       const userId = result.localId;
       const designation = ROLE_NAMES[addUserForm.roleId] || '';
 
-      await setDoc(doc(db, 'users', userId), {
+      const newUserDoc: Record<string, unknown> = {
         name: addUserForm.name,
         email: addUserForm.email,
         roleId: addUserForm.roleId,
         designation,
         branch: isBranchManager ? '' : addUserForm.branch,
         createdAt: new Date().toISOString(),
-      });
-
-      // If role permissions were edited while creating the user, persist them on the role.
-      if (canManageRolePermissions && addUserRolePermissions && addUserForm.roleId) {
-        await updateDoc(doc(db, 'roles', addUserForm.roleId), {
-          permissions: addUserRolePermissions,
-          updatedAt: serverTimestamp(),
-        });
+      };
+      // Permissions are assigned individually to this user. Only callers with
+      // roleManagement authority may write the permissions field.
+      if (canManageUserPermissions) {
+        newUserDoc.permissions = addUserPermissions;
       }
+      await setDoc(doc(db, 'users', userId), newUserDoc);
 
       setAddUserForm({ name: '', email: '', password: '', roleId: '', branch: '' });
-      setAddUserRolePermissions(null);
+      setAddUserPermissions({});
       setAddUserModalOpen(false);
       fetchUsers();
     } catch (error: any) {
@@ -383,7 +199,7 @@ export const UsersPage: React.FC = () => {
     setEditingUser(user);
     const roleId = user.roleId || getRoleIdFromDesignation(user.designation);
     setEditUserForm({ name: user.name, roleId, branch: roleId === 'branch-manager' ? '' : user.branch });
-    setEditUserRolePermissions(null);
+    setEditUserPermissions(user.permissions ?? {});
     setEditUserError('');
     setEditUserModalOpen(true);
   };
@@ -392,7 +208,7 @@ export const UsersPage: React.FC = () => {
     setEditUserModalOpen(false);
     setEditingUser(null);
     setEditUserForm({ name: '', roleId: '', branch: '' });
-    setEditUserRolePermissions(null);
+    setEditUserPermissions({});
     setEditUserError('');
   };
 
@@ -419,21 +235,20 @@ export const UsersPage: React.FC = () => {
 
     setSavingUser(true);
     try {
-      const designation = ROLE_NAMES[editUserForm.roleId] || '';
-      await updateDoc(doc(db, 'users', editingUser.id), {
+      // Prevent self-escalation: nobody may change their own role or
+      // permissions, and only roleManagement authority may change another
+      // user's role/permissions.
+      const isSelf = editingUser.id === currentUser?.uid;
+      const updates: Record<string, unknown> = {
         name: editUserForm.name,
-        roleId: editUserForm.roleId,
-        designation,
         branch: isBranchManager ? '' : editUserForm.branch,
-      });
-
-      // If role permissions were edited while editing the user, persist them on the role.
-      if (canManageRolePermissions && editUserRolePermissions && editUserForm.roleId) {
-        await updateDoc(doc(db, 'roles', editUserForm.roleId), {
-          permissions: editUserRolePermissions,
-          updatedAt: serverTimestamp(),
-        });
+      };
+      if (canManageUserPermissions && !isSelf) {
+        updates.roleId = editUserForm.roleId;
+        updates.designation = ROLE_NAMES[editUserForm.roleId] || '';
+        updates.permissions = editUserPermissions;
       }
+      await updateDoc(doc(db, 'users', editingUser.id), updates);
 
       closeEditUserModal();
       fetchUsers();
@@ -444,6 +259,15 @@ export const UsersPage: React.FC = () => {
       setSavingUser(false);
     }
   };
+
+  const filteredUsers = users.filter((user) => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      user.name?.toLowerCase().includes(query) ||
+      user.email?.toLowerCase().includes(query)
+    );
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -474,26 +298,6 @@ export const UsersPage: React.FC = () => {
             />
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {canManageRolePermissions && (
-              <>
-                <button
-                  onClick={runMigrationPreview}
-                  disabled={migrationPreviewLoading}
-                  className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {migrationPreviewLoading ? <RedSpinner size="sm" /> : <ShieldCheck size={16} />}
-                  Migration Preview
-                </button>
-                <button
-                  onClick={openMigrationRun}
-                  disabled={migrationRunLoading || migrationRunning}
-                  className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {migrationRunLoading ? <RedSpinner size="sm" /> : <Play size={16} />}
-                  Run Migration
-                </button>
-              </>
-            )}
             {canAddUser && (
               <button onClick={() => setAddUserModalOpen(true)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors">
                 <UserPlus size={16} />
@@ -510,7 +314,7 @@ export const UsersPage: React.FC = () => {
           <div className="w-full flex items-center justify-center py-16">
             <RedSpinner />
           </div>
-        ) : users.length === 0 ? (
+        ) : filteredUsers.length === 0 ? (
           <div className="w-full flex flex-col items-center justify-center py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-secondary-100 flex items-center justify-center mb-3">
               <UserPlus className="w-8 h-8 text-secondary-400" />
@@ -518,7 +322,7 @@ export const UsersPage: React.FC = () => {
             <p className="text-sm font-medium text-secondary-700">No users found</p>
           </div>
         ) : (
-          users.map((user) => (
+          filteredUsers.map((user) => (
             <div key={user.id} className="card p-5 hover:shadow-md transition-shadow flex flex-col">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-12 h-12 rounded-full bg-secondary-100 flex items-center justify-center">
@@ -549,7 +353,7 @@ export const UsersPage: React.FC = () => {
       {/* Edit User Modal */}
       {editUserModalOpen && editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-secondary-900">Edit User</h3>
               <button onClick={closeEditUserModal} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
@@ -557,7 +361,7 @@ export const UsersPage: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleEditUser} className="space-y-4">
+            <form onSubmit={handleEditUser} className="space-y-4 overflow-y-auto flex-1 -mr-2 pr-2">
               <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Name</label>
                 <input
@@ -584,14 +388,14 @@ export const UsersPage: React.FC = () => {
                   value={editUserForm.roleId}
                   onChange={(e) => {
                     const newRoleId = e.target.value;
+                    // Changing the role never modifies this user's permissions.
                     setEditUserForm({
                       ...editUserForm,
                       roleId: newRoleId,
                       branch: newRoleId === 'branch-manager' ? '' : editUserForm.branch
                     });
-                    setEditUserRolePermissions(null);
                   }}
-                  disabled={rolesLoading}
+                  disabled={rolesLoading || !canManageUserPermissions || editingUser.id === currentUser?.uid}
                   className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
                   <option value="">{rolesLoading ? 'Loading roles...' : 'Select role'}</option>
@@ -601,15 +405,11 @@ export const UsersPage: React.FC = () => {
                 </select>
               </div>
 
-              {editUserForm.roleId && (
-                <PermissionEditor
-                  roleId={editUserForm.roleId}
-                  roleName={roles.find((r) => r.id === editUserForm.roleId)?.name}
-                  value={editUserRolePermissions ?? roles.find((r) => r.id === editUserForm.roleId)?.permissions ?? null}
-                  onChange={setEditUserRolePermissions}
-                  readOnly={!canManageRolePermissions}
-                />
-              )}
+              <PermissionEditor
+                value={editUserPermissions}
+                onChange={setEditUserPermissions}
+                readOnly={!canManageUserPermissions || editingUser.id === currentUser?.uid}
+              />
 
               {editUserForm.roleId !== 'branch-manager' && (
                 <div>
@@ -617,7 +417,8 @@ export const UsersPage: React.FC = () => {
                   <select
                     value={editUserForm.branch}
                     onChange={(e) => setEditUserForm({ ...editUserForm, branch: e.target.value })}
-                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    disabled={editingUser.id === currentUser?.uid}
+                    className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
                   >
                     <option value="">Select branch</option>
                     {branchOptions.map((branch) => (
@@ -657,26 +458,81 @@ export const UsersPage: React.FC = () => {
       {/* View User Modal */}
       {viewUserModalOpen && viewingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-secondary-900">User Details</h3>
               <button onClick={closeViewUserModal} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
                 <X size={18} className="text-secondary-500" />
               </button>
             </div>
-            <div className="space-y-3 text-sm text-secondary-700">
+            <div className="space-y-3 text-sm text-secondary-700 overflow-y-auto flex-1 -mr-2 pr-2">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-full bg-secondary-100 flex items-center justify-center">
                   <User className="w-6 h-6 text-secondary-500" />
                 </div>
                 <div>
                   <p className="font-semibold text-secondary-900">{viewingUser.name}</p>
-                  <p className="text-secondary-500">{ROLE_NAMES[viewingUser.roleId || getRoleIdFromDesignation(viewingUser.designation)] || viewingUser.designation || 'Unknown'}</p>
+                  <p className="text-secondary-500">{ROLE_NAMES[viewingRoleId] || viewingUser.designation || 'Unknown'}</p>
                 </div>
               </div>
               <div className="border-t border-secondary-200 pt-3 space-y-2">
                 <p><span className="font-medium">Email:</span> {viewingUser.email}</p>
                 <p><span className="font-medium">Branch:</span> {viewingUser.branch}</p>
+              </div>
+              <div className="border-t border-secondary-200 pt-3">
+                <p className="font-medium mb-1">Permissions</p>
+                <p className="text-xs text-secondary-500 mb-2">
+                  Permissions are assigned individually to this user.
+                </p>
+                <div className="border border-secondary-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-secondary-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold text-secondary-700">Module</th>
+                        <th className="px-3 py-2 text-left font-semibold text-secondary-700">Permission</th>
+                        <th className="px-3 py-2 text-left font-semibold text-secondary-700">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-secondary-100">
+                      {PERMISSION_MODULES.map((module) => {
+                        const modulePermissions = viewingPermissions[module.key];
+                        const rows = module.items
+                          .map((item) => ({
+                            label: item.label,
+                            actions: item.actions.filter((action) =>
+                              hasPermission(viewingPermissions, module.key, item.key, action)),
+                          }))
+                          .filter((row) => row.actions.length > 0);
+                        if (rows.length === 0) return null;
+                        return rows.map((row, rowIndex) => (
+                          <tr key={`${module.key}-${row.label}`} className={rowIndex === 0 ? 'border-t-2 border-secondary-200' : ''}>
+                            {rowIndex === 0 && (
+                              <td rowSpan={rows.length} className="px-3 py-2 font-medium text-secondary-900 align-top">
+                                {module.label}
+                                {modulePermissions?.accessMode === 'full' && (
+                                  <span className="block text-[10px] font-medium text-primary-600 mt-0.5">Full access</span>
+                                )}
+                              </td>
+                            )}
+                            <td className="px-3 py-2 text-secondary-700">{row.label}</td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {row.actions.map((action) => (
+                                  <span
+                                    key={action}
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded capitalize bg-secondary-100 text-secondary-600"
+                                  >
+                                    {action}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        ));
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
             <div className="flex gap-3 pt-6">
@@ -705,7 +561,7 @@ export const UsersPage: React.FC = () => {
       {/* Add User Modal */}
       {addUserModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-secondary-900">Add New User</h3>
               <button onClick={() => setAddUserModalOpen(false)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
@@ -713,7 +569,7 @@ export const UsersPage: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleAddUser} className="space-y-4">
+            <form onSubmit={handleAddUser} className="space-y-4 overflow-y-auto flex-1 -mr-2 pr-2">
               <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Name</label>
                 <input
@@ -750,12 +606,12 @@ export const UsersPage: React.FC = () => {
                   value={addUserForm.roleId}
                   onChange={(e) => {
                     const newRoleId = e.target.value;
+                    // Role selection never pre-fills or changes permissions.
                     setAddUserForm({
                       ...addUserForm,
                       roleId: newRoleId,
                       branch: newRoleId === 'branch-manager' ? '' : addUserForm.branch
                     });
-                    setAddUserRolePermissions(null);
                   }}
                   disabled={rolesLoading}
                   className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
@@ -767,15 +623,11 @@ export const UsersPage: React.FC = () => {
                 </select>
               </div>
 
-              {addUserForm.roleId && (
-                <PermissionEditor
-                  roleId={addUserForm.roleId}
-                  roleName={roles.find((r) => r.id === addUserForm.roleId)?.name}
-                  value={addUserRolePermissions ?? roles.find((r) => r.id === addUserForm.roleId)?.permissions ?? null}
-                  onChange={setAddUserRolePermissions}
-                  readOnly={!canManageRolePermissions}
-                />
-              )}
+              <PermissionEditor
+                value={addUserPermissions}
+                onChange={setAddUserPermissions}
+                readOnly={!canManageUserPermissions}
+              />
 
               {addUserForm.roleId !== 'branch-manager' && (
                 <div>
@@ -819,402 +671,6 @@ export const UsersPage: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Migration Preview Modal */}
-      {migrationPreviewOpen && migrationPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200">
-              <div>
-                <h3 className="text-lg font-semibold text-secondary-900">RBAC Migration Preview</h3>
-                <p className="text-xs text-secondary-500 mt-0.5">Dry-run report — no data will be modified</p>
-              </div>
-              <button onClick={() => setMigrationPreviewOpen(false)} className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors">
-                <X size={18} className="text-secondary-500" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              {/* Role Records */}
-              <div>
-                <h4 className="text-sm font-semibold text-secondary-900 mb-2">Role Documents</h4>
-                <div className="border border-secondary-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-secondary-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left font-medium text-secondary-700">Role</th>
-                        <th className="px-4 py-2 text-left font-medium text-secondary-700">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-secondary-100">
-                      {migrationPreview.roleReports.map((role) => (
-                        <tr key={role.roleId}>
-                          <td className="px-4 py-2">
-                            <span className="font-medium text-secondary-900">{ROLE_NAMES[role.roleId]}</span>
-                            <span className="ml-2 text-xs text-secondary-500 font-mono">{role.roleId}</span>
-                          </td>
-                          <td className="px-4 py-2">
-                            {role.needsCreate ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-700">Will create</span>
-                            ) : role.needsUpdate ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-50 text-orange-700">Will update permissions</span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600">Up-to-date</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Summary */}
-              <div>
-                <h4 className="text-sm font-semibold text-secondary-900 mb-2">User Analysis</h4>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="card p-4">
-                    <p className="text-xs text-secondary-500">Total users</p>
-                    <p className="text-2xl font-semibold text-secondary-900">{migrationPreview.totalUsers}</p>
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs text-secondary-500">Already have roleId</p>
-                    <p className="text-2xl font-semibold text-secondary-900">{migrationPreview.alreadyHaveRoleId}</p>
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs text-secondary-500">Will migrate</p>
-                    <p className="text-2xl font-semibold text-primary-600">{migrationPreview.willMigrate}</p>
-                  </div>
-                  <div className="card p-4">
-                    <p className="text-xs text-secondary-500">Unknown / unmapped</p>
-                    <p className="text-2xl font-semibold text-red-600">{migrationPreview.unknown.length}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Users by designation */}
-              <div>
-                <h4 className="text-sm font-semibold text-secondary-900 mb-2">Users by Designation</h4>
-                <div className="border border-secondary-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-secondary-50">
-                      <tr>
-                        <th className="px-4 py-2 text-left font-medium text-secondary-700">Designation</th>
-                        <th className="px-4 py-2 text-left font-medium text-secondary-700">Count</th>
-                        <th className="px-4 py-2 text-left font-medium text-secondary-700">Mapped Role</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-secondary-100">
-                      {Object.entries(migrationPreview.byDesignation).map(([designation, count]) => {
-                        const mappedRoleId = roleIdFromDesignation(designation);
-                        return (
-                          <tr key={designation}>
-                            <td className="px-4 py-2 font-medium text-secondary-900">{designation}</td>
-                            <td className="px-4 py-2">{count}</td>
-                            <td className="px-4 py-2">
-                              {mappedRoleId ? (
-                                <span className="text-secondary-700">{ROLE_NAMES[mappedRoleId]}</span>
-                              ) : (
-                                <span className="text-red-600 font-medium">Unknown</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Migrations */}
-              {migrationPreview.migrations.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-secondary-900 mb-2">Users That Will Be Migrated ({migrationPreview.migrations.length})</h4>
-                  <div className="border border-secondary-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-secondary-50 sticky top-0">
-                        <tr>
-                          <th className="px-4 py-2 text-left font-medium text-secondary-700">Name</th>
-                          <th className="px-4 py-2 text-left font-medium text-secondary-700">Designation</th>
-                          <th className="px-4 py-2 text-left font-medium text-secondary-700">New Role</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-secondary-100">
-                        {migrationPreview.migrations.map((m) => (
-                          <tr key={m.id}>
-                            <td className="px-4 py-2">
-                              <p className="font-medium text-secondary-900">{m.name || '—'}</p>
-                              {m.email && <p className="text-xs text-secondary-500">{m.email}</p>}
-                            </td>
-                            <td className="px-4 py-2">{m.designation}</td>
-                            <td className="px-4 py-2">{ROLE_NAMES[m.roleId]}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Unknown designations */}
-              {migrationPreview.unknown.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-red-600 mb-2">Unknown / Unmapped Designations ({migrationPreview.unknown.length})</h4>
-                  <div className="border border-red-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-red-50 sticky top-0">
-                        <tr>
-                          <th className="px-4 py-2 text-left font-medium text-red-700">Name</th>
-                          <th className="px-4 py-2 text-left font-medium text-red-700">Designation</th>
-                          <th className="px-4 py-2 text-left font-medium text-red-700">User ID</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-red-100">
-                        {migrationPreview.unknown.map((u) => (
-                          <tr key={u.id}>
-                            <td className="px-4 py-2">
-                              <p className="font-medium text-red-900">{u.name || '—'}</p>
-                              {u.email && <p className="text-xs text-red-600">{u.email}</p>}
-                            </td>
-                            <td className="px-4 py-2 text-red-700">{u.designation}</td>
-                            <td className="px-4 py-2 text-red-600 font-mono text-xs">{u.id}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="px-6 py-4 border-t border-secondary-200 bg-secondary-50 flex items-center justify-between gap-3">
-              <p className="text-xs text-secondary-600">
-                Review the report, then run the migration to apply it.
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setMigrationPreviewOpen(false);
-                    openMigrationRun();
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  <Play size={14} />
-                  Run Migration
-                </button>
-                <button
-                  onClick={() => setMigrationPreviewOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Run Migration Modal */}
-      {migrationRunOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-secondary-200">
-              <div>
-                <h3 className="text-lg font-semibold text-secondary-900">Run RBAC Migration</h3>
-                <p className="text-xs text-secondary-500 mt-0.5">
-                  {migrationResult ? 'Migration completed' : 'Review the plan and confirm to write to Firestore'}
-                </p>
-              </div>
-              <button
-                onClick={() => setMigrationRunOpen(false)}
-                disabled={migrationRunning}
-                className="p-1.5 rounded-lg hover:bg-secondary-100 transition-colors disabled:opacity-50"
-              >
-                <X size={18} className="text-secondary-500" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              {migrationError && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{migrationError}</div>
-              )}
-
-              {!migrationResult && migrationRunPlan && (
-                <>
-                  <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
-                    This will write to Firestore. It creates/updates the five fixed role documents and adds
-                    <code className="mx-1 px-1 py-0.5 bg-amber-100 rounded font-mono">roleId</code>
-                    to users that do not have one. No other user field is modified and the legacy
-                    <code className="mx-1 px-1 py-0.5 bg-amber-100 rounded font-mono">designation</code>
-                    fallback remains in place.
-                  </div>
-
-                  <div>
-                    <h4 className="text-sm font-semibold text-secondary-900 mb-2">Role Documents</h4>
-                    <div className="border border-secondary-200 rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead className="bg-secondary-50">
-                          <tr>
-                            <th className="px-4 py-2 text-left font-medium text-secondary-700">Role</th>
-                            <th className="px-4 py-2 text-left font-medium text-secondary-700">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-secondary-100">
-                          {migrationRunPlan.roleReports.map((role) => (
-                            <tr key={role.roleId}>
-                              <td className="px-4 py-2">
-                                <span className="font-medium text-secondary-900">{ROLE_NAMES[role.roleId]}</span>
-                                <span className="ml-2 text-xs text-secondary-500 font-mono">{role.roleId}</span>
-                              </td>
-                              <td className="px-4 py-2">
-                                {role.needsCreate ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-50 text-green-700">Create</span>
-                                ) : role.needsUpdate ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-50 text-orange-700">Update permissions</span>
-                                ) : (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-600">No change</span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="card p-4">
-                      <p className="text-xs text-secondary-500">Total users</p>
-                      <p className="text-2xl font-semibold text-secondary-900">{migrationRunPlan.totalUsers}</p>
-                    </div>
-                    <div className="card p-4">
-                      <p className="text-xs text-secondary-500">Already have roleId</p>
-                      <p className="text-2xl font-semibold text-secondary-900">{migrationRunPlan.alreadyHaveRoleId}</p>
-                    </div>
-                    <div className="card p-4">
-                      <p className="text-xs text-secondary-500">Will migrate</p>
-                      <p className="text-2xl font-semibold text-primary-600">{migrationRunPlan.willMigrate}</p>
-                    </div>
-                    <div className="card p-4">
-                      <p className="text-xs text-secondary-500">Unknown / skipped</p>
-                      <p className="text-2xl font-semibold text-red-600">{migrationRunPlan.unknown.length}</p>
-                    </div>
-                  </div>
-
-                  {migrationRunPlan.unknown.length > 0 && (
-                    <div className="p-3 rounded-lg bg-red-50 border border-red-200">
-                      <p className="text-sm font-medium text-red-700 mb-1">
-                        {migrationRunPlan.unknown.length} user(s) have unmapped designations and will NOT be migrated:
-                      </p>
-                      <ul className="text-xs text-red-600 space-y-0.5">
-                        {migrationRunPlan.unknown.map((u) => (
-                          <li key={u.id}>{u.name || u.id} — designation: "{u.designation}"</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {migrationResult && (
-                <>
-                  <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-800">
-                    Migration completed successfully.
-                  </div>
-
-                  <div>
-                    <h4 className="text-sm font-semibold text-secondary-900 mb-2">Role Documents</h4>
-                    <ul className="text-sm text-secondary-700 space-y-1">
-                      <li>Created: {migrationResult.rolesCreated.length > 0 ? migrationResult.rolesCreated.join(', ') : 'none'}</li>
-                      <li>Updated: {migrationResult.rolesUpdated.length > 0 ? migrationResult.rolesUpdated.join(', ') : 'none'}</li>
-                      <li>Already up-to-date: {migrationResult.rolesUpToDate.length > 0 ? migrationResult.rolesUpToDate.join(', ') : 'none'}</li>
-                    </ul>
-                  </div>
-
-                  <div>
-                    <h4 className="text-sm font-semibold text-secondary-900 mb-2">
-                      Users Migrated ({migrationResult.usersMigrated.length})
-                    </h4>
-                    {migrationResult.usersMigrated.length > 0 ? (
-                      <div className="border border-secondary-200 rounded-lg overflow-hidden max-h-56 overflow-y-auto">
-                        <table className="w-full text-sm">
-                          <thead className="bg-secondary-50 sticky top-0">
-                            <tr>
-                              <th className="px-4 py-2 text-left font-medium text-secondary-700">Name</th>
-                              <th className="px-4 py-2 text-left font-medium text-secondary-700">Designation</th>
-                              <th className="px-4 py-2 text-left font-medium text-secondary-700">roleId</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-secondary-100">
-                            {migrationResult.usersMigrated.map((m) => (
-                              <tr key={m.id}>
-                                <td className="px-4 py-2">
-                                  <p className="font-medium text-secondary-900">{m.name || '—'}</p>
-                                  {m.email && <p className="text-xs text-secondary-500">{m.email}</p>}
-                                </td>
-                                <td className="px-4 py-2">{m.designation}</td>
-                                <td className="px-4 py-2 font-mono text-xs">{m.roleId}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-secondary-600">No users needed migration.</p>
-                    )}
-                    <p className="text-xs text-secondary-500 mt-2">
-                      Skipped {migrationResult.usersSkipped} user(s) that already had a roleId.
-                    </p>
-                  </div>
-
-                  {migrationResult.unknown.length > 0 && (
-                    <div className="p-3 rounded-lg bg-red-50 border border-red-200">
-                      <p className="text-sm font-medium text-red-700 mb-1">
-                        {migrationResult.unknown.length} user(s) were NOT migrated (unknown designation):
-                      </p>
-                      <ul className="text-xs text-red-600 space-y-0.5">
-                        {migrationResult.unknown.map((u) => (
-                          <li key={u.id}>{u.name || u.id} — designation: "{u.designation}"</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="px-6 py-4 border-t border-secondary-200 bg-secondary-50 flex items-center justify-end gap-2">
-              {!migrationResult ? (
-                <>
-                  <button
-                    onClick={() => setMigrationRunOpen(false)}
-                    disabled={migrationRunning}
-                    className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={executeMigration}
-                    disabled={migrationRunning}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
-                  >
-                    {migrationRunning ? <RedSpinner size="sm" /> : <Play size={14} />}
-                    {migrationRunning ? 'Running...' : 'Confirm & Run'}
-                  </button>
-                </>
-              ) : (
-                <button
-                  onClick={() => setMigrationRunOpen(false)}
-                  className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors"
-                >
-                  Close
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 };

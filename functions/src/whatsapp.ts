@@ -9,7 +9,7 @@ import {
   CONVERSATIONS_COLLECTION,
   MESSAGES_COLLECTION,
 } from './config';
-import { hasRolePermission } from './permissions';
+import { hasUserPermission } from './permissions';
 
 /**
  * HTTP function to send WhatsApp message (replaces onCall to avoid CORS issues)
@@ -45,7 +45,7 @@ export const sendWhatsAppMessage = functions.https.onRequest(async (req: Request
     tokenEmail = decoded.email;
     tokenName = decoded.name;
 
-    const canSend = await hasRolePermission(uid, 'dms', 'whatsappMessenger', 'send');
+    const canSend = await hasUserPermission(uid, 'dms', 'whatsappMessenger', 'send');
     if (!canSend) {
       res.status(403).json({ error: 'permission-denied', message: 'You do not have permission to send WhatsApp messages.' });
       return;

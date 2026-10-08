@@ -45,13 +45,10 @@ before(async () => {
 
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'users', 'bm'), { roleId: 'branch-manager', designation: 'Branch Manager', name: 'BM' });
+    await setDoc(doc(db, 'users', 'bm'), { roleId: 'branch-manager', designation: 'Branch Manager', name: 'BM', permissions: BM_PERMS });
     await setDoc(doc(db, 'users', 'bm-legacy'), { designation: 'Branch Manager', name: 'Legacy BM' });
-    await setDoc(doc(db, 'users', 'dir'), { roleId: 'director', designation: 'Director', name: 'Dir' });
-    await setDoc(doc(db, 'users', 'hr'), { roleId: 'hr', designation: 'HR', name: 'HR' });
-    await setDoc(doc(db, 'roles', 'branch-manager'), { name: 'Branch Manager', permissions: BM_PERMS });
-    await setDoc(doc(db, 'roles', 'director'), { name: 'Director', permissions: FULL });
-    await setDoc(doc(db, 'roles', 'hr'), { name: 'HR', permissions: FULL });
+    await setDoc(doc(db, 'users', 'dir'), { roleId: 'director', designation: 'Director', name: 'Dir', permissions: FULL });
+    await setDoc(doc(db, 'users', 'hr'), { roleId: 'hr', designation: 'HR', name: 'HR', permissions: FULL });
     await setDoc(doc(db, 'shifts', 's1'), SHIFT_DOC);
   });
 });

@@ -3,12 +3,11 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 /**
- * Regression tests for RBAC enforcement in the shift-assignment callables.
+ * Regression tests for permission enforcement in the shift-assignment callables.
  *
- * Previously `getCallerRole` only checked role *membership*
- * (Director | HR | Branch Manager), so a Branch Manager whose
- * employees.shiftAssignment.delete action was revoked could still delete
- * assignments. The callables must now check the specific permission action.
+ * Authorization comes solely from users/{uid}.permissions — roleId/designation
+ * only feed administrative scope checks (e.g. branch-manager branch scoping).
+ * Two users with the same role can therefore have different outcomes.
  *
  * The compiled functions in ../lib are exercised with stubbed firebase-admin,
  * firebase-functions, and ./config (db) modules injected via require.cache.
@@ -44,10 +43,10 @@ const {
   removeExistingShiftAssignment,
   changeExistingShiftAssignmentForDate,
 } = require(resolveFromLib('./shiftAssignments'));
-const { hasRolePermission } = require(resolveFromLib('./permissions'));
+const { hasUserPermission } = require(resolveFromLib('./permissions'));
 
-function createMockDb({ users = {}, roles = {}, branches = [], shifts = {}, employees = {} } = {}) {
-  const store = { users, roles, branches, shifts, employees, _ids: {} };
+function createMockDb({ users = {}, branches = [], shifts = {}, employees = {} } = {}) {
+  const store = { users, branches, shifts, employees, _ids: {} };
   const updates = [];
   let idCounter = 0;
 
@@ -102,15 +101,15 @@ const SHIFT_ASSIGNMENT_ONLY = (actions) => ({
 
 const BM_NO_DELETE = SHIFT_ASSIGNMENT_ONLY(['view', 'add', 'edit']);
 const BM_ALL_ACTIONS = SHIFT_ASSIGNMENT_ONLY(['view', 'add', 'edit', 'delete']);
-const DIRECTOR_PERMS = { employees: { accessMode: 'full' } };
-const OPS_MANAGER_PERMS = { dms: { accessMode: 'full' } };
+const FULL_PERMS = { employees: { accessMode: 'full' } };
+const DMS_ONLY_PERMS = { dms: { accessMode: 'full' } };
 
 const EMPLOYEE = { employeeCode: 'E001', employeeName: 'Test Employee' };
 const ASSIGNMENT = { assignmentId: 'a1', employeeId: 'e1', employeeCode: 'E001', fromDate: '2026-01-01', toDate: '2026-01-31' };
 const SLOT = { startTime: '09:00', endTime: '17:00', employees: [{ ...ASSIGNMENT }] };
 
-function dbFor({ users, roles, branches = [], shifts = { s1: { ...SLOT, employees: [{ ...ASSIGNMENT }] } }, employees = { e1: EMPLOYEE } }) {
-  const db = createMockDb({ users, roles, branches, shifts, employees });
+function dbFor({ users, branches = [], shifts = { s1: { ...SLOT, employees: [{ ...ASSIGNMENT }] } }, employees = { e1: EMPLOYEE } }) {
+  const db = createMockDb({ users, branches, shifts, employees });
   configStub.db = db;
   return db;
 }
@@ -122,11 +121,10 @@ const expectDenied = (promise) =>
     return true;
   });
 
-describe('shiftAssignments callable permission enforcement', () => {
-  it('DENIES branch-manager deleting an assignment when shiftAssignment delete is revoked', async () => {
+describe('shiftAssignments direct user permission enforcement', () => {
+  it('DENIES a branch-manager user whose permissions lack shiftAssignment delete', async () => {
     const db = dbFor({
-      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager' } },
-      roles: { 'branch-manager': { permissions: BM_NO_DELETE } },
+      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_NO_DELETE } },
       branches: [{ managerId: 'bm', employeeIds: ['e1'], shiftIds: ['s1'] }],
     });
 
@@ -139,10 +137,9 @@ describe('shiftAssignments callable permission enforcement', () => {
     assert.equal(db.updates.length, 0, 'no Firestore write should occur');
   });
 
-  it('ALLOWS branch-manager shiftAssignment view/add/edit when delete is revoked', async () => {
+  it('ALLOWS a branch-manager user with shiftAssignment view/add/edit but not delete', async () => {
     const db = dbFor({
-      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager' } },
-      roles: { 'branch-manager': { permissions: BM_NO_DELETE } },
+      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_NO_DELETE } },
       branches: [{ managerId: 'bm', employeeIds: ['e1'], shiftIds: ['s1', 's2'] }],
       shifts: {
         s1: { ...SLOT, employees: [{ ...ASSIGNMENT }] },
@@ -150,10 +147,10 @@ describe('shiftAssignments callable permission enforcement', () => {
       },
     });
 
-    assert.equal(await hasRolePermission('bm', 'employees', 'shiftAssignment', 'view'), true);
-    assert.equal(await hasRolePermission('bm', 'employees', 'shiftAssignment', 'add'), true);
-    assert.equal(await hasRolePermission('bm', 'employees', 'shiftAssignment', 'edit'), true);
-    assert.equal(await hasRolePermission('bm', 'employees', 'shiftAssignment', 'delete'), false);
+    assert.equal(await hasUserPermission('bm', 'employees', 'shiftAssignment', 'view'), true);
+    assert.equal(await hasUserPermission('bm', 'employees', 'shiftAssignment', 'add'), true);
+    assert.equal(await hasUserPermission('bm', 'employees', 'shiftAssignment', 'edit'), true);
+    assert.equal(await hasUserPermission('bm', 'employees', 'shiftAssignment', 'delete'), false);
 
     // add (non-overlapping dates, in-scope shift)
     const added = await addExistingShiftAssignment(
@@ -177,10 +174,9 @@ describe('shiftAssignments callable permission enforcement', () => {
     assert.ok(db.updates.length >= 3, 'add/edit operations should have written');
   });
 
-  it('ALLOWS branch-manager delete when the role still grants it', async () => {
+  it('ALLOWS a branch-manager user whose direct permissions grant delete', async () => {
     const db = dbFor({
-      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager' } },
-      roles: { 'branch-manager': { permissions: BM_ALL_ACTIONS } },
+      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_ALL_ACTIONS } },
       branches: [{ managerId: 'bm', employeeIds: ['e1'], shiftIds: ['s1'] }],
     });
 
@@ -194,10 +190,55 @@ describe('shiftAssignments callable permission enforcement', () => {
     assert.equal(update.data.employees.length, 0, 'assignment should be removed');
   });
 
-  it('still enforces branch scope for branch-manager (out-of-branch employee denied)', async () => {
+  it('two users with the same role can have different permission outcomes', async () => {
+    const db = dbFor({
+      users: {
+        bmA: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_ALL_ACTIONS },
+        bmB: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_NO_DELETE },
+      },
+      branches: [
+        { managerId: 'bmA', employeeIds: ['e1'], shiftIds: ['s1'] },
+        { managerId: 'bmB', employeeIds: ['e1'], shiftIds: ['s1'] },
+      ],
+    });
+
+    assert.equal(await hasUserPermission('bmA', 'employees', 'shiftAssignment', 'delete'), true);
+    assert.equal(await hasUserPermission('bmB', 'employees', 'shiftAssignment', 'delete'), false);
+
+    const result = await removeExistingShiftAssignment(
+      { employeeId: 'e1', shiftId: 's1', assignmentId: 'a1' },
+      ctx('bmA')
+    );
+    assert.deepEqual(result, { success: true });
+    assert.ok(db.updates.length > 0);
+  });
+
+  it('changing a user\'s roleId does not change their permissions', async () => {
+    // Same direct permission tree on two docs that differ only in roleId:
+    // authorization outcomes are identical.
+    const db = dbFor({
+      users: {
+        asBM: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_ALL_ACTIONS },
+        asHR: { roleId: 'hr', designation: 'HR', permissions: BM_ALL_ACTIONS },
+      },
+      branches: [{ managerId: 'asBM', employeeIds: ['e1'], shiftIds: ['s1'] }],
+    });
+
+    assert.equal(await hasUserPermission('asBM', 'employees', 'shiftAssignment', 'delete'), true);
+    assert.equal(await hasUserPermission('asHR', 'employees', 'shiftAssignment', 'delete'), true);
+
+    // HR is not branch-scoped, so the same grant allows the write outright.
+    const result = await removeExistingShiftAssignment(
+      { employeeId: 'e1', shiftId: 's1', assignmentId: 'a1' },
+      ctx('asHR')
+    );
+    assert.deepEqual(result, { success: true });
+    assert.ok(db.updates.length > 0);
+  });
+
+  it('still enforces branch scope for branch-manager users regardless of direct grants', async () => {
     dbFor({
-      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager' } },
-      roles: { 'branch-manager': { permissions: BM_ALL_ACTIONS } },
+      users: { bm: { roleId: 'branch-manager', designation: 'Branch Manager', permissions: BM_ALL_ACTIONS } },
       branches: [{ managerId: 'bm', employeeIds: ['other-emp'], shiftIds: ['other-shift'] }],
       employees: { e1: EMPLOYEE },
     });
@@ -216,10 +257,9 @@ describe('shiftAssignments callable permission enforcement', () => {
     );
   });
 
-  it('ALLOWS hr (full access role) to add/edit/delete assignments', async () => {
+  it('ALLOWS an HR user with full employees access to add/edit/delete assignments', async () => {
     dbFor({
-      users: { hr: { roleId: 'hr', designation: 'HR' } },
-      roles: { hr: { permissions: DIRECTOR_PERMS } },
+      users: { hr: { roleId: 'hr', designation: 'HR', permissions: FULL_PERMS } },
       branches: [],
       shifts: {
         s1: { ...SLOT, employees: [{ ...ASSIGNMENT }] },
@@ -238,10 +278,9 @@ describe('shiftAssignments callable permission enforcement', () => {
     assert.deepEqual(removed, { success: true });
   });
 
-  it('ALLOWS director (full access role) to delete an assignment', async () => {
+  it('ALLOWS a director user with full employees access to delete an assignment', async () => {
     const db = dbFor({
-      users: { dir: { roleId: 'director', designation: 'Director' } },
-      roles: { director: { permissions: DIRECTOR_PERMS } },
+      users: { dir: { roleId: 'director', designation: 'Director', permissions: FULL_PERMS } },
     });
 
     const result = await removeExistingShiftAssignment(
@@ -252,10 +291,9 @@ describe('shiftAssignments callable permission enforcement', () => {
     assert.ok(db.updates.length > 0);
   });
 
-  it('DENIES roles without employees.shiftAssignment permission entirely', async () => {
+  it('DENIES a user with a full grant on an unrelated module', async () => {
     dbFor({
-      users: { ops: { roleId: 'operations-manager', designation: 'Operations Manager' } },
-      roles: { 'operations-manager': { permissions: OPS_MANAGER_PERMS } },
+      users: { ops: { roleId: 'operations-manager', designation: 'Operations Manager', permissions: DMS_ONLY_PERMS } },
     });
 
     await expectDenied(
@@ -268,6 +306,19 @@ describe('shiftAssignments callable permission enforcement', () => {
       addExistingShiftAssignment(
         { employeeId: 'e1', shiftId: 's1', fromDate: '2026-02-01', toDate: '2026-02-10' },
         ctx('ops')
+      )
+    );
+  });
+
+  it('DENIES a user with no permissions field at all', async () => {
+    dbFor({
+      users: { legacy: { roleId: 'hr', designation: 'HR' } },
+    });
+
+    await expectDenied(
+      removeExistingShiftAssignment(
+        { employeeId: 'e1', shiftId: 's1', assignmentId: 'a1' },
+        ctx('legacy')
       )
     );
   });

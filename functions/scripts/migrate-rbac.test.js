@@ -1,234 +1,381 @@
-const { describe, it, beforeEach } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-// Keep a pristine reference to the real module; reload between tests to honor DRY_RUN flag changes.
+/**
+ * Tests for the direct-permission migration. The migration copies each user's
+ * CURRENT effective access (role permissions + permissionOverrides) into
+ * users/{uid}.permissions, removes permissionOverrides, stamps a migration
+ * marker, and only then strips permissions from role documents.
+ */
+
 function loadModule(dryRun = false) {
-  // Setting argv controls the DRY_RUN constant inside migrate-rbac.js.
-  if (dryRun) {
-    process.argv = ['node', 'migrate-rbac.js', '--dry-run'];
-  } else {
-    process.argv = ['node', 'migrate-rbac.js'];
-  }
-  // Clear require cache so the DRY_RUN constant is re-evaluated.
+  process.argv = dryRun
+    ? ['node', 'migrate-rbac.js', '--dry-run']
+    : ['node', 'migrate-rbac.js'];
   delete require.cache[require.resolve('./migrate-rbac')];
   return require('./migrate-rbac');
 }
 
-function createMockDb({ existingRoles = {}, users = [] } = {}) {
-  const setCalls = [];
-  const batchUpdateCalls = [];
+const FIELD_VALUE_DELETE = 'FIELD_VALUE_DELETE';
 
-  function makeDocRef(id) {
-    return {
-      id,
-      set: async (data, options) => {
-        setCalls.push({ id, data, options });
-      },
-    };
-  }
+// migrate-rbac requires firebase-admin at module load; stub it.
+const adminPath = require.resolve('firebase-admin', {
+  paths: [require('node:path').join(__dirname, '..')],
+});
+require.cache[adminPath] = {
+  exports: {
+    firestore: Object.assign(() => ({}), {
+      FieldValue: { delete: () => FIELD_VALUE_DELETE, serverTimestamp: () => 'TS' },
+    }),
+    initializeApp: () => {},
+  },
+};
 
-  const docs = [];
-  const roleDocs = {};
-
-  for (const roleId of Object.keys(existingRoles)) {
-    roleDocs[roleId] = {
-      exists: true,
-      data: () => existingRoles[roleId],
-      ref: makeDocRef(roleId),
-    };
-  }
-
-  for (const user of users) {
-    const ref = makeDocRef(user.id);
-    docs.push({
-      id: user.id,
-      data: () => user.data,
-      ref,
-    });
-  }
-
-  const mockBatch = {
-    update: (ref, data) => {
-      batchUpdateCalls.push({ ref, data });
+const BM_ROLE_PERMS = {
+  employees: {
+    accessMode: 'custom',
+    items: {
+      employeeManagement: { actions: ['view', 'edit'] },
+      shiftAssignment: { actions: ['view', 'add', 'edit', 'delete'] },
     },
-    commit: async () => {
-      // no-op for mock
+  },
+  shifts: { accessMode: 'custom', items: { shifts: { actions: ['view', 'edit'] } } },
+};
+
+const DIRECTOR_PERMS = Object.fromEntries(
+  ['employees', 'attendanceLogs', 'shifts', 'leaves', 'reports', 'insights', 'devices', 'masters', 'dms', 'users']
+    .map((m) => [m, { accessMode: 'full' }])
+);
+
+function createMockDb({ roles = {}, users = [] } = {}) {
+  const userDocs = users.map((u) => ({
+    id: u.id,
+    data: () => u.data,
+    ref: {
+      id: u.id,
+      __updates: [],
+      update: async function (data) { this.__updates.push(data); },
     },
-  };
+  }));
+  const roleDocs = roles.map((r) => ({
+    id: r.id,
+    exists: true,
+    data: () => r.data,
+    ref: {
+      id: r.id,
+      __updates: [],
+      update: async function (data) { this.__updates.push(data); },
+    },
+  }));
 
   return {
+    userDocs,
+    roleDocs,
     collection(name) {
+      if (name === 'users') {
+        return { get: async () => ({ docs: userDocs, size: userDocs.length }) };
+      }
       if (name === 'roles') {
         return {
-          doc(roleId) {
+          get: async () => ({ docs: roleDocs, size: roleDocs.length }),
+          doc: (id) => {
+            const d = roleDocs.find((r) => r.id === id);
             return {
-              get: async () => roleDocs[roleId] || { exists: false, data: () => undefined },
-              set: async (data, options) => {
-                setCalls.push({ id: roleId, data, options });
-              },
+              get: async () => d || { exists: false, data: () => undefined },
             };
           },
         };
       }
-      if (name === 'users') {
-        return {
-          get: async () => ({ docs, size: docs.length }),
-        };
-      }
-      return { doc: () => ({}), get: async () => ({ docs: [], size: 0 }) };
+      throw new Error(`unexpected collection ${name}`);
     },
-    batch: () => mockBatch,
-    setCalls,
-    batchUpdateCalls,
   };
 }
 
-describe('migrate-rbac role mapping', () => {
-  it('maps all legacy designations to fixed roleIds', () => {
-    const { getRoleIdFromDesignation, ROLE_IDS } = loadModule(true);
-    assert.equal(getRoleIdFromDesignation('Director'), ROLE_IDS.DIRECTOR);
-    assert.equal(getRoleIdFromDesignation('HR'), ROLE_IDS.HR);
-    assert.equal(getRoleIdFromDesignation('Operations Manager'), ROLE_IDS.OPERATIONS_MANAGER);
-    assert.equal(getRoleIdFromDesignation('Branch Manager'), ROLE_IDS.BRANCH_MANAGER);
-    assert.equal(getRoleIdFromDesignation('WhatsApp Messager'), ROLE_IDS.WHATSAPP_MESSAGER);
+describe('migrate-rbac effective permission computation', () => {
+  it('copies custom role permissions through unchanged', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    const effective = getEffectivePermissions(BM_ROLE_PERMS, null);
+    assert.deepEqual(effective, BM_ROLE_PERMS);
   });
 
-  it('is case-insensitive and trims whitespace', () => {
-    const { getRoleIdFromDesignation, ROLE_IDS } = loadModule(true);
-    assert.equal(getRoleIdFromDesignation('  hr  '), ROLE_IDS.HR);
-    assert.equal(getRoleIdFromDesignation('BRANCH MANAGER'), ROLE_IDS.BRANCH_MANAGER);
+  it('an allow override grants an action the role denies', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    const effective = getEffectivePermissions(BM_ROLE_PERMS, {
+      employees: { employeeManagement: { delete: 'allow' } },
+    });
+    assert.ok(effective.employees.items.employeeManagement.actions.includes('delete'));
   });
 
-  it('returns empty string for unknown designations', () => {
-    const { getRoleIdFromDesignation } = loadModule(true);
-    assert.equal(getRoleIdFromDesignation('Admin'), '');
-    assert.equal(getRoleIdFromDesignation(''), '');
-    assert.equal(getRoleIdFromDesignation(undefined), '');
+  it('a deny override removes a role-granted action', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    const effective = getEffectivePermissions(BM_ROLE_PERMS, {
+      employees: { shiftAssignment: { delete: 'deny' } },
+    });
+    assert.ok(!effective.employees.items.shiftAssignment.actions.includes('delete'));
+    assert.ok(effective.employees.items.shiftAssignment.actions.includes('view'));
+  });
+
+  it('full role + deny override materializes Custom over all defined actions', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    const effective = getEffectivePermissions(DIRECTOR_PERMS, {
+      employees: { employeeManagement: { delete: 'deny' } },
+    });
+    assert.equal(effective.employees.accessMode, 'custom');
+    assert.deepEqual(effective.employees.items.employeeManagement.actions, ['view', 'add', 'edit']);
+    assert.deepEqual(effective.employees.items.shiftAssignment.actions, ['view', 'add', 'edit', 'delete']);
+    // Untouched modules stay full, preserving future-item semantics.
+    assert.equal(effective.dms.accessMode, 'full');
+  });
+
+  it('an allow override creates access on a module the role lacks', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    const effective = getEffectivePermissions(BM_ROLE_PERMS, {
+      dms: { whatsappMessenger: { send: 'allow' } },
+    });
+    assert.equal(effective.dms.accessMode, 'custom');
+    assert.deepEqual(effective.dms.items.whatsappMessenger.actions, ['send']);
+  });
+
+  it('normalizes access overrides to view', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    const role = { dms: { accessMode: 'custom', items: { whatsappMessenger: { actions: ['access'] } } } };
+    const effective = getEffectivePermissions(role, { dms: { whatsappMessenger: { view: 'deny' } } });
+    assert.equal(effective.dms, undefined);
+  });
+
+  it('returns empty permissions when no role resolves and no overrides exist', () => {
+    const { getEffectivePermissions } = loadModule(true);
+    assert.deepEqual(getEffectivePermissions({}, null), {});
+    assert.deepEqual(getEffectivePermissions(null, null), {});
   });
 });
 
-describe('migrate-rbac default role permissions', () => {
-  it('has exactly five fixed roles', () => {
-    const { ROLE_NAMES } = loadModule(true);
-    assert.equal(Object.keys(ROLE_NAMES).length, 5);
+/**
+ * Replicates the pre-migration effective check: an explicit override state
+ * ('allow'/'deny', looked up by normalized action) wins; otherwise the role
+ * permission tree decides via modulePermissionCheck semantics.
+ */
+function oldEffectiveCheck(rolePermissions, overrides, module, item, action) {
+  const normalized = action === 'access' ? 'view' : action;
+  const state =
+    overrides && overrides[module] && overrides[module][item]
+      ? overrides[module][item][normalized]
+      : undefined;
+  if (state === 'allow') return true;
+  if (state === 'deny') return false;
+  const modulePerms = rolePermissions ? rolePermissions[module] : undefined;
+  if (!modulePerms) return false;
+  if (modulePerms.accessMode === 'full') return true;
+  const itemPerms = modulePerms.items ? modulePerms.items[item] : undefined;
+  if (!itemPerms || !Array.isArray(itemPerms.actions)) return false;
+  return itemPerms.actions.some((a) => (a === 'access' ? 'view' : a) === normalized);
+}
+
+/**
+ * The migration invariant: for every module/item/action, the materialized
+ * direct permission tree must answer identically to the old effective check.
+ */
+function assertEquivalent(rolePermissions, overrides) {
+  const { getEffectivePermissions, checkDirectPermission, PERMISSION_MODULES } = loadModule(true);
+  const effective = getEffectivePermissions(rolePermissions, overrides);
+  for (const moduleDef of PERMISSION_MODULES) {
+    for (const itemDef of moduleDef.items) {
+      for (const action of itemDef.actions) {
+        const oldResult = oldEffectiveCheck(rolePermissions, overrides, moduleDef.key, itemDef.key, action);
+        const newResult = checkDirectPermission(effective, moduleDef.key, itemDef.key, action);
+        assert.equal(
+          newResult,
+          oldResult,
+          `mismatch at ${moduleDef.key}.${itemDef.key}.${action}: old=${oldResult} new=${newResult}`
+        );
+      }
+    }
+  }
+}
+
+describe('migrate-rbac effective permission equivalence', () => {
+  it('role full + user deny materializes custom minus denied actions', () => {
+    assertEquivalent(DIRECTOR_PERMS, {
+      employees: { employeeManagement: { delete: 'deny' } },
+    });
   });
 
-  it('Director has full access on every module', () => {
-    const { DEFAULT_ROLE_PERMISSIONS, ROLE_IDS } = loadModule(true);
-    const perms = DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.DIRECTOR];
-    assert.equal(perms.employees.accessMode, 'full');
-    assert.equal(perms.dms.accessMode, 'full');
-    assert.equal(perms.users.accessMode, 'full');
+  it('role custom + user allow grants actions the role lacks', () => {
+    assertEquivalent(BM_ROLE_PERMS, {
+      employees: { employeeManagement: { delete: 'allow', add: 'allow' } },
+    });
   });
 
-  it('HR has full attendance/masters/users access and no DMS access', () => {
-    const { DEFAULT_ROLE_PERMISSIONS, ROLE_IDS } = loadModule(true);
-    const perms = DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.HR];
-    assert.equal(perms.employees.accessMode, 'full');
-    assert.equal(perms.dms, undefined);
-    assert.ok(perms.users.items.userManagement.actions.includes('delete'));
+  it('role custom + user deny removes role-granted actions', () => {
+    assertEquivalent(BM_ROLE_PERMS, {
+      employees: { shiftAssignment: { delete: 'deny' }, employeeManagement: { edit: 'deny' } },
+    });
   });
 
-  it('Operations Manager has full DMS and limited user management', () => {
-    const { DEFAULT_ROLE_PERMISSIONS, ROLE_IDS } = loadModule(true);
-    const perms = DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.OPERATIONS_MANAGER];
-    assert.equal(perms.dms.accessMode, 'full');
-    assert.ok(!perms.users.items.userManagement.actions.includes('delete'));
-    assert.equal(perms.employees, undefined);
+  it('role no-access + user allow creates custom access', () => {
+    assertEquivalent(BM_ROLE_PERMS, {
+      dms: { whatsappMessenger: { send: 'allow', manage: 'allow' } },
+    });
   });
 
-  it('Branch Manager has attendance scope without devices/masters/users/DMS', () => {
-    const { DEFAULT_ROLE_PERMISSIONS, ROLE_IDS } = loadModule(true);
-    const perms = DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.BRANCH_MANAGER];
-    assert.equal(perms.devices, undefined);
-    assert.equal(perms.masters, undefined);
-    assert.equal(perms.users, undefined);
-    assert.equal(perms.dms, undefined);
-    assert.ok(perms.attendanceLogs.items.rawPunches.actions.includes('view'));
-    assert.equal(perms.attendanceLogs.items.changeTracker, undefined);
+  it('multiple overrides in the same module are all applied', () => {
+    assertEquivalent(DIRECTOR_PERMS, {
+      leaves: {
+        leaves: { delete: 'deny' },
+        weekOffs: { add: 'deny', delete: 'deny' },
+        leaveLimits: { view: 'deny', add: 'deny', edit: 'deny', delete: 'deny' },
+      },
+      shifts: { shifts: { view: 'deny' } },
+    });
   });
 
-  it('WhatsApp Messager has full DMS access to preserve legacy routes', () => {
-    const { DEFAULT_ROLE_PERMISSIONS, ROLE_IDS } = loadModule(true);
-    const perms = DEFAULT_ROLE_PERMISSIONS[ROLE_IDS.WHATSAPP_MESSAGER];
-    assert.equal(perms.dms.accessMode, 'full');
-    assert.equal(perms.employees, undefined);
-    assert.equal(perms.users, undefined);
+  it('full access with several denied actions materializes correctly', () => {
+    assertEquivalent(DIRECTOR_PERMS, {
+      employees: {
+        employeeManagement: { delete: 'deny', add: 'deny' },
+        shiftAssignment: { view: 'deny', add: 'deny', edit: 'deny', delete: 'deny' },
+      },
+    });
+  });
+
+  it('users with no overrides keep the role grant verbatim', () => {
+    assertEquivalent(BM_ROLE_PERMS, null);
+    assertEquivalent(DIRECTOR_PERMS, null);
+    assertEquivalent({}, null);
+    assertEquivalent(null, null);
+  });
+
+  it('mixed allow and deny overrides resolve independently', () => {
+    assertEquivalent(BM_ROLE_PERMS, {
+      employees: { employeeManagement: { delete: 'allow', edit: 'deny' } },
+      shifts: { shifts: { add: 'allow', view: 'deny' } },
+      reports: { monthlyReport: { export: 'allow' } },
+    });
   });
 });
 
-describe('migrate-rbac idempotency and dry-run behavior', () => {
-  it('dry-run does not create role documents or update users', async () => {
-    const { seedRoles, migrateUsers } = loadModule(true);
+describe('migrate-rbac user migration', () => {
+  it('writes direct permissions, removes overrides, and stamps the marker', async () => {
+    const { migrateUsers, MIGRATION_VERSION } = loadModule(false);
     const db = createMockDb({
+      roles: [{ id: 'branch-manager', data: { name: 'Branch Manager', permissions: BM_ROLE_PERMS } }],
       users: [
-        { id: 'u1', data: { designation: 'HR', name: 'Alice' } },
-        { id: 'u2', data: { designation: 'Director', name: 'Bob' } },
-        { id: 'u3', data: { roleId: 'hr', designation: 'HR', name: 'Carol' } },
-        { id: 'u4', data: { designation: 'Unknown Role', name: 'Dave' } },
+        {
+          id: 'u1',
+          data: {
+            roleId: 'branch-manager',
+            designation: 'Branch Manager',
+            permissionOverrides: { employees: { employeeManagement: { delete: 'allow' } } },
+          },
+        },
       ],
     });
 
-    await seedRoles(db);
     await migrateUsers(db);
 
-    assert.equal(db.setCalls.length, 0, 'No role set calls should happen in dry-run');
-    assert.equal(db.batchUpdateCalls.length, 0, 'No user updates should happen in dry-run');
+    const update = db.userDocs[0].ref.__updates[0];
+    assert.ok(update.permissions.employees.items.employeeManagement.actions.includes('delete'));
+    assert.equal(update.permissionOverrides, FIELD_VALUE_DELETE);
+    assert.equal(update.permissionMigrationVersion, MIGRATION_VERSION);
   });
 
-  it('skips users that already have roleId', async () => {
-    const { seedRoles, migrateUsers } = loadModule(true);
+  it('skips already-migrated users so post-migration edits survive reruns', async () => {
+    const { migrateUsers, MIGRATION_VERSION } = loadModule(false);
+    const custom = { employees: { accessMode: 'custom', items: { employeeManagement: { actions: ['view'] } } } };
     const db = createMockDb({
+      roles: [{ id: 'branch-manager', data: { name: 'Branch Manager', permissions: BM_ROLE_PERMS } }],
       users: [
-        { id: 'u1', data: { designation: 'HR', name: 'Alice' } },
-        { id: 'u2', data: { roleId: 'hr', designation: 'HR', name: 'Carol' } },
+        { id: 'migrated', data: { roleId: 'branch-manager', permissions: custom, permissionMigrationVersion: MIGRATION_VERSION } },
+        { id: 'pending', data: { roleId: 'branch-manager' } },
       ],
     });
 
-    await seedRoles(db);
     await migrateUsers(db);
 
-    // u1 would be migrated; u2 already has roleId.
-    assert.equal(db.batchUpdateCalls.length, 0, 'No updates in dry-run');
+    assert.equal(db.userDocs[0].ref.__updates.length, 0, 'migrated user untouched');
+    assert.equal(db.userDocs[1].ref.__updates.length, 1, 'pending user migrated');
+    assert.deepEqual(db.userDocs[1].ref.__updates[0].permissions, BM_ROLE_PERMS);
   });
 
-  it('non-dry-run writes only missing roleIds and does not overwrite designation', async () => {
-    const { seedRoles, migrateUsers } = loadModule(false);
+  it('preserves an existing direct permissions field verbatim — no union with legacy effective', async () => {
+    const { migrateUsers } = loadModule(false);
+    // User already on the direct model but unmarked: role Full + deny Delete
+    // must NOT resurrect Delete via a union with the direct tree.
+    const direct = { employees: { accessMode: 'custom', items: { employeeManagement: { actions: ['view'] } } } };
     const db = createMockDb({
+      roles: [{ id: 'director', data: { name: 'Director', permissions: DIRECTOR_PERMS } }],
       users: [
-        { id: 'u1', data: { designation: 'HR', name: 'Alice' } },
-        { id: 'u2', data: { roleId: 'hr', designation: 'HR', name: 'Carol' } },
-        { id: 'u3', data: { designation: 'Branch Manager', name: 'Eve' } },
+        {
+          id: 'u1',
+          data: {
+            roleId: 'director',
+            permissions: direct,
+            permissionOverrides: { employees: { employeeManagement: { delete: 'deny' } } },
+          },
+        },
       ],
     });
-
-    await seedRoles(db);
     await migrateUsers(db);
-
-    // 5 role docs created/updated + 2 user updates (u1 and u3).
-    assert.equal(db.setCalls.length, 5, 'All five role documents should be seeded');
-    assert.equal(db.batchUpdateCalls.length, 2, 'Only users without roleId should be updated');
-
-    const updatedUserIds = db.batchUpdateCalls.map((c) => c.ref.id).sort();
-    assert.deepEqual(updatedUserIds, ['u1', 'u3']);
-
-    const u1Update = db.batchUpdateCalls.find((c) => c.ref.id === 'u1');
-    assert.equal(u1Update.data.roleId, 'hr');
-    assert.equal(u1Update.data.designation, undefined, 'designation must not be modified');
+    const update = db.userDocs[0].ref.__updates[0];
+    assert.deepEqual(update.permissions, direct);
+    assert.equal(update.permissionOverrides, FIELD_VALUE_DELETE);
   });
 
-  it('does not create duplicate role records', async () => {
-    const { seedRoles } = loadModule(false);
-    const existingRoles = {
-      hr: { name: 'HR', permissions: {} },
-    };
-    const db = createMockDb({ existingRoles });
+  it('a role doc with a null permissions field yields no access (not defaults)', async () => {
+    const { migrateUsers } = loadModule(false);
+    const db = createMockDb({
+      roles: [{ id: 'branch-manager', data: { name: 'Branch Manager', permissions: null } }],
+      users: [{ id: 'u1', data: { roleId: 'branch-manager' } }],
+    });
+    await migrateUsers(db);
+    assert.deepEqual(db.userDocs[0].ref.__updates[0].permissions, {});
+  });
 
-    await seedRoles(db);
+  it('falls back to built-in role defaults when the role document is missing', async () => {
+    const { migrateUsers } = loadModule(false);
+    const db = createMockDb({
+      roles: [],
+      users: [{ id: 'u1', data: { roleId: 'branch-manager', designation: 'Branch Manager' } }],
+    });
+    await migrateUsers(db);
+    assert.equal(db.userDocs[0].ref.__updates[0].permissions.shifts.accessMode, 'custom');
+  });
 
-    // Exactly five set calls (one per fixed role), not duplicates for existing roles.
-    assert.equal(db.setCalls.length, 5);
-    const hrCalls = db.setCalls.filter((c) => c.id === 'hr');
-    assert.equal(hrCalls.length, 1, 'HR role should be updated once, not duplicated');
+  it('dry-run performs no writes', async () => {
+    // Re-require with the dry-run flag so DRY_RUN is true inside the module.
+    const { migrateUsers, cleanupRolePermissions } = loadModule(true);
+    const db = createMockDb({
+      roles: [{ id: 'hr', data: { name: 'HR', permissions: {} } }],
+      users: [{ id: 'u1', data: { roleId: 'hr', designation: 'HR' } }],
+    });
+    await migrateUsers(db);
+    await cleanupRolePermissions(db, true);
+    assert.equal(db.userDocs[0].ref.__updates.length, 0);
+    assert.equal(db.roleDocs[0].ref.__updates.length, 0);
+  });
+});
+
+describe('migrate-rbac role cleanup ordering', () => {
+  it('removes the permissions field from roles only after all users migrated', async () => {
+    const { cleanupRolePermissions } = loadModule(false);
+    const db = createMockDb({
+      roles: [
+        { id: 'hr', data: { name: 'HR', permissions: { x: 1 } } },
+        { id: 'director', data: { name: 'Director' } },
+      ],
+    });
+    await cleanupRolePermissions(db, true);
+    assert.equal(db.roleDocs[0].ref.__updates.length, 1);
+    assert.deepEqual(db.roleDocs[0].ref.__updates[0], { permissions: FIELD_VALUE_DELETE });
+    assert.equal(db.roleDocs[1].ref.__updates.length, 0, 'role without permissions untouched');
+  });
+
+  it('refuses cleanup while unmigrated users remain', async () => {
+    const { cleanupRolePermissions } = loadModule(false);
+    const db = createMockDb({
+      roles: [{ id: 'hr', data: { name: 'HR', permissions: { x: 1 } } }],
+    });
+    await cleanupRolePermissions(db, false);
+    assert.equal(db.roleDocs[0].ref.__updates.length, 0);
   });
 });
