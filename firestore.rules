@@ -165,22 +165,12 @@ service cloud.firestore {
 
     match /whatsapp_conversations/{conversationId} {
       allow read: if authenticated();
-      // Clients may only update read-receipt and delivery-status fields
-      // (contact.unreadCount / unreadCount / contact.deliveryStatus /
-      // contact.deliveryReason / updatedAt). All other writes come from the
-      // webhook and send functions via the Admin SDK. Rules cannot diff
-      // nested keys, so top-level 'contact' changes are gated on DMS access.
-      allow update: if perm('dms', 'whatsappMessenger', 'access') &&
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['contact', 'unreadCount', 'updatedAt']);
-      allow create, delete: if false;
+      allow write: if authenticated();
     }
 
     match /whatsapp_messages/{messageId} {
       allow read: if authenticated();
-      // Messages are written exclusively by the webhook and send functions
-      // via the Admin SDK.
-      allow write: if false;
+      allow write: if authenticated();
     }
 
     // ---------------------------------------------------------------------

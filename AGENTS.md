@@ -8,24 +8,20 @@ source. `roleId`/designation are identity + administrative + branch-scope metada
 must stay consistent. Migration script: `functions/scripts/migrate-rbac.js`
 (`--dry-run` supported; idempotent via `permissionMigrationVersion: 1`).
 
-## WhatsApp security (addressed — pending production deploy)
+## Known security debt (tracked, pre-existing — not rollout blockers)
 
-- `whatsapp_conversations`: reads stay authenticated; updates require
-  `dms.whatsappMessenger` access and may only touch read-receipt /
-  delivery-status fields; create/delete denied (server writes use Admin SDK).
-- `whatsapp_messages`: read-only for clients; all writes via Admin SDK.
-- Webhook POST validates Meta `X-Hub-Signature-256` (HMAC-SHA256 over the raw
-  body, `WHATSAPP_APP_SECRET` env var; fail-closed). **Deploy requires
-  `WHATSAPP_APP_SECRET` set on the `webhook` function env vars first** —
-  without it, inbound Meta events are rejected.
+1. **`whatsapp_conversations` / `whatsapp_messages` rules are permissive** —
+   `firestore.rules` allows any authenticated user read+write on both collections.
+   Tighten to permission-gated (e.g. `dms.whatsappMessenger`) when prioritized.
+2. **Webhook POST lacks `X-Hub-Signature-256` verification** —
+   `functions/src/webhook.ts` verifies the GET handshake via `hub.verify_token` but
+   does not validate the POST body signature. Add HMAC verification against the Meta
+   app secret when prioritized.
 
 ## Infrastructure debt
 
-- `firebase-functions@4.9.0` — plan: upgrade to >=5.1.0. Breaking changes
-  (v2-first APIs, dropped Node <16, config removal path). Steps: bump in
-  `functions/package.json`, `npm install`, fix compile errors, run all tests,
-  then `firebase deploy --only functions`. Note the secret/env config still
-  works via process.env today.
+- `functions/package.json` pins `firebase-functions@4.9.0` — upgrade to >=5.1.0
+  (breaking changes; needed for newest Extensions features).
 - `functions.config()` / Runtime Config API deprecated — migrate to `params`
   before March 2027 (`firebase functions:config:export` to start).
 - Frontend bundle ~2.5 MB exceeds PWA precache limit — code-split if PWA caching

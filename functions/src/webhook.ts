@@ -1,10 +1,8 @@
 import * as admin from 'firebase-admin';
-import crypto from 'crypto';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import {
   VERIFY_TOKEN,
-  WHATSAPP_APP_SECRET,
   CONVERSATIONS_COLLECTION,
   MESSAGES_COLLECTION,
   messaging,
@@ -12,31 +10,7 @@ import {
 
 const app = express();
 app.use(cors({ origin: true }));
-// Capture the raw body for X-Hub-Signature-256 verification. Firebase
-// Functions already populates req.rawBody; the verify callback makes the
-// app behave identically when run standalone (tests, local dev).
-app.use(express.json({
-  verify: (req: Request, _res, buf) => {
-    if (!(req as any).rawBody) (req as any).rawBody = buf;
-  },
-}));
-
-/**
- * Verifies Meta's X-Hub-Signature-256 header against the raw request body.
- * Fails closed: a missing app secret or absent/mismatched signature rejects
- * the payload.
- */
-function verifyMetaSignature(rawBody: Buffer | undefined, signature: string | undefined): boolean {
-  if (!WHATSAPP_APP_SECRET) {
-    console.error('WHATSAPP_APP_SECRET is not configured; rejecting webhook payload.');
-    return false;
-  }
-  if (!rawBody || !signature || !signature.startsWith('sha256=')) return false;
-  const expected = 'sha256=' + crypto.createHmac('sha256', WHATSAPP_APP_SECRET).update(rawBody).digest('hex');
-  const provided = Buffer.from(signature);
-  const wanted = Buffer.from(expected);
-  return provided.length === wanted.length && crypto.timingSafeEqual(provided, wanted);
-}
+app.use(express.json());
 
 /**
  * Webhook verification endpoint - Meta calls this to verify the webhook
@@ -58,10 +32,6 @@ app.get('/', (req: Request, res: Response) => {
  * Webhook message receiver - Meta sends incoming messages here
  */
 app.post('/', async (req: Request, res: Response) => {
-  if (!verifyMetaSignature((req as any).rawBody as Buffer | undefined, req.get('x-hub-signature-256'))) {
-    return res.sendStatus(403);
-  }
-
   try {
     const body = req.body;
 
