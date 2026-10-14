@@ -33,9 +33,7 @@
  */
 
 const admin = require('firebase-admin');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+const adminAuth = require('./lib/adminAuth');
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const MIGRATION_VERSION = 1;
@@ -281,6 +279,30 @@ function isMigrated(data) {
   return data.permissionMigrationVersion === MIGRATION_VERSION;
 }
 
+/**
+ * Normalizes Firestore values for deep comparison. Timestamps (and similar
+ * date-like objects) are converted to a canonical form; plain objects have
+ * keys sorted so equality is structural rather than key-order dependent.
+ */
+function normalizeValue(value) {
+  if (value === null || value === undefined || typeof value !== 'object') return value;
+  if (typeof value.toMillis === 'function') return { __ts: value.toMillis() };
+  if (typeof value._seconds === 'number' && typeof value._nanoseconds === 'number') {
+    return { __ts: value._seconds * 1000 + Math.floor(value._nanoseconds / 1e6) };
+  }
+  if (value instanceof Date) return { __ts: value.getTime() };
+  if (Array.isArray(value)) return value.map(normalizeValue);
+  const normalized = {};
+  for (const key of Object.keys(value).sort()) {
+    normalized[key] = normalizeValue(value[key]);
+  }
+  return normalized;
+}
+
+function deepEqual(a, b) {
+  return JSON.stringify(normalizeValue(a)) === JSON.stringify(normalizeValue(b));
+}
+
 async function resolveRolePermissions(db, userData, roleCache) {
   const roleId =
     (typeof userData.roleId === 'string' && userData.roleId) ||
@@ -340,11 +362,16 @@ async function migrateUsers(db) {
   };
 
   const pending = [];
+  // Manifest for post-write verification: every user in scope, with the exact
+  // expected permissions and a snapshot of the pre-write document.
+  const manifest = new Map();
 
   for (const userDoc of snapshot.docs) {
     const data = userDoc.data();
     if (isMigrated(data)) {
       stats.alreadyMigrated++;
+      // Already-migrated direct permissions must survive unchanged.
+      manifest.set(userDoc.id, { before: data, expected: data.permissions || {} });
       continue;
     }
     const result = await computeUserUpdate(db, userDoc, roleCache);
@@ -353,6 +380,7 @@ async function migrateUsers(db) {
     if (data.permissionOverrides) stats.withOverrides++;
     if (result.roleId === '(none)') stats.noResolvableRole++;
     pending.push({ ref: userDoc.ref, id: userDoc.id, update: result.update });
+    manifest.set(userDoc.id, { before: data, expected: result.permissions });
     console.log(`  ${userDoc.id}: role=${result.roleId} -> ${Object.keys(result.permissions).length} module(s) granted`);
   }
 
@@ -369,7 +397,60 @@ async function migrateUsers(db) {
   console.log(`  ${DRY_RUN ? 'Will migrate' : 'Migrated'}: ${stats.willMigrate}`);
   console.log(`  Users with overrides folded in: ${stats.withOverrides}`);
   console.log(`  Users without resolvable role (permissions = computed overrides only): ${stats.noResolvableRole}`);
-  return stats.willMigrate + stats.alreadyMigrated === stats.total;
+  return { allMigrated: stats.willMigrate + stats.alreadyMigrated === stats.total, manifest };
+}
+
+/**
+ * Mandatory post-write gate. Re-reads every user document and verifies:
+ *   - the document still exists (and no unexpected new users appeared),
+ *   - stored permissions deep-equal the computed expected tree,
+ *   - permissionMigrationVersion is stamped,
+ *   - permissionOverrides is absent,
+ *   - every field unrelated to the RBAC migration is byte-identical to the
+ *     pre-write snapshot.
+ * Returns a list of human-readable discrepancies; empty means verified.
+ */
+async function verifyUserMigration(db, manifest) {
+  const RBAC_FIELDS = new Set(['permissions', 'permissionOverrides', 'permissionMigrationVersion']);
+  const discrepancies = [];
+
+  const snapshot = await db.collection('users').get();
+  const byId = new Map(snapshot.docs.map((d) => [d.id, d]));
+
+  for (const docSnap of snapshot.docs) {
+    if (!manifest.has(docSnap.id)) {
+      discrepancies.push(`${docSnap.id}: unexpected user document appeared during migration`);
+    }
+  }
+
+  for (const [uid, entry] of manifest) {
+    const docSnap = byId.get(uid);
+    if (!docSnap) {
+      discrepancies.push(`${uid}: user document missing after migration`);
+      continue;
+    }
+    const after = docSnap.data();
+
+    if (!deepEqual(after.permissions, entry.expected)) {
+      discrepancies.push(`${uid}: stored permissions do not match the expected effective set`);
+    }
+    if (after.permissionMigrationVersion !== MIGRATION_VERSION) {
+      discrepancies.push(`${uid}: missing or incorrect permissionMigrationVersion`);
+    }
+    if ('permissionOverrides' in after) {
+      discrepancies.push(`${uid}: permissionOverrides field still present`);
+    }
+
+    const fieldKeys = new Set([...Object.keys(entry.before), ...Object.keys(after)]);
+    for (const key of fieldKeys) {
+      if (RBAC_FIELDS.has(key)) continue;
+      if (!deepEqual(entry.before[key], after[key])) {
+        discrepancies.push(`${uid}: unrelated field '${key}' changed during migration`);
+      }
+    }
+  }
+
+  return discrepancies;
 }
 
 async function cleanupRolePermissions(db, allUsersMigrated) {
@@ -381,6 +462,7 @@ async function cleanupRolePermissions(db, allUsersMigrated) {
   console.log(DRY_RUN ? '[DRY RUN] Role permission cleanup report:' : 'Removing permissions field from role documents...');
   const snapshot = await db.collection('roles').get();
   let cleaned = 0;
+  const cleanedIds = [];
   for (const roleDoc of snapshot.docs) {
     const data = roleDoc.data();
     if (!('permissions' in data)) continue;
@@ -388,47 +470,32 @@ async function cleanupRolePermissions(db, allUsersMigrated) {
     console.log(`  ${roleDoc.id}: permissions field will be removed`);
     if (!DRY_RUN) {
       await roleDoc.ref.update({ permissions: admin.firestore.FieldValue.delete() });
+      cleanedIds.push(roleDoc.id);
     }
   }
   console.log(`  ${DRY_RUN ? 'Would clean' : 'Cleaned'} ${cleaned} role document(s).`);
+
+  // Post-cleanup verification: re-read and confirm the field is gone.
+  if (!DRY_RUN) {
+    const verify = await db.collection('roles').get();
+    const failures = [];
+    for (const roleDoc of verify.docs) {
+      if ('permissions' in roleDoc.data()) failures.push(roleDoc.id);
+    }
+    if (failures.length > 0) {
+      throw new Error(`Role permission cleanup verification failed; still present on: ${failures.join(', ')}`);
+    }
+    if (cleanedIds.length > 0) console.log(`  Verified removed from: ${cleanedIds.join(', ')}`);
+  }
 }
 
 /**
- * Initializes firebase-admin. Prefer a service account via
- * GOOGLE_APPLICATION_CREDENTIALS. When it is absent, falls back to the
- * firebase CLI's stored refresh token by materializing an authorized_user
- * ADC file (useful for --dry-run review without a downloaded key). The CLI
- * OAuth client id/secret are public constants embedded in firebase-tools.
+ * Initializes firebase-admin. Prefers a service account via
+ * GOOGLE_APPLICATION_CREDENTIALS; otherwise falls back to the firebase CLI's
+ * stored refresh token (see scripts/lib/adminAuth.js).
  */
 function initAdmin() {
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    const configPath = path.join(os.homedir(), '.config', 'configstore', 'firebase-tools.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const refreshToken = config.tokens && config.tokens.refresh_token;
-    if (!refreshToken) {
-      throw new Error('No credentials: set GOOGLE_APPLICATION_CREDENTIALS or run firebase login.');
-    }
-    const adcPath = path.join(os.tmpdir(), 'migrate-rbac-adc.json');
-    fs.writeFileSync(adcPath, JSON.stringify({
-      type: 'authorized_user',
-      client_id: process.env.FIREBASE_CLIENT_ID || '563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com',
-      client_secret: process.env.FIREBASE_CLIENT_SECRET || 'j9iVZfS8kkCEFUPaAeJV0sAi',
-      refresh_token: refreshToken,
-    }), { mode: 0o600 });
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = adcPath;
-  }
-  admin.initializeApp({ projectId: resolveProjectId() });
-}
-
-/** GCLOUD_PROJECT > .firebaserc default project. */
-function resolveProjectId() {
-  if (process.env.GCLOUD_PROJECT) return process.env.GCLOUD_PROJECT;
-  try {
-    const rc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', '.firebaserc'), 'utf8'));
-    return rc.projects && rc.projects.default;
-  } catch {
-    return undefined;
-  }
+  adminAuth.initAdmin('migrate-rbac-adc.json');
 }
 
 async function main() {
@@ -441,7 +508,20 @@ async function main() {
   initAdmin();
   const db = admin.firestore();
 
-  const allMigrated = await migrateUsers(db);
+  const { allMigrated, manifest } = await migrateUsers(db);
+
+  if (!DRY_RUN) {
+    console.log('');
+    console.log('Verifying migrated user documents...');
+    const discrepancies = await verifyUserMigration(db, manifest);
+    if (discrepancies.length > 0) {
+      console.error('USER VERIFICATION FAILED — role permission cleanup aborted:');
+      for (const d of discrepancies) console.error(`  - ${d}`);
+      process.exit(1);
+    }
+    console.log(`  Verified ${manifest.size} user document(s).`);
+  }
+
   // In dry-run mode the pending migrations are assumed to succeed so the
   // role-cleanup report reflects the complete plan.
   await cleanupRolePermissions(db, DRY_RUN || allMigrated);
@@ -460,8 +540,10 @@ module.exports = {
   getRoleIdFromDesignation,
   getEffectivePermissions,
   checkDirectPermission,
+  deepEqual,
   computeUserUpdate,
   migrateUsers,
+  verifyUserMigration,
   cleanupRolePermissions,
 };
 

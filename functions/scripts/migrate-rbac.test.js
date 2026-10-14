@@ -47,26 +47,46 @@ const DIRECTOR_PERMS = Object.fromEntries(
     .map((m) => [m, { accessMode: 'full' }])
 );
 
-function createMockDb({ roles = {}, users = [] } = {}) {
-  const userDocs = users.map((u) => ({
-    id: u.id,
-    data: () => u.data,
-    ref: {
+function createMockDb({ roles = [], users = [] } = {}) {
+  const userDocs = users.map((u) => {
+    let current = u.data;
+    return {
       id: u.id,
-      __updates: [],
-      update: async function (data) { this.__updates.push(data); },
-    },
-  }));
-  const roleDocs = roles.map((r) => ({
-    id: r.id,
-    exists: true,
-    data: () => r.data,
-    ref: {
+      data: () => current,
+      ref: {
+        id: u.id,
+        __updates: [],
+        update: async function (update) {
+          this.__updates.push(update);
+          current = { ...current };
+          for (const [key, value] of Object.entries(update)) {
+            if (value === FIELD_VALUE_DELETE) delete current[key];
+            else current[key] = value;
+          }
+        },
+      },
+    };
+  });
+  const roleDocs = roles.map((r) => {
+    let current = r.data;
+    return {
       id: r.id,
-      __updates: [],
-      update: async function (data) { this.__updates.push(data); },
-    },
-  }));
+      exists: true,
+      data: () => current,
+      ref: {
+        id: r.id,
+        __updates: [],
+        update: async function (update) {
+          this.__updates.push(update);
+          current = { ...current };
+          for (const [key, value] of Object.entries(update)) {
+            if (value === FIELD_VALUE_DELETE) delete current[key];
+            else current[key] = value;
+          }
+        },
+      },
+    };
+  });
 
   return {
     userDocs,
@@ -351,6 +371,97 @@ describe('migrate-rbac user migration', () => {
     await migrateUsers(db);
     await cleanupRolePermissions(db, true);
     assert.equal(db.userDocs[0].ref.__updates.length, 0);
+    assert.equal(db.roleDocs[0].ref.__updates.length, 0);
+  });
+});
+
+describe('migrate-rbac post-write verification gate', () => {
+  const BEFORE = {
+    name: 'Koothattukulam',
+    email: 'koothattukulam@allmedpharmacy.in',
+    branch: 'Koothattukulam',
+    roleId: 'branch-manager',
+    designation: 'Branch Manager',
+  };
+  const EXPECTED = {
+    employees: { accessMode: 'custom', items: { employeeManagement: { actions: ['view', 'edit'] } } },
+  };
+
+  function dbWithUsers(users) {
+    return createMockDb({ roles: [], users: users.map((u) => ({ id: u.id, data: u.data })) });
+  }
+
+  function manifestFor(uid, before, expected) {
+    return new Map([[uid, { before, expected }]]);
+  }
+
+  it('passes when permissions, marker, and unrelated fields are all correct', async () => {
+    const { verifyUserMigration, MIGRATION_VERSION } = loadModule(false);
+    const db = dbWithUsers([{ id: 'u1', data: { ...BEFORE, permissions: EXPECTED, permissionMigrationVersion: MIGRATION_VERSION } }]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.deepEqual(discrepancies, []);
+  });
+
+  it('flags stored permissions that differ from the expected set', async () => {
+    const { verifyUserMigration, MIGRATION_VERSION } = loadModule(false);
+    const wrong = { employees: { accessMode: 'full' } };
+    const db = dbWithUsers([{ id: 'u1', data: { ...BEFORE, permissions: wrong, permissionMigrationVersion: MIGRATION_VERSION } }]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.some((d) => d.includes('permissions do not match')));
+  });
+
+  it('flags a user document missing after migration', async () => {
+    const { verifyUserMigration } = loadModule(false);
+    const db = dbWithUsers([]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.some((d) => d.includes('missing after migration')));
+  });
+
+  it('flags a missing migration marker', async () => {
+    const { verifyUserMigration } = loadModule(false);
+    const db = dbWithUsers([{ id: 'u1', data: { ...BEFORE, permissions: EXPECTED } }]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.some((d) => d.includes('permissionMigrationVersion')));
+  });
+
+  it('flags a permissionOverrides field that was not removed', async () => {
+    const { verifyUserMigration, MIGRATION_VERSION } = loadModule(false);
+    const db = dbWithUsers([{
+      id: 'u1',
+      data: { ...BEFORE, permissions: EXPECTED, permissionMigrationVersion: MIGRATION_VERSION, permissionOverrides: { x: {} } },
+    }]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.some((d) => d.includes('permissionOverrides')));
+  });
+
+  it('flags changes to unrelated fields like roleId, email, or branch', async () => {
+    const { verifyUserMigration, MIGRATION_VERSION } = loadModule(false);
+    const changed = { ...BEFORE, roleId: 'director', permissions: EXPECTED, permissionMigrationVersion: MIGRATION_VERSION };
+    const db = dbWithUsers([{ id: 'u1', data: changed }]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.some((d) => d.includes("field 'roleId' changed")));
+  });
+
+  it('flags unexpected new user documents that appeared mid-run', async () => {
+    const { verifyUserMigration, MIGRATION_VERSION } = loadModule(false);
+    const db = dbWithUsers([
+      { id: 'u1', data: { ...BEFORE, permissions: EXPECTED, permissionMigrationVersion: MIGRATION_VERSION } },
+      { id: 'u2', data: { name: 'New' } },
+    ]);
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.some((d) => d.includes('u2') && d.includes('unexpected')));
+  });
+
+  it('role cleanup stays blocked while verification finds discrepancies', async () => {
+    const { verifyUserMigration, cleanupRolePermissions, MIGRATION_VERSION } = loadModule(false);
+    // Verification fails (marker missing) -> caller must pass allMigrated=false.
+    const db = createMockDb({
+      roles: [{ id: 'hr', data: { name: 'HR', permissions: { x: 1 } } }],
+      users: [{ id: 'u1', data: { ...BEFORE, permissions: EXPECTED, permissionMigrationVersion: MIGRATION_VERSION - 1 } }],
+    });
+    const discrepancies = await verifyUserMigration(db, manifestFor('u1', BEFORE, EXPECTED));
+    assert.ok(discrepancies.length > 0);
+    await cleanupRolePermissions(db, false);
     assert.equal(db.roleDocs[0].ref.__updates.length, 0);
   });
 });
