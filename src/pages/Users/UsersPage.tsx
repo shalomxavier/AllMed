@@ -416,7 +416,7 @@ export const UsersPage: React.FC = () => {
               {editUserForm.roleId !== (editingUser.roleId || getRoleIdFromDesignation(editingUser.designation)) && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   Role changed — this user's permissions are unchanged and still reflect their stored
-                  selection. Use Reset to Default Permissions to apply the {ROLE_NAMES[editUserForm.roleId] || 'selected role'} template.
+                  selection. Use Reset to apply the {ROLE_NAMES[editUserForm.roleId] || 'selected role'} template.
                 </p>
               )}
 

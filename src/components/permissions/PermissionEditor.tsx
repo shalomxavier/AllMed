@@ -99,7 +99,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                     : 'text-secondary-700 bg-secondary-100 hover:bg-secondary-200'
               }`}
             >
-              {confirmingReset ? 'Confirm Reset?' : 'Reset to Default Permissions'}
+              {confirmingReset ? 'Confirm Reset?' : 'Reset'}
             </button>
             {confirmingReset && (
               <button
