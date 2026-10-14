@@ -114,7 +114,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
         )}
       </div>
 
-      <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+      <div className="space-y-3">
         {PERMISSION_MODULES.map((module) => {
           const state = getModuleState(value, module.key);
           return (

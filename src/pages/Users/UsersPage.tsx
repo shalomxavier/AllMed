@@ -362,7 +362,7 @@ export const UsersPage: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleEditUser} className="space-y-4 overflow-y-auto flex-1 -mr-2 pr-2">
+            <form id="edit-user-form" onSubmit={handleEditUser} className="space-y-4 overflow-y-auto flex-1 min-h-0 -mr-2 pr-2 -ml-1 pl-1">
               <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Name</label>
                 <input
@@ -440,26 +440,27 @@ export const UsersPage: React.FC = () => {
               {editUserError && (
                 <p className="text-sm text-red-600">{editUserError}</p>
               )}
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={closeEditUserModal}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                {canEditUser && (
-                  <button
-                    type="submit"
-                    disabled={savingUser}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
-                  >
-                    {savingUser ? 'Saving...' : 'Save Changes'}
-                  </button>
-                )}
-              </div>
             </form>
+
+            <div className="flex gap-3 pt-4 shrink-0">
+              <button
+                type="button"
+                onClick={closeEditUserModal}
+                className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
+              >
+                Cancel
+              </button>
+              {canEditUser && (
+                <button
+                  type="submit"
+                  form="edit-user-form"
+                  disabled={savingUser}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
+                >
+                  {savingUser ? 'Saving...' : 'Save Changes'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -578,7 +579,7 @@ export const UsersPage: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleAddUser} className="space-y-4 overflow-y-auto flex-1 -mr-2 pr-2">
+            <form id="add-user-form" onSubmit={handleAddUser} className="space-y-4 overflow-y-auto flex-1 min-h-0 -mr-2 pr-2 -ml-1 pl-1">
               <div>
                 <label className="block text-sm font-medium text-secondary-700 mb-1">Name</label>
                 <input
@@ -660,26 +661,27 @@ export const UsersPage: React.FC = () => {
               {addUserError && (
                 <p className="text-sm text-red-600">{addUserError}</p>
               )}
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setAddUserModalOpen(false)}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                {canAddUser && (
-                  <button
-                    type="submit"
-                    disabled={addingUser}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
-                  >
-                    {addingUser ? 'Adding...' : 'Add User'}
-                  </button>
-                )}
-              </div>
             </form>
+
+            <div className="flex gap-3 pt-4 shrink-0">
+              <button
+                type="button"
+                onClick={() => setAddUserModalOpen(false)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-secondary-100 rounded-lg hover:bg-secondary-200 transition-colors"
+              >
+                Cancel
+              </button>
+              {canAddUser && (
+                <button
+                  type="submit"
+                  form="add-user-form"
+                  disabled={addingUser}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-70"
+                >
+                  {addingUser ? 'Adding...' : 'Add User'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
