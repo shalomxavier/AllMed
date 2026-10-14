@@ -5,6 +5,7 @@ import {
   clearAll,
   getModuleState,
   isActionChecked,
+  permissionsEqual,
   setAllFull,
   toggleAction,
   toggleModule,
@@ -16,6 +17,10 @@ interface PermissionEditorProps {
   value: UserPermissions;
   onChange: (value: UserPermissions) => void;
   readOnly?: boolean;
+  /** Default template for the currently selected role (undefined = no role). */
+  defaults?: UserPermissions;
+  /** Name of the role whose defaults apply, e.g. "Branch Manager". */
+  defaultsLabel?: string;
 }
 
 const actionLabels: Record<PermissionAction, string> = {
@@ -39,8 +44,28 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
   value,
   onChange,
   readOnly = false,
+  defaults,
+  defaultsLabel,
 }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
+  const hasDefaults = defaults !== undefined;
+  const resetDisabled = !hasDefaults;
+  const matchesDefaults = hasDefaults && permissionsEqual(value, defaults);
+
+  const handleResetDefaults = () => {
+    if (resetDisabled) return;
+    // A no-op when the selection already matches the template; otherwise a
+    // second click confirms replacing a customized selection.
+    if (matchesDefaults) return;
+    if (!confirmingReset) {
+      setConfirmingReset(true);
+      return;
+    }
+    setConfirmingReset(false);
+    onChange(structuredClone(defaults));
+  };
 
   return (
     <div className="space-y-3">
@@ -67,7 +92,36 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
             >
               Revoke All
             </button>
+            <button
+              type="button"
+              onClick={handleResetDefaults}
+              disabled={resetDisabled}
+              title={resetDisabled ? 'Select a role to apply its default permissions' : undefined}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                resetDisabled
+                  ? 'text-secondary-400 bg-secondary-50 cursor-not-allowed'
+                  : confirmingReset
+                    ? 'text-white bg-amber-600 hover:bg-amber-700'
+                    : 'text-secondary-700 bg-secondary-100 hover:bg-secondary-200'
+              }`}
+            >
+              {confirmingReset ? 'Confirm Reset?' : 'Reset to Default Permissions'}
+            </button>
+            {confirmingReset && (
+              <button
+                type="button"
+                onClick={() => setConfirmingReset(false)}
+                className="px-2 py-1.5 text-xs text-secondary-500 hover:text-secondary-700 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
           </div>
+        )}
+        {!readOnly && hasDefaults && defaultsLabel && (
+          <p className="text-xs text-secondary-500">
+            Reset applies the {defaultsLabel} default template to this selection.
+          </p>
         )}
       </div>
 

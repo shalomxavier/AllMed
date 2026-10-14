@@ -9,6 +9,7 @@ import { useAuthContext } from '@/contexts/AuthContext';
 import {
   ROLE_NAMES,
   PERMISSION_MODULES,
+  getDefaultPermissions,
   hasPermission,
   usePermissions,
   type Role,
@@ -388,7 +389,8 @@ export const UsersPage: React.FC = () => {
                   value={editUserForm.roleId}
                   onChange={(e) => {
                     const newRoleId = e.target.value;
-                    // Changing the role never modifies this user's permissions.
+                    // Changing the role never modifies this user's permissions;
+                    // the Reset button applies the new role's template instead.
                     setEditUserForm({
                       ...editUserForm,
                       roleId: newRoleId,
@@ -409,7 +411,15 @@ export const UsersPage: React.FC = () => {
                 value={editUserPermissions}
                 onChange={setEditUserPermissions}
                 readOnly={!canManageUserPermissions || editingUser.id === currentUser?.uid}
+                defaults={editUserForm.roleId ? getDefaultPermissions(editUserForm.roleId) : undefined}
+                defaultsLabel={ROLE_NAMES[editUserForm.roleId]}
               />
+              {editUserForm.roleId !== (editingUser.roleId || getRoleIdFromDesignation(editingUser.designation)) && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Role changed — this user's permissions are unchanged and still reflect their stored
+                  selection. Use Reset to Default Permissions to apply the {ROLE_NAMES[editUserForm.roleId] || 'selected role'} template.
+                </p>
+              )}
 
               {editUserForm.roleId !== 'branch-manager' && (
                 <div>
@@ -606,12 +616,14 @@ export const UsersPage: React.FC = () => {
                   value={addUserForm.roleId}
                   onChange={(e) => {
                     const newRoleId = e.target.value;
-                    // Role selection never pre-fills or changes permissions.
+                    // Selecting a role pre-fills that role's default permission
+                    // template; the admin can still customize before saving.
                     setAddUserForm({
                       ...addUserForm,
                       roleId: newRoleId,
                       branch: newRoleId === 'branch-manager' ? '' : addUserForm.branch
                     });
+                    setAddUserPermissions(getDefaultPermissions(newRoleId));
                   }}
                   disabled={rolesLoading}
                   className="w-full px-3 py-2 text-sm border border-secondary-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-secondary-100 disabled:cursor-not-allowed"
@@ -627,6 +639,8 @@ export const UsersPage: React.FC = () => {
                 value={addUserPermissions}
                 onChange={setAddUserPermissions}
                 readOnly={!canManageUserPermissions}
+                defaults={addUserForm.roleId ? getDefaultPermissions(addUserForm.roleId) : undefined}
+                defaultsLabel={ROLE_NAMES[addUserForm.roleId]}
               />
 
               {addUserForm.roleId !== 'branch-manager' && (

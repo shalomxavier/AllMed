@@ -8,6 +8,8 @@ export {
   toggleAction,
   setAllFull,
   clearAll,
+  getDefaultPermissions,
+  permissionsEqual,
 } from './permissionEditor';
 export { usePermissions } from './usePermissions';
 export { useRole } from './useRole';

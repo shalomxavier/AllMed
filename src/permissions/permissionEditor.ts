@@ -1,4 +1,4 @@
-import { PERMISSION_MODULES } from './definitions';
+import { PERMISSION_MODULES, DEFAULT_ROLE_PERMISSIONS } from './definitions';
 import type { PermissionAction, UserPermissions } from './types';
 
 export type ModuleCheckState = 'none' | 'partial' | 'full';
@@ -146,4 +146,33 @@ export function setAllFull(): UserPermissions {
 /** Remove all permissions. */
 export function clearAll(): UserPermissions {
   return {};
+}
+
+/**
+ * Returns a deep copy of the default permission template for a role, or an
+ * empty tree when the role is unknown/empty. Templates are UI conveniences
+ * only — they never participate in authorization.
+ */
+export function getDefaultPermissions(roleId: string | undefined | null): UserPermissions {
+  const defaults = roleId ? DEFAULT_ROLE_PERMISSIONS[roleId] : undefined;
+  return defaults ? structuredClone(defaults) : {};
+}
+
+/** Structural equality for two permission trees (key order agnostic). */
+export function permissionsEqual(
+  first: UserPermissions | null | undefined,
+  second: UserPermissions | null | undefined
+): boolean {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return [...value].map(canonical).sort();
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, entry]) => [key, canonical(entry)])
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(canonical(first ?? {})) === JSON.stringify(canonical(second ?? {}));
 }
