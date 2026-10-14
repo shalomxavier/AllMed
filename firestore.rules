@@ -54,13 +54,21 @@ service cloud.firestore {
       return action == 'access' ? 'view' : action;
     }
 
+    // Rules cannot map over the stored actions array, so the access↔view
+    // equivalence is spelled out: a stored 'access' grant also satisfies a
+    // 'view' check, mirroring evaluateUserPermission in the frontend/backend.
+    function actionGranted(actions, action) {
+      return normalizeAction(action) in actions ||
+        (normalizeAction(action) == 'view' && 'access' in actions);
+    }
+
     function modulePermissionCheck(perms, module, item, action) {
       return module in perms && (
         ('accessMode' in perms[module] && perms[module].accessMode == 'full') ||
         ('items' in perms[module] &&
           item in perms[module].items &&
           'actions' in perms[module].items[item] &&
-          normalizeAction(action) in perms[module].items[item].actions)
+          actionGranted(perms[module].items[item].actions, action))
       );
     }
 
@@ -157,12 +165,22 @@ service cloud.firestore {
 
     match /whatsapp_conversations/{conversationId} {
       allow read: if authenticated();
-      allow write: if authenticated();
+      // Clients may only update read-receipt and delivery-status fields
+      // (contact.unreadCount / unreadCount / contact.deliveryStatus /
+      // contact.deliveryReason / updatedAt). All other writes come from the
+      // webhook and send functions via the Admin SDK. Rules cannot diff
+      // nested keys, so top-level 'contact' changes are gated on DMS access.
+      allow update: if perm('dms', 'whatsappMessenger', 'access') &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['contact', 'unreadCount', 'updatedAt']);
+      allow create, delete: if false;
     }
 
     match /whatsapp_messages/{messageId} {
       allow read: if authenticated();
-      allow write: if authenticated();
+      // Messages are written exclusively by the webhook and send functions
+      // via the Admin SDK.
+      allow write: if false;
     }
 
     // ---------------------------------------------------------------------
