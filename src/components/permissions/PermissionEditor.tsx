@@ -19,8 +19,6 @@ interface PermissionEditorProps {
   readOnly?: boolean;
   /** Default template for the currently selected role (undefined = no role). */
   defaults?: UserPermissions;
-  /** Name of the role whose defaults apply, e.g. "Branch Manager". */
-  defaultsLabel?: string;
 }
 
 const actionLabels: Record<PermissionAction, string> = {
@@ -45,7 +43,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
   onChange,
   readOnly = false,
   defaults,
-  defaultsLabel,
 }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [confirmingReset, setConfirmingReset] = useState(false);
@@ -72,9 +69,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
       <div className="space-y-2">
         <div>
           <h4 className="text-sm font-semibold text-secondary-900">Permissions</h4>
-          <p className="text-xs text-secondary-600 mt-0.5">
-            Permissions are assigned individually to this user.
-          </p>
         </div>
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-2">
@@ -118,11 +112,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
             )}
           </div>
         )}
-        {!readOnly && hasDefaults && defaultsLabel && (
-          <p className="text-xs text-secondary-500">
-            Reset applies the {defaultsLabel} default template to this selection.
-          </p>
-        )}
       </div>
 
       <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
@@ -149,11 +138,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                     <h5 className="text-sm font-semibold text-secondary-900 leading-tight">
                       {module.label}
                     </h5>
-                    {state === 'full' && (
-                      <p className="text-[10px] text-primary-600 leading-tight mt-0.5">
-                        All current and future items
-                      </p>
-                    )}
                   </div>
                 </div>
                 <label className="flex items-center gap-2 text-xs text-secondary-700 cursor-pointer shrink-0">

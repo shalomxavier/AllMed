@@ -412,7 +412,6 @@ export const UsersPage: React.FC = () => {
                 onChange={setEditUserPermissions}
                 readOnly={!canManageUserPermissions || editingUser.id === currentUser?.uid}
                 defaults={editUserForm.roleId ? getDefaultPermissions(editUserForm.roleId) : undefined}
-                defaultsLabel={ROLE_NAMES[editUserForm.roleId]}
               />
               {editUserForm.roleId !== (editingUser.roleId || getRoleIdFromDesignation(editingUser.designation)) && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -640,7 +639,6 @@ export const UsersPage: React.FC = () => {
                 onChange={setAddUserPermissions}
                 readOnly={!canManageUserPermissions}
                 defaults={addUserForm.roleId ? getDefaultPermissions(addUserForm.roleId) : undefined}
-                defaultsLabel={ROLE_NAMES[addUserForm.roleId]}
               />
 
               {addUserForm.roleId !== 'branch-manager' && (
