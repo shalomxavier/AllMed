@@ -24,6 +24,7 @@ interface Branch {
   managerName?: string;
   employeeIds?: string[];
   shiftIds?: string[];
+  deviceIds?: string[];
 }
 
 interface Manager {
@@ -66,6 +67,8 @@ export const BranchesPage: React.FC = () => {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [selectedShiftIds, setSelectedShiftIds] = useState<string[]>([]);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
+  const [deviceIdInput, setDeviceIdInput] = useState('');
 
   const fetchBranches = async () => {
     if (!currentUser) return;
@@ -179,8 +182,55 @@ export const BranchesPage: React.FC = () => {
     }
   };
 
+  // One-time migration: copy device IDs from the legacy `devices` collection
+  // into `branch.deviceIds` by matching device.location to branch.name.
+  // Idempotent — existing IDs are never duplicated.
+  const migrateDevices = async () => {
+    if (!currentUser) return;
+    try {
+      const db = getFirestore();
+      const [devicesSnapshot, branchesSnapshot] = await Promise.all([
+        getDocs(collection(db, 'devices')),
+        getDocs(collection(db, 'branches')),
+      ]);
+      if (devicesSnapshot.empty) return;
+
+      const branchByName = new Map<string, { id: string; deviceIds: string[] }>();
+      branchesSnapshot.forEach((d) => {
+        const data = d.data();
+        const key = (data.name || '').trim().toLowerCase();
+        if (key) branchByName.set(key, { id: d.id, deviceIds: [...(data.deviceIds || [])] });
+      });
+
+      const changedBranches = new Map<string, string[]>();
+      for (const deviceDoc of devicesSnapshot.docs) {
+        const device = deviceDoc.data();
+        const deviceId = String(device.deviceId ?? '').trim();
+        if (!deviceId) continue;
+        const branch = branchByName.get((device.location || '').trim().toLowerCase());
+        if (!branch) {
+          console.warn(`Device "${deviceId}" at "${device.location}" matches no branch — skipped`);
+          continue;
+        }
+        if (!branch.deviceIds.includes(deviceId)) {
+          branch.deviceIds.push(deviceId);
+          changedBranches.set(branch.id, branch.deviceIds);
+        }
+      }
+      if (changedBranches.size > 0) {
+        const batch = writeBatch(db);
+        changedBranches.forEach((deviceIds, branchId) => {
+          batch.update(doc(db, 'branches', branchId), { deviceIds });
+        });
+        await batch.commit();
+      }
+    } catch (e) {
+      console.error('Error migrating devices:', e);
+    }
+  };
+
   useEffect(() => {
-    fetchBranches();
+    migrateDevices().then(fetchBranches);
     fetchManagers();
     fetchEmployees();
     fetchShifts();
@@ -192,6 +242,8 @@ export const BranchesPage: React.FC = () => {
     setManagerId('');
     setSelectedEmployeeIds([]);
     setSelectedShiftIds([]);
+    setSelectedDeviceIds([]);
+    setDeviceIdInput('');
     setEditingBranch(null);
   };
 
@@ -201,6 +253,8 @@ export const BranchesPage: React.FC = () => {
     setManagerId('');
     setSelectedEmployeeIds([]);
     setSelectedShiftIds([]);
+    setSelectedDeviceIds([]);
+    setDeviceIdInput('');
     setModalOpen(true);
   };
 
@@ -210,7 +264,16 @@ export const BranchesPage: React.FC = () => {
     setManagerId(branch.managerId || '');
     setSelectedEmployeeIds(branch.employeeIds || []);
     setSelectedShiftIds(branch.shiftIds || []);
+    setSelectedDeviceIds(branch.deviceIds || []);
+    setDeviceIdInput('');
     setModalOpen(true);
+  };
+
+  const addDeviceId = () => {
+    const id = deviceIdInput.trim();
+    if (!id || selectedDeviceIds.includes(id)) return;
+    setSelectedDeviceIds([...selectedDeviceIds, id]);
+    setDeviceIdInput('');
   };
 
   const openViewModal = (branch: Branch) => {
@@ -231,6 +294,7 @@ export const BranchesPage: React.FC = () => {
         managerName: selectedManager?.name || '',
         employeeIds: selectedEmployeeIds,
         shiftIds: selectedShiftIds,
+        deviceIds: selectedDeviceIds,
       };
       
       let branchId: string;
@@ -440,6 +504,52 @@ export const BranchesPage: React.FC = () => {
                 itemLabel="shift"
                 showSearch={false}
               />
+              <div>
+                <label className="block text-sm font-medium text-secondary-700 mb-1">Device IDs</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={deviceIdInput}
+                    onChange={(e) => setDeviceIdInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addDeviceId();
+                      }
+                    }}
+                    placeholder="Enter device ID"
+                    className="flex-1 px-3 py-2 border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                  <button
+                    type="button"
+                    onClick={addDeviceId}
+                    disabled={!deviceIdInput.trim()}
+                    className="px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+                {selectedDeviceIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {selectedDeviceIds.map((id) => (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-secondary-700 bg-secondary-100 rounded-md"
+                      >
+                        {id}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDeviceIds(selectedDeviceIds.filter((d) => d !== id))}
+                          className="text-secondary-500 hover:text-red-600"
+                          aria-label={`Remove device ${id}`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={closeModal}
@@ -487,6 +597,12 @@ export const BranchesPage: React.FC = () => {
                 <label className="block text-xs font-medium text-secondary-500 mb-0.5">Branch Manager</label>
                 <p className="text-sm text-secondary-800">
                   {viewingBranch.managerName?.trim() ? viewingBranch.managerName.trim() : '—'}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-secondary-500 mb-0.5">Device IDs</label>
+                <p className="text-sm text-secondary-800">
+                  {viewingBranch.deviceIds?.length ? viewingBranch.deviceIds.join(', ') : '—'}
                 </p>
               </div>
               <div>
