@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Users, ClipboardList, Clock, Umbrella, FileText, Lightbulb, Building } from 'lucide-react';
+import { Users, ClipboardList, Clock, Umbrella, FileText, Lightbulb } from 'lucide-react';
 import { PageContainer } from '@/components/common';
 import { PermissionGate } from '@/permissions';
 
@@ -49,14 +49,6 @@ export const AttendancePage: React.FC = () => {
               <FileText className={iconClass} />
             </div>
             <p className="text-base font-semibold text-secondary-900 text-center">Reports</p>
-          </Link>
-        </PermissionGate>
-        <PermissionGate module="masters" item="branches" action="view">
-          <Link to="/attendance/branches" className={tileClass}>
-            <div className={iconWrap}>
-              <Building className={iconClass} />
-            </div>
-            <p className="text-base font-semibold text-secondary-900 text-center">Branches</p>
           </Link>
         </PermissionGate>
         <PermissionGate module="insights" item="insights" action="view">
