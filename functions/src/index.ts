@@ -12,7 +12,11 @@ export const webhook = functions.https.onRequest(webhookApp);
 export { sendWhatsAppMessage } from './whatsapp';
 
 // Conversation & message queries
-export { getConversations, getMessages, markConversationRead } from './conversations';
+export { getConversations, getMessages } from './conversations';
 
-// Firestore triggers & scheduled jobs
-export { onNewMessage, syncMessageStatuses } from './triggers';
+export {
+  addExistingShiftAssignment,
+  updateExistingShiftAssignment,
+  removeExistingShiftAssignment,
+  changeExistingShiftAssignmentForDate,
+} from './shiftAssignments';

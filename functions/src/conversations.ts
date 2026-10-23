@@ -1,14 +1,12 @@
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
 import { CONVERSATIONS_COLLECTION, MESSAGES_COLLECTION } from './config';
+import { requirePermission } from './permissions';
 
 /**
  * Callable function to get conversations with pagination
  */
 export const getConversations = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
+  await requirePermission(context, 'dms', 'whatsappMessenger', 'access', 'User must be authenticated and have WhatsApp Messenger access');
 
   const { limit = 50, lastDocId } = data;
 
@@ -46,9 +44,7 @@ export const getConversations = functions.https.onCall(async (data, context) => 
  * Callable function to get messages for a conversation
  */
 export const getMessages = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
+  await requirePermission(context, 'dms', 'whatsappMessenger', 'access', 'User must be authenticated and have WhatsApp Messenger access');
 
   const { conversationId, limit = 50, beforeMessageId } = data;
 
@@ -91,39 +87,3 @@ export const getMessages = functions.https.onCall(async (data, context) => {
   }
 });
 
-/**
- * Callable function to mark conversation as read
- */
-export const markConversationRead = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-
-  const { conversationId } = data;
-
-  if (!conversationId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Conversation ID is required');
-  }
-
-  try {
-    const docRef = CONVERSATIONS_COLLECTION.doc(conversationId);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      throw new functions.https.HttpsError('not-found', 'Conversation not found');
-    }
-
-    await docRef.update({
-      'contact.unreadCount': 0,
-      updatedAt: admin.firestore.Timestamp.now(),
-    });
-
-    return { success: true };
-  } catch (error: any) {
-    console.error('Error marking conversation as read:', error);
-    if (error.code === 5) { // not-found
-      throw new functions.https.HttpsError('not-found', 'Conversation not found');
-    }
-    throw new functions.https.HttpsError('internal', 'Failed to mark conversation as read');
-  }
-});

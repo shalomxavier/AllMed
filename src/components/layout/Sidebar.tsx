@@ -2,6 +2,7 @@ import { X, CalendarDays, Truck, Users, LogOut, Building, Briefcase, Building2, 
 import { NavLink, useLocation } from 'react-router-dom';
 import type { SidebarProps } from '@/types/index';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { hasTopLevelModuleAccess, hasModuleAccess, hasPermission } from '@/permissions';
 import { useState, useEffect } from 'react';
 
 interface NavItem {
@@ -14,6 +15,7 @@ interface SubNavItem {
   path: string;
   label: string;
   icon: React.ReactNode;
+  item: string;
 }
 
 const navItems: NavItem[] = [
@@ -39,22 +41,25 @@ const masterSubItems: SubNavItem[] = [
     path: '/attendance/branches',
     label: 'Branches',
     icon: <Building size={18} />,
+    item: 'branches',
   },
   {
     path: '/attendance/designations',
     label: 'Designations',
     icon: <Briefcase size={18} />,
+    item: 'designations',
   },
   {
     path: '/attendance/departments',
     label: 'Departments',
     icon: <Building2 size={18} />,
+    item: 'departments',
   },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const location = useLocation();
-  const { logout, userData } = useAuthContext();
+  const { logout, permissions } = useAuthContext();
   const [masterExpanded, setMasterExpanded] = useState(false);
 
   // Auto-collapse Master section when main nav items are selected
@@ -65,21 +70,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     }
   }, [location.pathname]);
 
-  const visibleNavItems = (() => {
-    if (userData?.designation === 'HR') {
-      return navItems.filter((item) => item.path === '/attendance' || item.path === '/users');
-    }
-    if (userData?.designation === 'Operations Manager') {
-      return navItems.filter((item) => item.path === '/dms' || item.path === '/users');
-    }
-    if (userData?.designation === 'WhatsApp Messager') {
-      return navItems.filter((item) => item.path === '/dms');
-    }
-    if (userData?.designation === 'Branch Manager') {
-      return navItems.filter((item) => item.path === '/attendance');
-    }
-    return navItems;
-  })();
+  const visibleNavItems = permissions
+    ? navItems.filter((item) => {
+        const key = item.path.replace('/', '') as 'attendance' | 'dms' | 'users';
+        return hasTopLevelModuleAccess(permissions, key);
+      })
+    : [];
+
+  const visibleMasterSubItems = permissions
+    ? masterSubItems.filter((item) => hasPermission(permissions, 'masters', item.item, 'view'))
+    : [];
 
   return (
     <>
@@ -143,8 +143,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             );
           })}
 
-          {/* Master Section - Hidden for Branch Manager and HR */}
-          {userData?.designation !== 'Branch Manager' && userData?.designation !== 'HR' && (
+          {/* Master Section - visible only when the user has masters permission */}
+          {permissions && hasModuleAccess(permissions, 'masters') && (
             <div className="mt-4">
               <button
                 onClick={() => setMasterExpanded(!masterExpanded)}
@@ -165,7 +165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
               {masterExpanded && (
                 <div className="ml-4 mt-1 space-y-1">
-                  {masterSubItems.map((item) => {
+                  {visibleMasterSubItems.map((item) => {
                     const isActive = location.pathname === item.path;
                     return (
                       <NavLink

@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, X, Edit } from 'lucide-react';
 import { getFirestore, doc, getDoc, updateDoc, collection, getDocs, query, where, writeBatch, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner, useToast } from '@/components/common';
 
 interface Employee {
@@ -56,6 +57,9 @@ export const EmployeeDetailsPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const isEditing = searchParams.get('edit') === 'true';
   const { currentUser, userData } = useAuthContext();
+  const { isBranchManager } = useRole();
+  const { hasPermission: checkPermission } = usePermissions();
+  const canEditEmployee = checkPermission('employees', 'employeeManagement', 'edit');
 
   const [employee, setEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,7 +79,7 @@ export const EmployeeDetailsPage: React.FC = () => {
       const db = getFirestore();
 
       // If user is Branch Manager, verify this employee belongs to their branch
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
         const branchSnapshot = await getDocs(branchQuery);
         const allowedEmployeeIds: string[] = branchSnapshot.empty
@@ -245,7 +249,7 @@ export const EmployeeDetailsPage: React.FC = () => {
             </p>
           </div>
         </div>
-        {!isEditing && employee && (
+        {!isEditing && employee && canEditEmployee && (
           <button
             onClick={() => setSearchParams({ edit: 'true' })}
             className="btn-primary"
@@ -363,14 +367,16 @@ export const EmployeeDetailsPage: React.FC = () => {
                 <X size={16} className="inline mr-1" />
                 Cancel
               </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Save size={16} className="inline mr-1" />
-                {saving ? 'Saving...' : 'Save'}
-              </button>
+              {canEditEmployee && (
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save size={16} className="inline mr-1" />
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+              )}
             </div>
           </form>
         ) : (

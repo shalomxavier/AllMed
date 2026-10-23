@@ -5,6 +5,7 @@ import { getFirestore, collection, getDocs, query, orderBy, where, addDoc, updat
 
 import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner, useModalBehavior, useToast } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import { shiftAssignmentsService } from '@/services/firestore/shiftAssignmentsService';
@@ -85,13 +86,25 @@ interface Employee {
 export const EmployeesPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
-  const canManageLeaves = userData?.designation === 'Director' || userData?.designation === 'HR' || userData?.designation === 'Branch Manager';
+  const { isBranchManager } = useRole();
+  const { hasPermission: checkPermission } = usePermissions();
+  const canViewLeaves = checkPermission('leaves', 'leaves', 'view');
+  const canViewShiftAssignment = checkPermission('employees', 'shiftAssignment', 'view');
+  const canAddLeave = checkPermission('leaves', 'leaves', 'add');
+  const canEditLeave = checkPermission('leaves', 'leaves', 'edit');
+  const canDeleteLeave = checkPermission('leaves', 'leaves', 'delete');
+  const canEditEmployee = checkPermission('employees', 'employeeManagement', 'edit');
+  const canAddShiftAssignment = checkPermission('employees', 'shiftAssignment', 'add');
+  const canEditShiftAssignment = checkPermission('employees', 'shiftAssignment', 'edit');
+  const canDeleteShiftAssignment = checkPermission('employees', 'shiftAssignment', 'delete');
+  const canAddShiftSlot = checkPermission('shifts', 'shifts', 'add');
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [branchFilter, setBranchFilter] = useState('');
   const [managerBranchName, setManagerBranchName] = useState<string | null>(null);
+  const [managerBranchId, setManagerBranchId] = useState<string | null>(null);
   const [shiftModalOpen, setShiftModalOpen] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showAddShiftForm, setShowAddShiftForm] = useState(false);
@@ -146,14 +159,14 @@ export const EmployeesPage: React.FC = () => {
     endMinute: '',
     endAmPm: 'AM'
   });
-  const [bulkSelectedTemplate, setBulkSelectedTemplate] = useState<{ startTime: string; endTime: string } | null>(null);
+  const [bulkSelectedTemplate, setBulkSelectedTemplate] = useState<{ id: string; startTime: string; endTime: string } | null>(null);
   const [isBulkAssigning, setIsBulkAssigning] = useState(false);
   const [bulkOverlapResults, setBulkOverlapResults] = useState<{ employee: Employee; overlaps: any[] }[]>([]);
   const [showBulkOverlapDialog, setShowBulkOverlapDialog] = useState(false);
-  const [shiftTemplates, setShiftTemplates] = useState<{ startTime: string; endTime: string }[]>([]);
+  const [shiftTemplates, setShiftTemplates] = useState<{ id: string; startTime: string; endTime: string }[]>([]);
   const [bulkShiftMode, setBulkShiftMode] = useState<'existing' | 'new'>('existing');
   const [shiftMode, setShiftMode] = useState<'existing' | 'new'>('existing');
-  const [selectedShiftTemplate, setSelectedShiftTemplate] = useState<{ startTime: string; endTime: string } | null>(null);
+  const [selectedShiftTemplate, setSelectedShiftTemplate] = useState<{ id: string; startTime: string; endTime: string } | null>(null);
   const [shiftForm, setShiftForm] = useState({
     fromDate: '',
     toDate: '',
@@ -245,17 +258,20 @@ export const EmployeesPage: React.FC = () => {
       let allowedEmployeeIds: string[] | null = null;
 
       // If user is Branch Manager, fetch the branch(es) they manage
-      if (userData?.designation === 'Branch Manager') {
+      if (isBranchManager) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
           if (!branchSnapshot.empty) {
-            const branchData = branchSnapshot.docs[0].data();
+            const branchDoc = branchSnapshot.docs[0];
+            const branchData = branchDoc.data();
             allowedEmployeeIds = branchData.employeeIds || [];
             setManagerBranchName(branchData.name || '');
+            setManagerBranchId(branchDoc.id);
           } else {
             allowedEmployeeIds = [];
             setManagerBranchName('');
+            setManagerBranchId('');
           }
         } catch (err) {
           console.error('Error fetching branch employees:', err);
@@ -351,13 +367,15 @@ export const EmployeesPage: React.FC = () => {
               >
                 <Eye size={18} />
               </button>
-              <button
-                onClick={() => navigate(`/attendance/employees/${employee.id}?edit=true`)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-                aria-label="Edit"
-              >
-                <Edit size={18} />
-              </button>
+              {canEditEmployee && (
+                <button
+                  onClick={() => navigate(`/attendance/employees/${employee.id}?edit=true`)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  aria-label="Edit"
+                >
+                  <Edit size={18} />
+                </button>
+              )}
             </div>
           </div>
           <h3 className="font-semibold text-secondary-900 mb-1">
@@ -375,13 +393,15 @@ export const EmployeesPage: React.FC = () => {
               </p>
             )}
           </div>
-          <button
-            onClick={() => handleShiftsClick(employee)}
-            className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
-          >
-            <Clock size={16} />
-            Shifts
-          </button>
+          {canViewShiftAssignment && (
+            <button
+              onClick={() => handleShiftsClick(employee)}
+              className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
+            >
+              <Clock size={16} />
+              Shifts
+            </button>
+          )}
           <button
             onClick={() => handleViewAttendanceClick(employee)}
             className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
@@ -389,13 +409,15 @@ export const EmployeesPage: React.FC = () => {
             <Eye size={16} />
             View Attendance
           </button>
-          <button
-            onClick={() => handleLeaveClick(employee)}
-            className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
-          >
-            <Umbrella size={16} />
-            Leave / Week Off
-          </button>
+          {canViewLeaves && (
+            <button
+              onClick={() => handleLeaveClick(employee)}
+              className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-secondary-700 bg-secondary-50 border border-secondary-200 rounded-lg hover:bg-secondary-100 transition-colors"
+            >
+              <Umbrella size={16} />
+              Leave / Week Off
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -537,13 +559,21 @@ export const EmployeesPage: React.FC = () => {
     return dates;
   };
 
+  const getManagedBranchFields = () => managerBranchId ? { branchId: managerBranchId } : {};
+
   const removeDateFromLeaveRecord = async (leave: any, dateStr: string) => {
     const firestore = getFirestore();
+    const leaveRef = doc(firestore, 'leaves', leave.id);
+    const employeeId = leave.employeeId || leaveEmployee?.id;
+    const branchFields = managerBranchId && employeeId ? { branchId: managerBranchId, employeeId } : {};
     const next = expandLeaveDates(leave).filter((d) => d !== dateStr).sort();
     if (next.length === 0) {
-      await deleteDoc(doc(firestore, 'leaves', leave.id));
+      if (isBranchManager && (!leave.branchId || !leave.employeeId) && managerBranchId && employeeId) {
+        await updateDoc(leaveRef, branchFields);
+      }
+      await deleteDoc(leaveRef);
     } else {
-      await updateDoc(doc(firestore, 'leaves', leave.id), { dates: next, fromDate: next[0], toDate: next[next.length - 1] });
+      await updateDoc(leaveRef, { dates: next, fromDate: next[0], toDate: next[next.length - 1], ...branchFields });
     }
   };
 
@@ -591,7 +621,8 @@ export const EmployeesPage: React.FC = () => {
         ...(selection.halfDayPeriod ? { halfDayPeriod: selection.halfDayPeriod } : {}),
         dayValue: selection.duration === 'half_day' ? 0.5 : 1,
         createdAt: serverTimestamp(),
-        createdBy: currentUser?.uid
+        createdBy: currentUser?.uid,
+        ...getManagedBranchFields(),
       });
       if (leaveEmployee) fetchLeavesForEmployee(leaveEmployee);
     } catch (e) {
@@ -816,6 +847,7 @@ export const EmployeesPage: React.FC = () => {
             dayValue: selection.duration === 'half_day' ? 0.5 : 1,
             createdAt: serverTimestamp(),
             createdBy: currentUser?.uid,
+            ...getManagedBranchFields(),
           });
         }
       }
@@ -856,7 +888,8 @@ export const EmployeesPage: React.FC = () => {
           ...(selection.halfDayPeriod ? { halfDayPeriod: selection.halfDayPeriod } : {}),
           dayValue: selection.duration === 'half_day' ? 0.5 : 1,
           createdAt: serverTimestamp(),
-          createdBy: currentUser?.uid
+          createdBy: currentUser?.uid,
+          ...getManagedBranchFields(),
         });
       }
       showToast('success', 'Leave Assigned Successfully');
@@ -878,7 +911,7 @@ export const EmployeesPage: React.FC = () => {
       let allowedShiftIds: string[] | null = null;
       
       // If user is Branch Manager, fetch the branch(es) they manage
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -1140,7 +1173,7 @@ export const EmployeesPage: React.FC = () => {
       let allowedShiftIds: string[] | null = null;
       
       // If user is Branch Manager, fetch the branch(es) they manage
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -1200,7 +1233,13 @@ export const EmployeesPage: React.FC = () => {
     if (!selectedEmployee || !shiftToDelete || isDeletingShift) return;
     setIsDeletingShift(true);
     try {
-      await shiftAssignmentsService.removeAssignment(shiftToDelete as ResolvedShiftAssignment);
+      await shiftAssignmentsService.removeExistingAssignment({
+        employeeId: selectedEmployee.id,
+        shiftId: shiftToDelete.slotId,
+        assignmentId: shiftToDelete.assignmentId,
+        fromDate: shiftToDelete.fromDate,
+        toDate: shiftToDelete.toDate,
+      });
       setShowDeleteConfirm(false);
       setShiftToDelete(null);
       showToast('success', 'Shift Deleted Successfully');
@@ -1208,7 +1247,7 @@ export const EmployeesPage: React.FC = () => {
       fetchShiftsForEmployee();
     } catch (error) {
       console.error('Error deleting shift:', error);
-      showToast('error', 'Failed to delete shift. Please try again.');
+      showToast('error', error instanceof Error ? error.message : 'Failed to remove the shift assignment.');
     } finally {
       setIsDeletingShift(false);
     }
@@ -1216,6 +1255,8 @@ export const EmployeesPage: React.FC = () => {
 
   const handleEditShift = (shift: any) => {
     setSelectedShift(shift);
+    setSelectedShiftTemplate({ id: shift.slotId, startTime: shift.startTime, endTime: shift.endTime });
+    fetchShiftTemplates();
     const start = to12Hour(shift.startTime);
     const end = to12Hour(shift.endTime);
 
@@ -1253,8 +1294,12 @@ export const EmployeesPage: React.FC = () => {
       const db = getFirestore();
       let startTime24, endTime24;
       try {
-        startTime24 = to24Hour(editShiftForm.startHour, editShiftForm.startMinute, editShiftForm.startAmPm);
-        endTime24 = to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
+        startTime24 = isBranchManager && selectedShiftTemplate
+          ? selectedShiftTemplate.startTime
+          : to24Hour(editShiftForm.startHour, editShiftForm.startMinute, editShiftForm.startAmPm);
+        endTime24 = isBranchManager && selectedShiftTemplate
+          ? selectedShiftTemplate.endTime
+          : to24Hour(editShiftForm.endHour, editShiftForm.endMinute, editShiftForm.endAmPm);
       } catch (error) {
         console.error('Invalid time format:', error);
         showToast('warning', 'Invalid time format detected. Please ensure hours are between 1-12 and minutes are between 0-59.');
@@ -1291,14 +1336,25 @@ export const EmployeesPage: React.FC = () => {
         throw new Error('Invalid time data detected before save');
       }
 
-      await shiftAssignmentsService.moveAssignment(selectedShift as ResolvedShiftAssignment, {
-        employeeCode: selectedEmployee.employeeCode ?? '',
-        employeeName: selectedEmployee.employeeName ?? '',
-        fromDate: editShiftForm.fromDate,
-        toDate: editShiftForm.toDate,
-        startTime: startTime24,
-        endTime: endTime24,
-      });
+      if (isBranchManager) {
+        if (!selectedShiftTemplate) throw new Error('Please select an existing shift.');
+        await shiftAssignmentsService.updateExistingAssignment({
+          employeeId: selectedEmployee.id,
+          shiftId: selectedShift.slotId,
+          assignmentId: selectedShift.assignmentId,
+          fromDate: selectedShift.fromDate,
+          toDate: selectedShift.toDate,
+        }, selectedShiftTemplate.id, editShiftForm.fromDate, editShiftForm.toDate);
+      } else {
+        await shiftAssignmentsService.moveAssignment(selectedShift as ResolvedShiftAssignment, {
+          employeeCode: selectedEmployee.employeeCode ?? '',
+          employeeName: selectedEmployee.employeeName ?? '',
+          fromDate: editShiftForm.fromDate,
+          toDate: editShiftForm.toDate,
+          startTime: startTime24,
+          endTime: endTime24,
+        });
+      }
 
       console.log('Shift updated successfully');
       setShowEditShiftForm(false);
@@ -1308,7 +1364,7 @@ export const EmployeesPage: React.FC = () => {
       showToast('success', 'Shift Updated Successfully');
     } catch (error) {
       console.error('Error updating shift:', error);
-      showToast('error', 'An error occurred while updating the shift. Please check your time values and try again.');
+      showToast('error', error instanceof Error ? error.message : 'An error occurred while updating the shift.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1366,14 +1422,23 @@ export const EmployeesPage: React.FC = () => {
       if (!startTime24 || !endTime24 || startTime24.includes('NaN') || endTime24.includes('NaN')) {
         throw new Error('Invalid time data detected. Please refresh the page and try again.');
       }
-      await shiftAssignmentsService.addAssignment({
-        employeeCode: selectedEmployee.employeeCode ?? '',
-        employeeName: selectedEmployee.employeeName ?? '',
-        fromDate: shiftForm.fromDate,
-        toDate: shiftForm.toDate,
-        startTime: startTime24,
-        endTime: endTime24,
-      });
+      if (shiftMode === 'existing' && selectedShiftTemplate) {
+        await shiftAssignmentsService.addExistingAssignment({
+          employeeId: selectedEmployee.id,
+          shiftId: selectedShiftTemplate.id,
+          fromDate: shiftForm.fromDate,
+          toDate: shiftForm.toDate,
+        });
+      } else {
+        await shiftAssignmentsService.addAssignment({
+          employeeCode: selectedEmployee.employeeCode ?? '',
+          employeeName: selectedEmployee.employeeName ?? '',
+          fromDate: shiftForm.fromDate,
+          toDate: shiftForm.toDate,
+          startTime: startTime24,
+          endTime: endTime24,
+        });
+      }
 
       setLastAssignedShiftDates({ fromDate: shiftForm.fromDate, toDate: shiftForm.toDate });
       setShowAddShiftForm(false);
@@ -1382,7 +1447,7 @@ export const EmployeesPage: React.FC = () => {
       setAskLeavesDialog(true);
     } catch (error) {
       console.error('Error saving shift:', error);
-      showToast('error', 'An error occurred while saving the shift. Please check your time values and try again.');
+      showToast('error', error instanceof Error ? error.message : 'An error occurred while saving the shift.');
     } finally {
       setIsSavingShift(false);
     }
@@ -1425,7 +1490,7 @@ export const EmployeesPage: React.FC = () => {
       let allowedShiftIds: string[] | null = null;
 
       // If user is Branch Manager, fetch the branch(es) they manage
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -1442,7 +1507,7 @@ export const EmployeesPage: React.FC = () => {
 
       const snap = await getDocs(query(collection(db, 'shifts'), orderBy('startTime')));
       const seen = new Set<string>();
-      const templates: { startTime: string; endTime: string }[] = [];
+      const templates: { id: string; startTime: string; endTime: string }[] = [];
       snap.forEach((d) => {
         // Filter by branch if allowedShiftIds is set
         if (allowedShiftIds && !allowedShiftIds.includes(d.id)) {
@@ -1450,7 +1515,7 @@ export const EmployeesPage: React.FC = () => {
         }
         const data = d.data();
         const key = `${data.startTime}|${data.endTime}`;
-        if (!seen.has(key)) { seen.add(key); templates.push({ startTime: data.startTime, endTime: data.endTime }); }
+        if (!seen.has(key)) { seen.add(key); templates.push({ id: d.id, startTime: data.startTime, endTime: data.endTime }); }
       });
       setShiftTemplates(templates);
     } catch (e) { console.error(e); }
@@ -1525,21 +1590,30 @@ export const EmployeesPage: React.FC = () => {
         throw new Error('Invalid time data detected. Please refresh the page and try again.');
       }
       for (const employee of selectedEmps) {
-        await shiftAssignmentsService.addAssignment({
-          employeeCode: employee.employeeCode ?? '',
-          employeeName: employee.employeeName ?? '',
-          fromDate: bulkShiftForm.fromDate,
-          toDate: bulkShiftForm.toDate,
-          startTime: startTime24,
-          endTime: endTime24,
-        });
+        if (bulkShiftMode === 'existing' && bulkSelectedTemplate) {
+          await shiftAssignmentsService.addExistingAssignment({
+            employeeId: employee.id,
+            shiftId: bulkSelectedTemplate.id,
+            fromDate: bulkShiftForm.fromDate,
+            toDate: bulkShiftForm.toDate,
+          });
+        } else {
+          await shiftAssignmentsService.addAssignment({
+            employeeCode: employee.employeeCode ?? '',
+            employeeName: employee.employeeName ?? '',
+            fromDate: bulkShiftForm.fromDate,
+            toDate: bulkShiftForm.toDate,
+            startTime: startTime24,
+            endTime: endTime24,
+          });
+        }
       }
 
       showToast('success', `Shift assigned to ${selectedEmployeeIds.size} employee(s) successfully`);
       closeBulkAssignModal();
     } catch (error) {
       console.error('Error bulk assigning shifts:', error);
-      showToast('error', 'An error occurred while bulk assigning shifts. Please check your time values and try again.');
+      showToast('error', error instanceof Error ? error.message : 'An error occurred while bulk assigning shifts.');
     } finally {
       setIsBulkAssigning(false);
     }
@@ -1580,12 +1654,12 @@ export const EmployeesPage: React.FC = () => {
             </div>
             <div className="w-52">
               <select
-                value={userData?.designation === 'Branch Manager' ? (managerBranchName ?? '') : branchFilter}
+                value={isBranchManager ? (managerBranchName ?? '') : branchFilter}
                 onChange={(e) => setBranchFilter(e.target.value)}
-                disabled={userData?.designation === 'Branch Manager'}
+                disabled={isBranchManager}
                 className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
               >
-                {userData?.designation === 'Branch Manager' ? (
+                {isBranchManager ? (
                   <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
                 ) : (
                   <>
@@ -1599,7 +1673,7 @@ export const EmployeesPage: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {canManageLeaves && (
+            {canAddLeave && (
               <button
                 onClick={() => { setBulkLeaveLimitErrors([]); setBulkLeaveLimitDialogOpen(false); setBulkLeaveModalOpen(true); }}
                 className="btn-primary"
@@ -1608,16 +1682,18 @@ export const EmployeesPage: React.FC = () => {
                 Add Leaves
               </button>
             )}
-            <button
-              onClick={() => {
-                setBulkAssignModalOpen(true);
-                fetchShiftTemplates();
-              }}
-              className="btn-primary"
-            >
-              <Clock size={16} />
-              Assign Shifts
-            </button>
+            {canAddShiftAssignment && (
+              <button
+                onClick={() => {
+                  setBulkAssignModalOpen(true);
+                  fetchShiftTemplates();
+                }}
+                className="btn-primary"
+              >
+                <Clock size={16} />
+                Assign Shifts
+              </button>
+            )}
           </div>
         </div>
 
@@ -1920,13 +1996,15 @@ export const EmployeesPage: React.FC = () => {
                       }`}>
                       Existing Shift
                     </button>
-                    <button type="button"
-                      onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
-                      className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
-                        shiftMode === 'new' ? 'text-primary-700 border-b-2 border-primary-600 bg-primary-50' : 'text-secondary-500 hover:text-secondary-700'
-                      }`}>
-                      New Shift
-                    </button>
+                    {canAddShiftSlot && (
+                      <button type="button"
+                        onClick={() => { setShiftMode('new'); setSelectedShiftTemplate(null); }}
+                        className={`flex-1 py-2.5 text-sm font-medium transition-colors ${
+                          shiftMode === 'new' ? 'text-primary-700 border-b-2 border-primary-600 bg-primary-50' : 'text-secondary-500 hover:text-secondary-700'
+                        }`}>
+                        New Shift
+                      </button>
+                    )}
                   </div>
 
                   {/* Existing shift picker */}
@@ -2009,33 +2087,35 @@ export const EmployeesPage: React.FC = () => {
 
                   <div className="flex gap-3 pt-2">
                     <button type="button" onClick={handleShiftFormCancel} className="flex-1 px-4 py-2 text-sm font-medium text-secondary-700 bg-white border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                    <button
-                      type="submit"
-                      disabled={isSavingShift || !shiftForm.fromDate || !shiftForm.toDate || (shiftMode === 'existing' ? !selectedShiftTemplate : (!shiftForm.startHour || !shiftForm.startMinute || !shiftForm.endHour || !shiftForm.endMinute))}
-                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {isSavingShift ? (
-                        <>
-                          <RedSpinner size="sm" />
-                          Saving...
-                        </>
-                      ) : (
-                        'Save Shift'
-                      )}
-                    </button>
+                    {(shiftMode === 'new' ? canAddShiftSlot : canAddShiftAssignment) && (
+                      <button
+                        type="submit"
+                        disabled={isSavingShift || !shiftForm.fromDate || !shiftForm.toDate || (shiftMode === 'existing' ? !selectedShiftTemplate : (!shiftForm.startHour || !shiftForm.startMinute || !shiftForm.endHour || !shiftForm.endMinute))}
+                        className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isSavingShift ? (
+                          <>
+                            <RedSpinner size="sm" />
+                            Saving...
+                          </>
+                        ) : (
+                          'Save Shift'
+                        )}
+                      </button>
+                    )}
                   </div>
                 </form>
               ) : showViewShifts ? (
                 <div>
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-medium text-secondary-700">Shift Records</h3>
-                    {userData?.designation !== 'Branch Manager' && (
-                    <button
-                      onClick={() => { setShowAddShiftForm(true); fetchShiftTemplates(); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-                    >
-                      <Plus size={16} /> Add Shift
-                    </button>
+                    {canAddShiftAssignment && (
+                      <button
+                        onClick={() => { setShiftMode('existing'); setShowAddShiftForm(true); fetchShiftTemplates(); }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                      >
+                        <Plus size={16} /> Add Shift
+                      </button>
                     )}
                   </div>
                   {shiftsLoading ? (
@@ -2049,30 +2129,32 @@ export const EmployeesPage: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-2 max-h-96 overflow-y-auto">
-                      {employeeShifts.map((shift) => (
-                        <div key={shift.id} className="border border-secondary-200 rounded-lg p-3 hover:bg-secondary-50 transition-colors">
+                      {employeeShifts.map((shift, idx) => (
+                        <div key={`${shift.id}-${shift.assignmentId ?? idx}`} className="border border-secondary-200 rounded-lg p-3 hover:bg-secondary-50 transition-colors">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-sm font-medium">
                               <span className="text-primary-600">{formatShiftDate(shift.fromDate)}</span>
                               <span className="text-black"> - </span>
                               <span className="text-primary-600">{formatShiftDate(shift.toDate)}</span>
                             </span>
-                            {userData?.designation !== 'Branch Manager' && (
                             <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleEditShift(shift)}
-                                className="text-primary-600 hover:text-primary-700"
-                              >
-                                <Edit size={16} />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteShift(shift)}
-                                className="text-red-500 hover:text-red-700"
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                              {canEditShiftAssignment && (
+                                <button
+                                  onClick={() => handleEditShift(shift)}
+                                  className="text-primary-600 hover:text-primary-700"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                              )}
+                              {canDeleteShiftAssignment && (
+                                <button
+                                  onClick={() => handleDeleteShift(shift)}
+                                  className="text-red-500 hover:text-red-700"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
                             </div>
-                            )}
                           </div>
                           <div className="flex items-center gap-4 text-sm">
                             <span className="px-2.5 py-0.5 rounded-full bg-green-50 text-green-600 text-xs font-medium">{formatTime12(shift.startTime)} - {formatTime12(shift.endTime)}</span>
@@ -2122,6 +2204,23 @@ export const EmployeesPage: React.FC = () => {
                       />
                     </div>
                   </div>
+                  {isBranchManager ? (
+                    <div className="border border-secondary-300 rounded-lg p-3">
+                      <label className="block text-sm font-medium text-secondary-700 mb-2">Existing Shift</label>
+                      <div className="flex flex-wrap gap-2">
+                        {shiftTemplates.map((template) => (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => setSelectedShiftTemplate(template)}
+                            className={`px-3 py-2 text-sm rounded-lg border ${selectedShiftTemplate?.id === template.id ? 'border-primary-600 bg-primary-50 text-primary-700' : 'border-secondary-200 text-secondary-700'}`}
+                          >
+                            {formatTime12(template.startTime)} - {formatTime12(template.endTime)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
                   <div className="grid grid-cols-2 gap-4">
                     <div className="border border-secondary-300 rounded-lg p-3">
                       <label className="block text-sm font-medium text-secondary-700 mb-2">Start Time</label>
@@ -2192,6 +2291,7 @@ export const EmployeesPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  )}
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
@@ -2203,20 +2303,22 @@ export const EmployeesPage: React.FC = () => {
                     >
                       Cancel
                     </button>
-                    <button
-                      type="submit"
-                      disabled={isSavingShift}
-                      className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {isSavingShift ? (
-                        <>
-                          <RedSpinner size="sm" />
-                          Updating...
-                        </>
-                      ) : (
-                        'Update Shift'
-                      )}
-                    </button>
+                    {canEditShiftAssignment && (
+                      <button
+                        type="submit"
+                        disabled={isSavingShift}
+                        className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isSavingShift ? (
+                          <>
+                            <RedSpinner size="sm" />
+                            Updating...
+                          </>
+                        ) : (
+                          'Update Shift'
+                        )}
+                      </button>
+                    )}
                   </div>
                 </form>
               ) : null}
@@ -2335,10 +2437,12 @@ export const EmployeesPage: React.FC = () => {
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={closeBulkLeaveModal}
                   className="flex-1 py-2.5 text-sm font-medium text-secondary-700 border border-secondary-300 rounded-lg hover:bg-secondary-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
-                  className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
-                  {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
-                </button>
+                {canAddLeave && (
+                  <button type="submit" disabled={isSavingBulkLeave || bulkLeaveSelectedIds.size === 0 || Object.keys(bulkLeaveDateMap).length === 0}
+                    className="flex-1 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-60">
+                    {isSavingBulkLeave ? 'Saving...' : `Add Leave for ${bulkLeaveSelectedIds.size} Employee${bulkLeaveSelectedIds.size !== 1 ? 's' : ''}`}
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -2454,13 +2558,15 @@ export const EmployeesPage: React.FC = () => {
                   }`}>
                   Use Existing Shift
                 </button>
-                <button type="button"
-                  onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                    bulkShiftMode === 'new' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
-                  }`}>
-                  Add New Shift
-                </button>
+                {canAddShiftSlot && (
+                  <button type="button"
+                    onClick={() => { setBulkShiftMode('new'); setBulkSelectedTemplate(null); }}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                      bulkShiftMode === 'new' ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-secondary-700 border-secondary-300 hover:bg-secondary-50'
+                    }`}>
+                    Add New Shift
+                  </button>
+                )}
               </div>
 
               {bulkShiftMode === 'existing' && shiftTemplates.length > 0 && (
@@ -2532,20 +2638,22 @@ export const EmployeesPage: React.FC = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  disabled={isBulkAssigning || selectedEmployeeIds.size === 0 || !bulkShiftForm.fromDate || !bulkShiftForm.toDate || (bulkShiftMode === 'existing' ? !bulkSelectedTemplate : !bulkShiftForm.startHour || !bulkShiftForm.startMinute || !bulkShiftForm.endHour || !bulkShiftForm.endMinute)}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isBulkAssigning ? (
-                    <>
-                      <RedSpinner size="sm" />
-                      Assigning...
-                    </>
-                  ) : (
-                    `Assign to ${selectedEmployeeIds.size} Employee${selectedEmployeeIds.size === 1 ? '' : 's'}`
-                  )}
-                </button>
+                {(bulkShiftMode === 'new' ? canAddShiftSlot : canAddShiftAssignment) && (
+                  <button
+                    type="submit"
+                    disabled={isBulkAssigning || selectedEmployeeIds.size === 0 || !bulkShiftForm.fromDate || !bulkShiftForm.toDate || (bulkShiftMode === 'existing' ? !bulkSelectedTemplate : !bulkShiftForm.startHour || !bulkShiftForm.startMinute || !bulkShiftForm.endHour || !bulkShiftForm.endMinute)}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isBulkAssigning ? (
+                      <>
+                        <RedSpinner size="sm" />
+                        Assigning...
+                      </>
+                    ) : (
+                      `Assign to ${selectedEmployeeIds.size} Employee${selectedEmployeeIds.size === 1 ? '' : 's'}`
+                    )}
+                  </button>
+                )}
               </div>
             </form>
           </div>
@@ -2753,12 +2861,15 @@ export const EmployeesPage: React.FC = () => {
                                     className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
                                   >Remove</button>
                                 )}
-                                {!staged && saved && (
+                                {!staged && saved && (expandLeaveDates(saved).length > 1 ? canEditLeave : canDeleteLeave) && (
                                   <button type="button"
                                     onClick={() => handleRemoveSavedLeaveDate(saved, dateStr)}
                                     className="w-full text-left px-2 py-1.5 text-sm rounded text-red-600 hover:bg-red-50 transition-colors mb-1 border-b border-secondary-100 pb-1"
                                   >Remove</button>
                                 )}
+                                {(saved && !staged
+                                  ? canAddLeave && (expandLeaveDates(saved).length > 1 ? canEditLeave : canDeleteLeave)
+                                  : canAddLeave) && (
                                 <LeaveOptionMenu
                                   current={staged ?? (saved ? { reason: saved.reason ?? '', duration: saved.duration ?? 'full_day', halfDayPeriod: saved.halfDayPeriod } : null)}
                                   onSelect={(selection) => {
@@ -2769,6 +2880,7 @@ export const EmployeesPage: React.FC = () => {
                                     setLeaveTooltipDate(null);
                                   }
                                 }} />
+                                )}
                               </div>
                             )}
                           </div>
@@ -2791,7 +2903,7 @@ export const EmployeesPage: React.FC = () => {
                             Week off: {weekOffDays.join(', ')}{existingWeekOff ? ' (saved)' : ''}
                           </p>
                         )}
-                        {renderLeaveCalendar(canManageLeaves)}
+                        {renderLeaveCalendar(canAddLeave || canEditLeave || canDeleteLeave)}
 
                         <LeaveTypeLegend reasons={[
                           ...Object.values(savedLeaveByDate).map((leave: any) => leave.reason),
@@ -2802,7 +2914,7 @@ export const EmployeesPage: React.FC = () => {
                           )}
                         </LeaveTypeLegend>
 
-                        {canManageLeaves && Object.keys(leaveDateMap).length > 0 && (
+                        {canAddLeave && Object.keys(leaveDateMap).length > 0 && (
                           <>
                             <div className="flex gap-2">
                               <button
@@ -2874,30 +2986,32 @@ export const EmployeesPage: React.FC = () => {
               >
                 No, Skip
               </button>
-              <button
-                onClick={() => {
-                  setAskLeavesDialog(false);
-                  if (selectedEmployee && lastAssignedShiftDates) {
-                    setWizardEmployee({
-                      employeeCode: selectedEmployee.employeeCode ?? '',
-                      employeeName: selectedEmployee.employeeName ?? '',
-                      fromDate: lastAssignedShiftDates.fromDate,
-                      toDate: lastAssignedShiftDates.toDate,
-                    });
-                    setWizardEmpLeaves([]);
-                    setWizardMultiSelectedDates([]);
-                    setWizardLeaveLimitErrors([]);
-                    setWizardShowConfirm(false);
-                    const d = new Date(lastAssignedShiftDates.fromDate);
-                    setWizardCalYear(d.getFullYear());
-                    setWizardCalMonth(d.getMonth());
-                    setLeaveWizardOpen(true);
-                  }
-                }}
-                className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-              >
-                Yes, Assign
-              </button>
+              {(canAddLeave || canEditShiftAssignment) && (
+                <button
+                  onClick={() => {
+                    setAskLeavesDialog(false);
+                    if (selectedEmployee && lastAssignedShiftDates) {
+                      setWizardEmployee({
+                        employeeCode: selectedEmployee.employeeCode ?? '',
+                        employeeName: selectedEmployee.employeeName ?? '',
+                        fromDate: lastAssignedShiftDates.fromDate,
+                        toDate: lastAssignedShiftDates.toDate,
+                      });
+                      setWizardEmpLeaves([]);
+                      setWizardMultiSelectedDates([]);
+                      setWizardLeaveLimitErrors([]);
+                      setWizardShowConfirm(false);
+                      const d = new Date(lastAssignedShiftDates.fromDate);
+                      setWizardCalYear(d.getFullYear());
+                      setWizardCalMonth(d.getMonth());
+                      setLeaveWizardOpen(true);
+                    }
+                  }}
+                  className="flex-1 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  Yes, Assign
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2921,20 +3035,22 @@ export const EmployeesPage: React.FC = () => {
               >
                 Cancel
               </button>
-              <button
-                onClick={confirmDeleteShift}
-                disabled={isDeletingShift}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isDeletingShift ? (
-                  <>
-                    <RedSpinner size="sm" />
-                    Deleting...
-                  </>
-                ) : (
-                  'Delete'
-                )}
-              </button>
+              {canDeleteShiftAssignment && (
+                <button
+                  onClick={confirmDeleteShift}
+                  disabled={isDeletingShift}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isDeletingShift ? (
+                    <>
+                      <RedSpinner size="sm" />
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete'
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -3041,6 +3157,7 @@ export const EmployeesPage: React.FC = () => {
                   >
                     Back
                   </button>
+                  {(canAddLeave || canEditShiftAssignment) && (
                   <button
                     type="button"
                     disabled={isSavingLeaves}
@@ -3076,6 +3193,7 @@ export const EmployeesPage: React.FC = () => {
                               dayValue: first.duration === 'half_day' ? 0.5 : 1,
                               createdAt: serverTimestamp(),
                               createdBy: currentUser?.uid,
+                              ...getManagedBranchFields(),
                             });
                           }
                         }
@@ -3089,6 +3207,7 @@ export const EmployeesPage: React.FC = () => {
                   >
                     {isSavingLeaves ? 'Saving...' : 'Confirm & Save'}
                   </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -3208,24 +3327,28 @@ export const EmployeesPage: React.FC = () => {
                                   Remove
                                 </button>
                               )}
-                              <LeaveOptionMenu
-                                current={(() => { const l = wizardEmpLeaves.find(l => l.date === ds); return l ? { reason: l.type, duration: l.duration, halfDayPeriod: l.halfDayPeriod } : null; })()}
-                                onSelect={(selection) => {
-                                selectWizardLeaveDate(ds, selection);
-                                setWizardTooltipDate(null); setWizardTooltipPos(null);
-                              }} />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setChangeShiftDate(ds);
+                              {canAddLeave && (
+                                <LeaveOptionMenu
+                                  current={(() => { const l = wizardEmpLeaves.find(l => l.date === ds); return l ? { reason: l.type, duration: l.duration, halfDayPeriod: l.halfDayPeriod } : null; })()}
+                                  onSelect={(selection) => {
+                                  selectWizardLeaveDate(ds, selection);
                                   setWizardTooltipDate(null); setWizardTooltipPos(null);
-                                  fetchShiftTemplates();
-                                  setChangeShiftModalOpen(true);
-                                }}
-                                className="w-full text-left px-2 py-1.5 text-sm rounded text-orange-600 hover:bg-orange-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
-                              >
-                                Change Shift
-                              </button>
+                                }} />
+                              )}
+                              {canEditShiftAssignment && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setChangeShiftDate(ds);
+                                    setWizardTooltipDate(null); setWizardTooltipPos(null);
+                                    fetchShiftTemplates();
+                                    setChangeShiftModalOpen(true);
+                                  }}
+                                  className="w-full text-left px-2 py-1.5 text-sm rounded text-orange-600 hover:bg-orange-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
+                                >
+                                  Change Shift
+                                </button>
+                              )}
                             </div>
                           </>
                         )}
@@ -3238,7 +3361,9 @@ export const EmployeesPage: React.FC = () => {
                   <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
                     <p className="text-sm font-medium text-blue-900 mb-2">Apply one leave type to {wizardMultiSelectedDates.length} selected date{wizardMultiSelectedDates.length === 1 ? '' : 's'}</p>
                     <div className="flex flex-wrap gap-2">
-                      <LeaveOptionMenu onSelect={(selection) => selectWizardLeaveDates(wizardMultiSelectedDates, selection)} />
+                      {canAddLeave && (
+                        <LeaveOptionMenu onSelect={(selection) => selectWizardLeaveDates(wizardMultiSelectedDates, selection)} />
+                      )}
                       <button
                         type="button"
                         onClick={() => setWizardMultiSelectedDates([])}
@@ -3267,16 +3392,18 @@ export const EmployeesPage: React.FC = () => {
               </div>
 
               <div className="p-4 border-t border-secondary-200">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setWizardTooltipDate(null); setWizardTooltipPos(null);
-                    setWizardShowConfirm(true);
-                  }}
-                  className="w-full h-10 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-                >
-                  Review
-                </button>
+                {(canAddLeave || canEditShiftAssignment) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWizardTooltipDate(null); setWizardTooltipPos(null);
+                      setWizardShowConfirm(true);
+                    }}
+                    className="w-full h-10 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                  >
+                    Review
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -3315,12 +3442,15 @@ export const EmployeesPage: React.FC = () => {
                           if (!wizardEmployee || !changeShiftDate) return;
                           setIsSavingShiftOverride(true);
                           try {
-                            await shiftAssignmentsService.changeAssignmentForDate(
-                              wizardEmployee.employeeCode,
-                              changeShiftDate,
-                              t.startTime,
-                              t.endTime,
-                            );
+                            const employeeRecord = employees.find((e) => e.employeeCode === wizardEmployee.employeeCode);
+                            await shiftAssignmentsService.changeAssignmentForDateScoped(isBranchManager, {
+                              employeeCode: wizardEmployee.employeeCode,
+                              employeeId: employeeRecord?.id,
+                              date: changeShiftDate,
+                              destinationShiftId: t.id,
+                              startTime: t.startTime,
+                              endTime: t.endTime,
+                            });
 
                             setShiftChangedDates(prev => [...prev, { date: changeShiftDate, startTime: t.startTime, endTime: t.endTime }]);
                             setChangeShiftModalOpen(false);

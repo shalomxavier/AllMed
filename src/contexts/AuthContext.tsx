@@ -6,20 +6,21 @@ import {
   sendPasswordResetEmail,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase/firebase';
+import {
+  type Role,
+  type UserPermissions,
+  type UserRoleData,
+} from '@/permissions';
 
-export interface UserData {
-  id: string;
-  name: string;
-  email: string;
-  designation: string;
-  branch: string;
-}
+export interface UserData extends UserRoleData {}
 
 export interface AuthContextType {
   currentUser: FirebaseUser | null;
   userData: UserData | null;
+  role: Role | null;
+  permissions: UserPermissions | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -74,31 +75,48 @@ const getAuthErrorMessage = (errorCode: string): string => {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
+  const [role] = useState<Role | null>(null);
+  const [permissions, setPermissions] = useState<UserPermissions | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let userUnsubscribe: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
-      if (user) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          if (userDoc.exists()) {
-            setUserData({ id: userDoc.id, ...userDoc.data() } as UserData);
-          } else {
-            setUserData(null);
-          }
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-          setUserData(null);
-        }
-      } else {
+      userUnsubscribe?.();
+      userUnsubscribe = undefined;
+
+      if (!user) {
         setUserData(null);
+        setPermissions(null);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      setLoading(true);
+      userUnsubscribe = onSnapshot(
+        doc(db, 'users', user.uid),
+        (userDoc) => {
+          const data = userDoc.exists() ? ({ id: userDoc.id, ...userDoc.data() } as UserData) : null;
+          setUserData(data);
+          setPermissions(data?.permissions ?? null);
+          setLoading(false);
+        },
+        (err) => {
+          console.error('Error loading user data:', err);
+          setUserData(null);
+          setPermissions(null);
+          setLoading(false);
+        }
+      );
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribeAuth();
+      userUnsubscribe?.();
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<void> => {
@@ -144,6 +162,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const value: AuthContextType = {
     currentUser,
     userData,
+    role,
+    permissions,
     loading,
     login,
     logout,

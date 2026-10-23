@@ -9,10 +9,21 @@ import {
   exportShiftReport,
 } from '@/utils/attendanceExport';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { useRole, usePermissions } from '@/permissions';
 
 export const ReportsPage: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser, userData } = useAuthContext();
+  const { isBranchManager } = useRole();
+  const { hasPermission: checkPermission } = usePermissions();
+  const canViewMonthlyReport = checkPermission('reports', 'monthlyReport', 'view');
+  const canExportMonthlyReport = checkPermission('reports', 'monthlyReport', 'export');
+  const canViewDailyReport = checkPermission('reports', 'dailyReport', 'view');
+  const canExportDailyReport = checkPermission('reports', 'dailyReport', 'export');
+  const canViewShiftReport = checkPermission('reports', 'shiftReport', 'view');
+  const canExportShiftReport = checkPermission('reports', 'shiftReport', 'export');
+  const canViewEmployeeMaster = checkPermission('reports', 'employeeMasterReport', 'view');
+  const canExportEmployeeMaster = checkPermission('reports', 'employeeMasterReport', 'export');
   const [monthlyFromDate, setMonthlyFromDate] = useState('');
   const [monthlyToDate, setMonthlyToDate] = useState('');
   const [monthlyLocation, setMonthlyLocation] = useState('');
@@ -34,7 +45,7 @@ export const ReportsPage: React.FC = () => {
   useEffect(() => {
     const resolveBranches = async () => {
       const db = getFirestore();
-      if (userData?.designation === 'Branch Manager' && currentUser) {
+      if (isBranchManager && currentUser) {
         try {
           const branchQuery = query(collection(db, 'branches'), where('managerId', '==', currentUser.uid));
           const branchSnapshot = await getDocs(branchQuery);
@@ -174,6 +185,7 @@ export const ReportsPage: React.FC = () => {
       <div className="py-6 flex-1">
         <div className="max-w-2xl space-y-6">
           {/* Monthly Work Duration */}
+          {(canViewMonthlyReport || canExportMonthlyReport) && (
           <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Monthly Work Duration</h2>
             <p className="text-sm text-secondary-500 mb-4">Generate monthly work duration report.</p>
@@ -207,10 +219,10 @@ export const ReportsPage: React.FC = () => {
                   id="monthlyLocation"
                   value={monthlyLocation}
                   onChange={(e) => setMonthlyLocation(e.target.value)}
-                  disabled={userData?.designation === 'Branch Manager'}
+                  disabled={isBranchManager}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
-                  {userData?.designation === 'Branch Manager' ? (
+                  {isBranchManager ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
                   ) : (
                     <>
@@ -224,26 +236,32 @@ export const ReportsPage: React.FC = () => {
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleView}
-                disabled={!monthlyFromDate || !monthlyToDate}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Eye size={16} />
-                View Monthly Report
-              </button>
-              <button
-                onClick={handleExport}
-                disabled={!monthlyFromDate || !monthlyToDate || exporting}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download size={16} />
-                {exporting ? 'Exporting...' : 'Export Monthly Report'}
-              </button>
+              {canViewMonthlyReport && (
+                <button
+                  onClick={handleView}
+                  disabled={!monthlyFromDate || !monthlyToDate}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Eye size={16} />
+                  View Monthly Report
+                </button>
+              )}
+              {canExportMonthlyReport && (
+                <button
+                  onClick={handleExport}
+                  disabled={!monthlyFromDate || !monthlyToDate || exporting}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  {exporting ? 'Exporting...' : 'Export Monthly Report'}
+                </button>
+              )}
             </div>
           </div>
+          )}
 
           {/* Daily Attendance */}
+          {(canViewDailyReport || canExportDailyReport) && (
           <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Daily Attendance</h2>
             <p className="text-sm text-secondary-500 mb-4">Export daily attendance records.</p>
@@ -277,10 +295,10 @@ export const ReportsPage: React.FC = () => {
                   id="dailyLocation"
                   value={dailyLocation}
                   onChange={(e) => setDailyLocation(e.target.value)}
-                  disabled={userData?.designation === 'Branch Manager'}
+                  disabled={isBranchManager}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
-                  {userData?.designation === 'Branch Manager' ? (
+                  {isBranchManager ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
                   ) : (
                     <>
@@ -294,26 +312,32 @@ export const ReportsPage: React.FC = () => {
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleDailyView}
-                disabled={!dailyFromDate || !dailyToDate}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Eye size={16} />
-                View Attendance Log
-              </button>
-              <button
-                onClick={handleDailyExport}
-                disabled={!dailyFromDate || !dailyToDate || exportingDaily}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download size={16} />
-                {exportingDaily ? 'Exporting...' : 'Export Attendance Log'}
-              </button>
+              {canViewDailyReport && (
+                <button
+                  onClick={handleDailyView}
+                  disabled={!dailyFromDate || !dailyToDate}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Eye size={16} />
+                  View Attendance Log
+                </button>
+              )}
+              {canExportDailyReport && (
+                <button
+                  onClick={handleDailyExport}
+                  disabled={!dailyFromDate || !dailyToDate || exportingDaily}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  {exportingDaily ? 'Exporting...' : 'Export Attendance Log'}
+                </button>
+              )}
             </div>
           </div>
+          )}
 
           {/* Shifts */}
+          {(canViewShiftReport || canExportShiftReport) && (
           <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Shifts</h2>
             <p className="text-sm text-secondary-500 mb-4">Export shift assignment report.</p>
@@ -347,10 +371,10 @@ export const ReportsPage: React.FC = () => {
                   id="shiftLocation"
                   value={shiftLocation}
                   onChange={(e) => setShiftLocation(e.target.value)}
-                  disabled={userData?.designation === 'Branch Manager'}
+                  disabled={isBranchManager}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
-                  {userData?.designation === 'Branch Manager' ? (
+                  {isBranchManager ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
                   ) : (
                     <>
@@ -364,26 +388,32 @@ export const ReportsPage: React.FC = () => {
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleShiftView}
-                disabled={!shiftFromDate || !shiftToDate}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Eye size={16} />
-                View Shift Report
-              </button>
-              <button
-                onClick={handleShiftExport}
-                disabled={!shiftFromDate || !shiftToDate || exportingShift}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download size={16} />
-                {exportingShift ? 'Exporting...' : 'Export Shift Report'}
-              </button>
+              {canViewShiftReport && (
+                <button
+                  onClick={handleShiftView}
+                  disabled={!shiftFromDate || !shiftToDate}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Eye size={16} />
+                  View Shift Report
+                </button>
+              )}
+              {canExportShiftReport && (
+                <button
+                  onClick={handleShiftExport}
+                  disabled={!shiftFromDate || !shiftToDate || exportingShift}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  {exportingShift ? 'Exporting...' : 'Export Shift Report'}
+                </button>
+              )}
             </div>
           </div>
+          )}
 
           {/* Employee Master */}
+          {(canViewEmployeeMaster || canExportEmployeeMaster) && (
           <div className="card p-6">
             <h2 className="text-lg font-medium text-secondary-900 mb-2">Employee Master</h2>
             <p className="text-sm text-secondary-500 mb-4">Export all employee details.</p>
@@ -394,10 +424,10 @@ export const ReportsPage: React.FC = () => {
                   id="employeeMasterLocation"
                   value={employeeMasterLocation}
                   onChange={(e) => setEmployeeMasterLocation(e.target.value)}
-                  disabled={userData?.designation === 'Branch Manager'}
+                  disabled={isBranchManager}
                   className="w-full px-3 py-2 bg-white border border-secondary-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-secondary-100 disabled:cursor-not-allowed"
                 >
-                  {userData?.designation === 'Branch Manager' ? (
+                  {isBranchManager ? (
                     <option value={managerBranchName ?? ''}>{managerBranchName || 'No branch assigned'}</option>
                   ) : (
                     <>
@@ -424,23 +454,28 @@ export const ReportsPage: React.FC = () => {
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleEmployeeMasterView}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Eye size={16} />
-                View Employee Master
-              </button>
-              <button
-                onClick={handleEmployeeMasterExport}
-                disabled={exportingEmployeeMaster}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download size={16} />
-                {exportingEmployeeMaster ? 'Exporting...' : 'Export Employee Master'}
-              </button>
+              {canViewEmployeeMaster && (
+                <button
+                  onClick={handleEmployeeMasterView}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-pink-700 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Eye size={16} />
+                  View Employee Master
+                </button>
+              )}
+              {canExportEmployeeMaster && (
+                <button
+                  onClick={handleEmployeeMasterExport}
+                  disabled={exportingEmployeeMaster}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  {exportingEmployeeMaster ? 'Exporting...' : 'Export Employee Master'}
+                </button>
+              )}
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>

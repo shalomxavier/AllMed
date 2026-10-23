@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Building2, X, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useAuthContext } from '@/contexts/AuthContext';
+import { usePermissions } from '@/permissions';
 import { RedSpinner, useToast } from '@/components/common';
 import {
   getFirestore,
@@ -21,6 +22,10 @@ interface Department {
 export const DepartmentsPage: React.FC = () => {
   const { showToast } = useToast();
   const { currentUser } = useAuthContext();
+  const { hasPermission } = usePermissions();
+  const canAdd = hasPermission('masters', 'departments', 'add');
+  const canEdit = hasPermission('masters', 'departments', 'edit');
+  const canDelete = hasPermission('masters', 'departments', 'delete');
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -120,13 +125,15 @@ export const DepartmentsPage: React.FC = () => {
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-secondary-900">Departments</h1>
         </div>
-        <button
-          onClick={openAddModal}
-          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <Plus size={18} />
-          Add Department
-        </button>
+        {canAdd && (
+          <button
+            onClick={openAddModal}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <Plus size={18} />
+            Add Department
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto py-6">
@@ -158,20 +165,24 @@ export const DepartmentsPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex justify-end gap-1 mt-4">
-                  <button
-                    onClick={() => openEditModal(department)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
-                    aria-label="Edit"
-                  >
-                    <Pencil size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteClick(department)}
-                    className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => openEditModal(department)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-700 hover:bg-secondary-100 transition-colors"
+                      aria-label="Edit"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDeleteClick(department)}
+                      className="p-1.5 rounded-lg text-secondary-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      aria-label="Delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -219,13 +230,15 @@ export const DepartmentsPage: React.FC = () => {
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving || !name.trim()}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
-                >
-                  {saving ? 'Saving...' : editingDepartment ? 'Update' : 'Save'}
-                </button>
+                {(editingDepartment ? canEdit : canAdd) && (
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !name.trim()}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-70"
+                  >
+                    {saving ? 'Saving...' : editingDepartment ? 'Update' : 'Save'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

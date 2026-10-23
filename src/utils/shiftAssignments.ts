@@ -1,5 +1,6 @@
 export interface ShiftEmployeeAssignment {
   assignmentId?: string;
+  employeeId?: string;
   employeeCode: string;
   employeeName?: string;
   fromDate?: string;
