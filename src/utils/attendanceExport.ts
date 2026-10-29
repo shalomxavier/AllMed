@@ -13,6 +13,53 @@ const worksheetColumnLetter = (col: number): string => {
   return result;
 };
 
+export const NO_LOCATION_LABEL = 'NO LOCATION';
+
+const locationKey = (value: string | undefined | null): string => {
+  const trimmed = (value ?? '').toString().trim();
+  return trimmed || NO_LOCATION_LABEL;
+};
+
+export interface LocationGroup<T> {
+  location: string;
+  items: T[];
+}
+
+export const groupByLocation = <T>(
+  items: T[],
+  getLocation: (item: T) => string | undefined | null,
+  getName: (item: T) => string
+): LocationGroup<T>[] => {
+  const groups = new Map<string, T[]>();
+  items.forEach((item) => {
+    const key = locationKey(getLocation(item));
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  });
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      if (a === NO_LOCATION_LABEL) return 1;
+      if (b === NO_LOCATION_LABEL) return -1;
+      return a.localeCompare(b);
+    })
+    .map(([location, groupItems]) => ({
+      location,
+      items: groupItems.sort((x, y) => getName(x).localeCompare(getName(y))),
+    }));
+};
+
+const sheetNameForLocation = (location: string, used: Set<string>): string => {
+  const base = (location.replace(/[\\/?*[\]:]/g, ' ').trim() || 'Report').slice(0, 31);
+  let name = base;
+  let i = 2;
+  while (used.has(name)) {
+    const suffix = ` ${i++}`;
+    name = base.slice(0, 31 - suffix.length) + suffix;
+  }
+  used.add(name);
+  return name;
+};
+
 interface RawPunch {
   id: string;
   deviceId?: number;
@@ -39,6 +86,7 @@ export interface MonthlyEmployeeReport {
   employee: any;
   code: string;
   name: string;
+  location: string;
   dateLabels: string[];
   inTimes: string[];
   outTimes: string[];
@@ -366,6 +414,7 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
       employee,
       code,
       name,
+      location: (employee.workLocation ?? '').toString(),
       dateLabels,
       inTimes,
       outTimes,
@@ -388,17 +437,14 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
   };
 };
 
-export const exportAttendanceReport = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
-  const reportData = await getMonthlyReportData(fromDate, exportToDate, location);
-  if (!reportData) return;
-
-  const { locationLabel, formattedFromDate, formattedToDate, dateLabels, employeeReports } = reportData;
-
-  try {
-
-    // Create Excel workbook
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Attendance Report');
+const writeMonthlySheet = (
+  worksheet: ExcelJS.Worksheet,
+  locationLabel: string,
+  formattedFromDate: string,
+  formattedToDate: string,
+  dateLabels: string[],
+  employeeReports: MonthlyEmployeeReport[]
+): void => {
 
     // Set column widths
     worksheet.getColumn(1).width = 50; // Column A row labels (increased for header text)
@@ -572,6 +618,24 @@ export const exportAttendanceReport = async (fromDate: string, exportToDate: str
         }
       });
     });
+};
+
+export const exportAttendanceReport = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
+  const reportData = await getMonthlyReportData(fromDate, exportToDate, location);
+  if (!reportData) return;
+
+  const { formattedFromDate, formattedToDate, dateLabels, employeeReports } = reportData;
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const usedSheetNames = new Set<string>();
+    const groups = employeeReports.length > 0
+      ? groupByLocation(employeeReports, (r) => r.location, (r) => r.name)
+      : [{ location: location || 'All Locations', items: [] as MonthlyEmployeeReport[] }];
+    for (const group of groups) {
+      const worksheet = workbook.addWorksheet(sheetNameForLocation(group.location, usedSheetNames));
+      writeMonthlySheet(worksheet, group.location.toUpperCase(), formattedFromDate, formattedToDate, dateLabels, group.items);
+    }
 
     // Generate Excel file
     const buffer = await workbook.xlsx.writeBuffer();
@@ -941,16 +1005,14 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
   return { headers, rows };
 };
 
-export const exportDailyAttendanceRecords = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
-  const reportData = await getDailyReportData(fromDate, exportToDate, location);
-  if (!reportData) return;
-
-  try {
-    const { headers, rows } = reportData;
-    const locationLabel = location === '' ? 'ALL LOCATIONS' : location.toUpperCase();
-
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Daily Attendance Report');
+const writeDailySheet = (
+  worksheet: ExcelJS.Worksheet,
+  locationLabel: string,
+  fromDate: string,
+  exportToDate: string,
+  headers: string[],
+  rows: DailyReportRecord[]
+): void => {
 
     const headerFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE7F3FF' } };
     const titleFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F4F8' } };
@@ -1038,6 +1100,24 @@ export const exportDailyAttendanceRecords = async (fromDate: string, exportToDat
     worksheet.getColumn(10).width = 14;
     worksheet.getColumn(11).width = 14;
     worksheet.getColumn(12).width = 16;
+};
+
+export const exportDailyAttendanceRecords = async (fromDate: string, exportToDate: string, location: string): Promise<void> => {
+  const reportData = await getDailyReportData(fromDate, exportToDate, location);
+  if (!reportData) return;
+
+  try {
+    const { headers, rows } = reportData;
+
+    const workbook = new ExcelJS.Workbook();
+    const usedSheetNames = new Set<string>();
+    const groups = rows.length > 0
+      ? groupByLocation(rows, (r) => r.location, (r) => r.employeeName)
+      : [{ location: location || 'All Locations', items: [] as DailyReportRecord[] }];
+    for (const group of groups) {
+      const worksheet = workbook.addWorksheet(sheetNameForLocation(group.location, usedSheetNames));
+      writeDailySheet(worksheet, group.location.toUpperCase(), fromDate, exportToDate, headers, group.items);
+    }
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1059,6 +1139,7 @@ export interface ShiftMatrixEmployee {
   name: string;
   designation: string;
   department: string;
+  location: string;
   values: string[];
 }
 
@@ -1121,7 +1202,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   const employeesSnapshot = await getDocs(collection(db, 'employees'));
-  const employeeMap: Record<string, { name: string; designation: string; department: string; employmentStatus: string; recordCodes: string[] }> = {};
+  const employeeMap: Record<string, { name: string; designation: string; department: string; workLocation: string; employmentStatus: string; recordCodes: string[] }> = {};
   employeesSnapshot.forEach((doc) => {
     const data = doc.data();
     if (location && data.workLocation !== location) return;
@@ -1131,6 +1212,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
         name: data.employeeName ?? '',
         designation: data.designation ?? '',
         department: data.department ?? '',
+        workLocation: data.workLocation ?? '',
         employmentStatus: data.employmentStatus ?? '',
         recordCodes: [data.employeeCode, data.employeeCodeInDevice]
           .filter(Boolean)
@@ -1224,6 +1306,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
       name: info.name,
       designation: info.designation,
       department: info.department,
+      location: info.workLocation,
       values: dateRange.map((dateStr) => {
         const leaveValue = leaveMap[code]?.[dateStr];
         const shiftValue = shiftAssignments[code]?.[dateStr] ?? '';
@@ -1251,17 +1334,17 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
   };
 };
 
-export const exportShiftReport = async (fromDate: string, exportToDate: string, location = ''): Promise<void> => {
-  const reportData = await getShiftReportData(fromDate, exportToDate, location);
-  if (!reportData) return;
-
-  try {
-    const { dayNames, dateLabels, employees } = reportData;
+const writeShiftSheet = (
+  worksheet: ExcelJS.Worksheet,
+  locationLabel: string,
+  fromDate: string,
+  exportToDate: string,
+  dayNames: string[],
+  dateLabels: string[],
+  employees: ShiftMatrixEmployee[]
+): void => {
     const colCount = 4 + dateLabels.length;
     const endCol = worksheetColumnLetter(colCount);
-
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Shift Report');
 
     const headerFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE7F3FF' } };
     const dayFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F8FF' } };
@@ -1275,7 +1358,7 @@ export const exportShiftReport = async (fromDate: string, exportToDate: string, 
     // Title section
     worksheet.mergeCells(`A${currentRow}:${endCol}${currentRow}`);
     const locationCell = worksheet.getCell(`A${currentRow}`);
-    locationCell.value = location ? location.toUpperCase() : 'ALL LOCATIONS';
+    locationCell.value = locationLabel;
     locationCell.font = { bold: true, size: 14, color: { argb: 'FF333333' } };
     locationCell.fill = titleFill;
     locationCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1360,6 +1443,24 @@ export const exportShiftReport = async (fromDate: string, exportToDate: string, 
     worksheet.getColumn(4).width = 18;
     for (let i = 5; i <= colCount; i++) {
       worksheet.getColumn(i).width = 14;
+    }
+};
+
+export const exportShiftReport = async (fromDate: string, exportToDate: string, location = ''): Promise<void> => {
+  const reportData = await getShiftReportData(fromDate, exportToDate, location);
+  if (!reportData) return;
+
+  try {
+    const { dayNames, dateLabels, employees } = reportData;
+
+    const workbook = new ExcelJS.Workbook();
+    const usedSheetNames = new Set<string>();
+    const groups = employees.length > 0
+      ? groupByLocation(employees, (e) => e.location, (e) => e.name)
+      : [{ location: location || 'All Locations', items: [] as ShiftMatrixEmployee[] }];
+    for (const group of groups) {
+      const worksheet = workbook.addWorksheet(sheetNameForLocation(group.location, usedSheetNames));
+      writeShiftSheet(worksheet, group.location.toUpperCase(), fromDate, exportToDate, dayNames, dateLabels, group.items);
     }
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -1454,13 +1555,11 @@ export const getEmployeeMasterData = async (location = '', status = 'Active'): P
   return { locationLabel, employees: records };
 };
 
-export const exportEmployeeMaster = async (location = '', status = 'Active'): Promise<void> => {
-  const reportData = await getEmployeeMasterData(location, status);
-  if (!reportData) return;
-
-  const { locationLabel, employees } = reportData;
-
-  try {
+const writeEmployeeMasterSheet = (
+  worksheet: ExcelJS.Worksheet,
+  locationLabel: string,
+  employees: EmployeeMasterRecord[]
+): void => {
     const headers = [
       'Employee Code',
       'Device Code',
@@ -1483,9 +1582,6 @@ export const exportEmployeeMaster = async (location = '', status = 'Active'): Pr
       'Employment Status',
       'Resign Date',
     ];
-
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Employee Master');
 
     const headerFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE7F3FF' } };
     const titleFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF0F4F8' } };
@@ -1578,6 +1674,24 @@ export const exportEmployeeMaster = async (location = '', status = 'Active'): Pr
     worksheet.getColumn(18).width = 18;
     worksheet.getColumn(19).width = 18;
     worksheet.getColumn(20).width = 15;
+};
+
+export const exportEmployeeMaster = async (location = '', status = 'Active'): Promise<void> => {
+  const reportData = await getEmployeeMasterData(location, status);
+  if (!reportData) return;
+
+  const { locationLabel, employees } = reportData;
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    const usedSheetNames = new Set<string>();
+    const groups = employees.length > 0
+      ? groupByLocation(employees, (e) => e.workLocation, (e) => e.employeeName)
+      : [{ location: location || 'All Locations', items: [] as EmployeeMasterRecord[] }];
+    for (const group of groups) {
+      const worksheet = workbook.addWorksheet(sheetNameForLocation(group.location, usedSheetNames));
+      writeEmployeeMasterSheet(worksheet, group.location.toUpperCase(), group.items);
+    }
 
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });

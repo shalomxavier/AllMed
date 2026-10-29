@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getDailyReportData, DailyReportData } from '@/utils/attendanceExport';
+import { getDailyReportData, groupByLocation, DailyReportData } from '@/utils/attendanceExport';
 import { RedSpinner } from '@/components/common';
 
 export const DailyReportPreviewPage: React.FC = () => {
@@ -116,12 +116,24 @@ export const DailyReportPreviewPage: React.FC = () => {
         }
       `}</style>
       <div className="preview-container w-full">
-        <div className="preview-scroll">
+        <div className="preview-scroll" style={{ marginBottom: '24px' }}>
+          <table className="preview-table">
+            <tbody>
+              <tr>
+                <td style={titleStyle}>
+                  DAILY ATTENDANCE REPORT
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {groupByLocation(data.rows, (record) => record.location, (record) => record.employeeName).map((group) => (
+        <div className="preview-scroll" key={group.location} style={{ marginBottom: '24px' }}>
           <table className="preview-table">
           <tbody>
             <tr>
               <td colSpan={data.headers.length} style={titleStyle}>
-                DAILY ATTENDANCE REPORT
+                {group.location.toUpperCase()}
               </td>
             </tr>
             <tr>
@@ -131,7 +143,7 @@ export const DailyReportPreviewPage: React.FC = () => {
                 </td>
               ))}
             </tr>
-            {data.rows.map((record, rowIndex) => (
+            {group.items.map((record, rowIndex) => (
               <tr key={rowIndex}>
                 <td style={cellStyle}>{record.userId}</td>
                 <td style={{ ...cellStyle, textAlign: 'left' }}>{record.employeeName}</td>
@@ -150,6 +162,7 @@ export const DailyReportPreviewPage: React.FC = () => {
           </tbody>
         </table>
         </div>
+        ))}
       </div>
     </div>
   );

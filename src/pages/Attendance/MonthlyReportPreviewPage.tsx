@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getMonthlyReportData, MonthlyReportData, MonthlyEmployeeReport } from '@/utils/attendanceExport';
+import { getMonthlyReportData, groupByLocation, MonthlyReportData, MonthlyEmployeeReport } from '@/utils/attendanceExport';
 import { RedSpinner } from '@/components/common';
 
 export const MonthlyReportPreviewPage: React.FC = () => {
@@ -187,7 +187,24 @@ export const MonthlyReportPreviewPage: React.FC = () => {
         }
       `}</style>
       <div className="preview-container w-full">
-        <div className="preview-scroll">
+        <div className="preview-scroll" style={{ marginBottom: '24px' }}>
+          <table className="preview-table">
+            <tbody>
+              <tr>
+                <td style={titleStyle}>
+                  MONTHLY WORK DURATION REPORT
+                </td>
+              </tr>
+              <tr>
+                <td style={dateRangeStyle}>
+                  {data.formattedFromDate.toUpperCase()} TO {data.formattedToDate.toUpperCase()}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {groupByLocation(data.employeeReports, (emp) => emp.location, (emp) => emp.name).map((group) => (
+        <div className="preview-scroll" key={group.location} style={{ marginBottom: '24px' }}>
           <table className="preview-table">
           <colgroup>
             <col />
@@ -202,23 +219,13 @@ export const MonthlyReportPreviewPage: React.FC = () => {
           <tbody>
             <tr>
               <td colSpan={totalColumn} style={headerStyle}>
-                {data.locationLabel}
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={totalColumn} style={titleStyle}>
-                MONTHLY WORK DURATION REPORT
-              </td>
-            </tr>
-            <tr>
-              <td colSpan={totalColumn} style={dateRangeStyle}>
-                {data.formattedFromDate.toUpperCase()} TO {data.formattedToDate.toUpperCase()}
+                {group.location.toUpperCase()}
               </td>
             </tr>
             <tr>
               <td colSpan={totalColumn} style={{ border: 'none', height: '16px' }}></td>
             </tr>
-            {data.employeeReports.map((emp: MonthlyEmployeeReport, empIndex: number) => (
+            {group.items.map((emp: MonthlyEmployeeReport, empIndex: number) => (
               <React.Fragment key={empIndex}>
                 <tr>
                   <td colSpan={totalColumn} style={{ ...metadataStyle, textAlign: 'left' }}>
@@ -282,7 +289,7 @@ export const MonthlyReportPreviewPage: React.FC = () => {
                   <td style={cellStyle}></td>
                   <td style={cellStyle}></td>
                 </tr>
-                {empIndex < data.employeeReports.length - 1 && (
+                {empIndex < group.items.length - 1 && (
                   <tr>
                     <td colSpan={totalColumn} style={{ border: 'none', height: '16px' }}></td>
                   </tr>
@@ -292,6 +299,7 @@ export const MonthlyReportPreviewPage: React.FC = () => {
           </tbody>
         </table>
         </div>
+        ))}
       </div>
     </div>
   );

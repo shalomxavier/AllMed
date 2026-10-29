@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getShiftReportData, ShiftReportData } from '@/utils/attendanceExport';
+import { getShiftReportData, groupByLocation, ShiftReportData } from '@/utils/attendanceExport';
 import { RedSpinner } from '@/components/common';
 
 export const ShiftReportPreviewPage: React.FC = () => {
@@ -163,17 +163,29 @@ export const ShiftReportPreviewPage: React.FC = () => {
         }
       `}</style>
       <div className="preview-container w-full">
-        <div className="preview-scroll">
+        <div className="preview-scroll" style={{ marginBottom: '24px' }}>
           <table className="preview-table">
-            <thead>
+            <tbody>
               <tr>
-                <td colSpan={4 + data.dateLabels.length} style={titleStyle}>
+                <td style={titleStyle}>
                   SHIFT ASSIGNMENT REPORT
                 </td>
               </tr>
               <tr>
-                <td colSpan={4 + data.dateLabels.length} style={rangeStyle}>
+                <td style={rangeStyle}>
                   {fromDate.toUpperCase()} TO {toDate.toUpperCase()}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {groupByLocation(data.employees, (emp) => emp.location, (emp) => emp.name).map((group) => (
+        <div className="preview-scroll" key={group.location} style={{ marginBottom: '24px' }}>
+          <table className="preview-table">
+            <thead>
+              <tr>
+                <td colSpan={4 + data.dateLabels.length} style={titleStyle}>
+                  {group.location.toUpperCase()}
                 </td>
               </tr>
               <tr>
@@ -196,7 +208,7 @@ export const ShiftReportPreviewPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {data.employees.map((emp, rowIndex) => (
+              {group.items.map((emp, rowIndex) => (
                 <tr key={rowIndex}>
                   <td style={{ ...fixedCellStyle, fontWeight: 'bold' }}>{emp.code}</td>
                   <td style={fixedCellStyle}>{emp.name}</td>
@@ -210,6 +222,7 @@ export const ShiftReportPreviewPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+        ))}
       </div>
     </div>
   );

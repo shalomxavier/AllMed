@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getEmployeeMasterData, EmployeeMasterData } from '@/utils/attendanceExport';
+import { getEmployeeMasterData, groupByLocation, EmployeeMasterData } from '@/utils/attendanceExport';
 import { RedSpinner } from '@/components/common';
 
 export const EmployeeMasterPreviewPage: React.FC = () => {
@@ -138,9 +138,15 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
         }
       `}</style>
       <div className="preview-container w-full">
-        <div className="preview-scroll">
+        {groupByLocation(data.employees, (emp) => emp.workLocation, (emp) => emp.employeeName).map((group) => (
+        <div className="preview-scroll" key={group.location} style={{ marginBottom: '24px' }}>
           <table className="preview-table">
             <thead>
+              <tr>
+                <td colSpan={headers.length} style={titleStyle}>
+                  {group.location.toUpperCase()}
+                </td>
+              </tr>
               <tr>
                 <td colSpan={headers.length} style={titleStyle}>
                   EMPLOYEE MASTER
@@ -155,7 +161,7 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {data.employees.map((emp, rowIndex) => (
+              {group.items.map((emp, rowIndex) => (
                 <tr key={rowIndex}>
                   <td style={fixedCellStyle}>{emp.employeeCode}</td>
                   <td style={fixedCellStyle}>{emp.employeeCodeInDevice}</td>
@@ -182,6 +188,7 @@ export const EmployeeMasterPreviewPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+        ))}
       </div>
     </div>
   );
