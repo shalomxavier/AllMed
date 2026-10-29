@@ -133,6 +133,8 @@ export const EmployeesPage: React.FC = () => {
   const [isSavingLeaves, setIsSavingLeaves] = useState(false);
   const [lastAssignedShiftDates, setLastAssignedShiftDates] = useState<{ fromDate: string; toDate: string } | null>(null);
   const [changeShiftDate, setChangeShiftDate] = useState<string | null>(null);
+  const [changeShiftSources, setChangeShiftSources] = useState<ResolvedShiftAssignment[]>([]);
+  const [changeShiftSource, setChangeShiftSource] = useState<ResolvedShiftAssignment | null>(null);
   const [changeShiftModalOpen, setChangeShiftModalOpen] = useState(false);
   const [isSavingShiftOverride, setIsSavingShiftOverride] = useState(false);
   const [shiftChangedDates, setShiftChangedDates] = useState<{ date: string; startTime: string; endTime: string }[]>([]);
@@ -233,7 +235,7 @@ export const EmployeesPage: React.FC = () => {
   useModalBehavior(askLeavesDialog, () => {}, { dismissible: false });
   useModalBehavior(showDeleteConfirm, () => { setShowDeleteConfirm(false); setShiftToDelete(null); }, { dismissible: !isDeletingShift });
   useModalBehavior(leaveWizardOpen, () => setLeaveWizardOpen(false), { dismissible: !isSavingLeaves });
-  useModalBehavior(changeShiftModalOpen, () => { setChangeShiftModalOpen(false); setChangeShiftDate(null); });
+  useModalBehavior(changeShiftModalOpen, () => { setChangeShiftModalOpen(false); setChangeShiftDate(null); setChangeShiftSources([]); setChangeShiftSource(null); });
 
   const fetchLeaveValidationData = async () => {
     const firestore = getFirestore();
@@ -3342,6 +3344,16 @@ export const EmployeesPage: React.FC = () => {
                                     setChangeShiftDate(ds);
                                     setWizardTooltipDate(null); setWizardTooltipPos(null);
                                     fetchShiftTemplates();
+                                    setChangeShiftSources([]);
+                                    setChangeShiftSource(null);
+                                    if (wizardEmployee?.employeeCode) {
+                                      shiftAssignmentsService.listAssignmentsForDate(wizardEmployee.employeeCode, ds)
+                                        .then((list) => {
+                                          setChangeShiftSources(list);
+                                          setChangeShiftSource(list.length === 1 ? list[0] : null);
+                                        })
+                                        .catch(() => setChangeShiftSources([]));
+                                    }
                                     setChangeShiftModalOpen(true);
                                   }}
                                   className="w-full text-left px-2 py-1.5 text-sm rounded text-orange-600 hover:bg-orange-50 transition-colors mt-1 border-t border-secondary-100 pt-1"
@@ -3421,9 +3433,42 @@ export const EmployeesPage: React.FC = () => {
                   {new Date(changeShiftDate + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} &bull; {wizardEmployee?.employeeName}
                 </p>
               </div>
-              <button onClick={() => { setChangeShiftModalOpen(false); setChangeShiftDate(null); }} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
+              <button onClick={() => { setChangeShiftModalOpen(false); setChangeShiftDate(null); setChangeShiftSources([]); setChangeShiftSource(null); }} className="p-1.5 rounded-lg text-secondary-500 hover:text-secondary-900 hover:bg-secondary-100 transition-colors"><X size={20} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
+              {changeShiftSources.length > 1 && !changeShiftSource ? (
+                <>
+                  <p className="text-sm text-secondary-600 mb-3">This day has multiple shifts. Select which one to change:</p>
+                  <div className="space-y-2">
+                    {changeShiftSources.map((src, i) => {
+                      const s = to12Hour(src.startTime);
+                      const e = to12Hour(src.endTime);
+                      const label = `${s.hour}:${s.minute} ${s.ampm} — ${e.hour}:${e.minute} ${e.ampm}`;
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setChangeShiftSource(src)}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-left rounded-lg border border-secondary-200 hover:border-primary-400 hover:bg-primary-50 transition-colors"
+                        >
+                          <Clock size={16} className="text-primary-600" />
+                          <span className="text-sm font-medium text-secondary-900">{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+              <>
+              {changeShiftSources.length > 1 && changeShiftSource && (
+                <button
+                  type="button"
+                  onClick={() => setChangeShiftSource(null)}
+                  className="text-xs text-primary-600 hover:text-primary-700 mb-2"
+                >
+                  &larr; Pick a different shift to change
+                </button>
+              )}
               <p className="text-sm text-secondary-600 mb-3">Select a shift to apply for this day only:</p>
               {shiftTemplates.length === 0 ? (
                 <p className="text-sm text-secondary-400 text-center py-4">No shifts available.</p>
@@ -3450,11 +3495,14 @@ export const EmployeesPage: React.FC = () => {
                               destinationShiftId: t.id,
                               startTime: t.startTime,
                               endTime: t.endTime,
+                              sourceShiftId: changeShiftSource?.slotId,
                             });
 
                             setShiftChangedDates(prev => [...prev, { date: changeShiftDate, startTime: t.startTime, endTime: t.endTime }]);
                             setChangeShiftModalOpen(false);
                             setChangeShiftDate(null);
+                            setChangeShiftSources([]);
+                            setChangeShiftSource(null);
                           } catch (err) {
                             console.error('Error changing shift:', err);
                           } finally {
@@ -3471,6 +3519,8 @@ export const EmployeesPage: React.FC = () => {
                     );
                   })}
                 </div>
+              )}
+              </>
               )}
             </div>
           </div>

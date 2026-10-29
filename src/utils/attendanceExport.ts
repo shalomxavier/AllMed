@@ -1,6 +1,16 @@
 import { collection, getDocs, query, orderBy, limit, where, startAfter, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import ExcelJS from 'exceljs';
+import { timeToMinutes } from '@/utils/shiftAssignments';
+import {
+  assignSessionsToShifts,
+  computeShiftMetrics,
+  isNightTiming,
+  pairPunchSessions,
+  type PunchSession,
+  type ShiftTiming,
+  type TimedPunch,
+} from '@/utils/shiftAttendance';
 
 const worksheetColumnLetter = (col: number): string => {
   let result = '';
@@ -316,18 +326,17 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
         outTimes.push('');
         durations.push('');
       } else {
-        const shift = employeeShifts.find((item) => dateStr >= item.fromDate && dateStr <= item.toDate);
-        const nightShift = shift && shift.startTime && shift.endTime &&
-          (() => { const [sh, sm] = shift.startTime.split(':').map(Number); const [eh, em] = shift.endTime.split(':').map(Number); return (eh * 60 + em) <= (sh * 60 + sm); })();
+        // All shifts covering this date (an employee may have several
+        // non-overlapping same-day shifts).
+        const dayShifts = employeeShifts.filter((item) => dateStr >= item.fromDate && dateStr <= item.toDate);
+        const nightShifts = dayShifts.filter(isNightTiming);
 
         // For night shifts, also pull next-day OUT punches into this day
-        if (nightShift && shift) {
+        if (nightShifts.length > 0) {
           const nextDay = new Date(dateStr + 'T00:00:00Z');
           nextDay.setUTCDate(nextDay.getUTCDate() + 1);
           const nextDateStr = nextDay.toISOString().split('T')[0];
-          const [eh, em] = shift.endTime.split(':').map(Number);
-          const shiftEndMin = eh * 60 + em;
-          const cutoffMin = shiftEndMin + 120;
+          const cutoffMin = Math.max(...nightShifts.map((shift) => timeToMinutes(shift.endTime))) + 120;
 
           const nextDayOutPunches = empPunches.filter((p) => {
             if (claimedPunchIds.has(p.id)) return false;
@@ -376,35 +385,34 @@ export const getMonthlyReportData = async (fromDate: string, exportToDate: strin
           durations.push('');
         }
 
-        if (shift && inDate && leave?.halfDayPeriod !== 'first_half') {
-          const [startHour, startMinute] = shift.startTime.split(':').map(Number);
-          const shiftStartMinutes = startHour * 60 + startMinute;
-          const actualInMinutes = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-          if (Number.isFinite(shiftStartMinutes) && actualInMinutes > shiftStartMinutes) {
-            lateMinutes += actualInMinutes - shiftStartMinutes;
-          }
-        }
-        if (shift && outDate && leave?.halfDayPeriod !== 'second_half') {
-          const [endHour, endMinute] = shift.endTime.split(':').map(Number);
-          const shiftEndMinutes = endHour * 60 + endMinute;
-          const actualOutMinutes = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
-          if (Number.isFinite(shiftEndMinutes)) {
-            if (nightShift) {
-              // For night shifts, OUT is next morning — compare wall-clock times
-              if (actualOutMinutes < shiftEndMinutes) {
-                earlyOutMinutes += shiftEndMinutes - actualOutMinutes;
-              } else if (actualOutMinutes > shiftEndMinutes) {
-                overtimeMinutes += actualOutMinutes - shiftEndMinutes;
-              }
-            } else {
-              if (actualOutMinutes < shiftEndMinutes) {
-                earlyOutMinutes += shiftEndMinutes - actualOutMinutes;
-              } else if (actualOutMinutes > shiftEndMinutes) {
-                overtimeMinutes += actualOutMinutes - shiftEndMinutes;
-              }
-            }
-          }
-        }
+        // Per-shift late/early/overtime: sessions are attributed to the shift
+        // whose start they are nearest, so each same-day shift is scored
+        // against its own punches.
+        const timed: TimedPunch[] = [];
+        sortedPunches.forEach((p) => {
+          const time = toDate(p.logDate);
+          if (!time || (p.direction !== 'in' && p.direction !== 'out')) return;
+          timed.push({ id: p.id, time, direction: p.direction });
+        });
+        const sessionsByShift = assignSessionsToShifts(pairPunchSessions(timed), dayShifts, dateStr);
+        dayShifts.forEach((shift, index) => {
+          const shiftSessions = sessionsByShift.get(index) ?? [];
+          if (shiftSessions.length === 0) return;
+          const sessionIns = shiftSessions.flatMap((s) => s.inPunches);
+          const sessionOuts = shiftSessions.flatMap((s) => s.outPunches);
+          const metrics = computeShiftMetrics(
+            shift,
+            sessionIns[0]?.time ?? null,
+            sessionOuts[sessionOuts.length - 1]?.time ?? null,
+            {
+              skipLate: leave?.halfDayPeriod === 'first_half',
+              skipEarlyOvertime: leave?.halfDayPeriod === 'second_half',
+            },
+          );
+          lateMinutes += metrics.lateMinutes;
+          earlyOutMinutes += metrics.earlyMinutes;
+          overtimeMinutes += metrics.overtimeMinutes;
+        });
       }
     });
 
@@ -798,27 +806,15 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     }
   });
 
-  const isNightShift = (shift: any): boolean => {
-    if (!shift?.startTime || !shift?.endTime) return false;
-    const [sh, sm] = shift.startTime.split(':').map(Number);
-    const [eh, em] = shift.endTime.split(':').map(Number);
-    return (eh * 60 + em) <= (sh * 60 + sm);
-  };
-
-  const getShiftForUser = (userId: string, dateStr: string): any | null => {
-    if (!userId) return null;
+  // All shifts covering the date for an employee, ordered by start time.
+  const getShiftsForUser = (userId: string, dateStr: string): ShiftTiming[] => {
+    if (!userId) return [];
     const key = userId.trim().toLowerCase();
     const shifts = shiftsMap[key] ?? shiftsMap[deviceToEmployeeCode[key]];
-    if (!shifts || shifts.length === 0) return null;
-    return shifts.find((s) => dateStr >= s.fromDate && dateStr <= s.toDate) ?? null;
-  };
-
-  const getShiftForPunch = (userId: string | undefined, logDate: any): any | null => {
-    if (!userId) return null;
-    const d = toDate(logDate);
-    if (!d) return null;
-    const punchDateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-    return getShiftForUser(userId, punchDateStr);
+    if (!shifts || shifts.length === 0) return [];
+    return shifts
+      .filter((s) => (!s.fromDate || dateStr >= s.fromDate) && (!s.toDate || dateStr <= s.toDate))
+      .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   };
 
   const allPunches = await fetchRawPunchesForEmployees(fromDate, exportToDate, employeeUserIds);
@@ -841,8 +837,8 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     const lastUnderscore = dateKey.lastIndexOf('_');
     const userKey = dateKey.substring(0, lastUnderscore);
     const dateStr = dateKey.substring(lastUnderscore + 1);
-    const shift = getShiftForUser(userKey, dateStr);
-    if (!shift || !isNightShift(shift)) continue;
+    const nightShifts = getShiftsForUser(userKey, dateStr).filter(isNightTiming);
+    if (nightShifts.length === 0) continue;
 
     const nextDay = new Date(dateStr + 'T00:00:00Z');
     nextDay.setUTCDate(nextDay.getUTCDate() + 1);
@@ -851,9 +847,7 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     const nextGroup = groups[nextKey];
     if (!nextGroup) continue;
 
-    const [eh, em] = shift.endTime.split(':').map(Number);
-    const shiftEndMin = eh * 60 + em;
-    const cutoffMin = shiftEndMin + 120;
+    const cutoffMin = Math.max(...nightShifts.map((shift) => timeToMinutes(shift.endTime))) + 120;
 
     const toMove: RawPunch[] = [];
     const toKeep: RawPunch[] = [];
@@ -882,7 +876,7 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     }
   }
 
-  const dailyRecords = Object.values(groups).map((punches) => {
+  const dailyRecords = Object.entries(groups).flatMap(([groupKey, punches]) => {
     const sorted = [...punches].sort((a, b) => {
       const dA = toDate(a.logDate);
       const dB = toDate(b.logDate);
@@ -893,67 +887,47 @@ export const getDailyReportData = async (fromDate: string, exportToDate: string,
     const firstPunch = sorted[0];
     const userId = firstPunch.userId ?? '';
     const key = userId.trim().toLowerCase();
-    const firstIn = sorted.find((p) => p.direction === 'in');
-    const lastOut = [...sorted].reverse().find((p) => p.direction === 'out');
-    const inDate = toDate(firstIn?.logDate ?? null);
-    const outDate = toDate(lastOut?.logDate ?? null);
-    const date = toDate(firstPunch.logDate);
+    const attendanceDate = groupKey.substring(groupKey.lastIndexOf('_') + 1);
+    const date = new Date(`${attendanceDate}T00:00:00Z`);
+    const shifts = getShiftsForUser(userId, attendanceDate);
 
-    const shift = date ? getShiftForPunch(userId, firstPunch.logDate) : null;
-    let lateMinutes = 0;
-    let earlyMinutes = 0;
-    let overtimeMinutes = 0;
+    const buildRecord = (shift: ShiftTiming | null, segmentPunches: RawPunch[], sessions?: PunchSession[]) => {
+      const firstIn = segmentPunches.find((p) => p.direction === 'in');
+      const lastOut = [...segmentPunches].reverse().find((p) => p.direction === 'out');
+      const inDate = toDate(firstIn?.logDate ?? null);
+      const outDate = toDate(lastOut?.logDate ?? null);
+      const metrics = computeShiftMetrics(shift, inDate, outDate, { sumSessions: sessions });
 
-    if (inDate && shift?.startTime) {
-      const [sh, sm] = shift.startTime.split(':').map(Number);
-      const shiftStartMin = sh * 60 + sm;
-      const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-      if (!isNaN(shiftStartMin) && inMin > shiftStartMin) {
-        lateMinutes = inMin - shiftStartMin;
-      }
-    }
-
-    if (outDate && shift?.endTime) {
-      const [eh, em] = shift.endTime.split(':').map(Number);
-      const shiftEndMin = eh * 60 + em;
-      const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
-      if (!isNaN(shiftEndMin)) {
-        if (outMin < shiftEndMin) {
-          earlyMinutes = shiftEndMin - outMin;
-        } else if (outMin > shiftEndMin) {
-          overtimeMinutes = outMin - shiftEndMin;
-        }
-      }
-    }
-
-    let workingDurationMinutes = 0;
-    if (inDate && outDate && outDate.getTime() > inDate.getTime()) {
-      workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
-    } else if (inDate && outDate) {
-      // Fallback for night shifts where timestamps may wrap around midnight
-      const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-      const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
-      if (outMin >= inMin) {
-        workingDurationMinutes = outMin - inMin;
-      } else {
-        workingDurationMinutes = outMin + 24 * 60 - inMin;
-      }
-    }
-
-    return {
-      userId,
-      employeeName: employeeMap[key] ?? '',
-      department: departmentMap[key] ?? '',
-      location: workLocationMap[key] ?? '',
-      shift,
-      date,
-      inTime: inDate,
-      outTime: outDate,
-      workingDurationMinutes,
-      lateMinutes,
-      earlyMinutes,
-      overtimeMinutes,
+      return {
+        userId,
+        employeeName: employeeMap[key] ?? '',
+        department: departmentMap[key] ?? '',
+        location: workLocationMap[key] ?? '',
+        shift,
+        date,
+        inTime: inDate,
+        outTime: outDate,
+        ...metrics,
+      };
     };
+
+    if (shifts.length <= 1) return [buildRecord(shifts[0] ?? null, sorted)];
+
+    // Multiple same-day shifts: pair punches into sessions and attribute each
+    // to the shift it best fits; every shift gets a row.
+    const timed: TimedPunch[] = [];
+    sorted.forEach((p) => {
+      const time = toDate(p.logDate);
+      if (!time || (p.direction !== 'in' && p.direction !== 'out')) return;
+      timed.push({ id: p.id, time, direction: p.direction });
+    });
+    const sessionsByShift = assignSessionsToShifts(pairPunchSessions(timed), shifts, attendanceDate);
+
+    return shifts.map((shift, index) => {
+      const shiftSessions = sessionsByShift.get(index) ?? [];
+      const punchIds = new Set(shiftSessions.flatMap((s) => [...s.inPunches, ...s.outPunches].map((p) => p.id)));
+      return buildRecord(shift, sorted.filter((p) => punchIds.has(p.id)), shiftSessions);
+    });
   });
 
   const localFormatTimeHHMM = (date: Date | null): string => {
@@ -1229,7 +1203,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
   const codesWithRecords = new Set(reportPunches.map((punch) => (punch.userId ?? '').trim().toLowerCase()));
 
   const shiftsSnapshot = await getDocs(collection(db, 'shifts'));
-  const shiftAssignments: Record<string, Record<string, string>> = {};
+  const shiftAssignments: Record<string, Record<string, string[]>> = {};
 
   shiftsSnapshot.forEach((doc) => {
     const data = doc.data();
@@ -1250,7 +1224,9 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
 
       dateRange.forEach((dateStr) => {
         if (dateStr >= empFromDate && dateStr <= empToDate) {
-          shiftAssignments[empCode][dateStr] = formatShiftTime(startTime, endTime);
+          const times = shiftAssignments[empCode][dateStr] ?? [];
+          times.push(formatShiftTime(startTime, endTime));
+          shiftAssignments[empCode][dateStr] = times;
         }
       });
     });
@@ -1309,7 +1285,7 @@ export const getShiftReportData = async (fromDate: string, exportToDate: string,
       location: info.workLocation,
       values: dateRange.map((dateStr) => {
         const leaveValue = leaveMap[code]?.[dateStr];
-        const shiftValue = shiftAssignments[code]?.[dateStr] ?? '';
+        const shiftValue = (shiftAssignments[code]?.[dateStr] ?? []).join(' · ');
         if (leaveValue?.includes('/ HD-')) return shiftValue ? `${shiftValue} / ${leaveValue}` : leaveValue;
         if (leaveValue) return leaveValue;
         return shiftValue;

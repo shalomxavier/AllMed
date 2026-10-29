@@ -10,11 +10,11 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/firebase/firebase';
 import {
-  dateRangesOverlap,
+  conflictingShiftAssignments,
+  findAssignmentsForDate,
   flattenShiftAssignments,
   getTimingKey,
   normalizeEmployeeCode,
-  resolveShiftAssignment,
   splitAssignmentForDate,
   type ResolvedShiftAssignment,
   type ShiftEmployeeAssignment,
@@ -101,10 +101,7 @@ const findSelectedIndex = (employees: ShiftEmployeeAssignment[], selected: Resol
 };
 
 const assertNoOverlap = (slots: ShiftSlotDocument[], assignment: NewShiftAssignment, excludedAssignmentId?: string): void => {
-  const targetCode = normalizeEmployeeCode(assignment.employeeCode);
-  const overlaps = flattenShiftAssignments(slots, targetCode).filter((existing) =>
-    existing.assignmentId !== excludedAssignmentId
-    && dateRangesOverlap(existing, assignment));
+  const overlaps = conflictingShiftAssignments(slots, assignment, excludedAssignmentId);
   if (overlaps.length > 0) throw new Error(`Shift overlaps ${overlaps.length} existing assignment(s).`);
 };
 
@@ -207,19 +204,47 @@ const moveAssignment = async (selected: ResolvedShiftAssignment, replacement: Ne
   return assignmentId;
 };
 
+const listAssignmentsForDate = async (employeeCode: string, date: string): Promise<ResolvedShiftAssignment[]> => {
+  const slots = await readSlots();
+  return findAssignmentsForDate(flattenShiftAssignments(slots, employeeCode), employeeCode, date);
+};
+
+const resolveAssignmentForDate = (
+  assignments: ResolvedShiftAssignment[],
+  employeeCode: string,
+  date: string,
+  sourceSlotId?: string,
+): ResolvedShiftAssignment => {
+  const matches = findAssignmentsForDate(assignments, employeeCode, date);
+  if (matches.length === 0) throw new Error('No shift assignment covers the selected date.');
+  if (sourceSlotId) {
+    const selected = matches.find((match) => match.slotId === sourceSlotId);
+    if (!selected) throw new Error('The selected shift assignment no longer covers this date.');
+    return selected;
+  }
+  if (matches.length > 1) throw new Error('Multiple shifts cover the selected date. Select which shift to change.');
+  return matches[0];
+};
+
 const changeAssignmentForDate = async (
   employeeCode: string,
   date: string,
   startTime: string,
   endTime: string,
+  sourceSlotId?: string,
 ): Promise<void> => {
   const slots = await readSlots();
   const assignments = flattenShiftAssignments(slots, employeeCode);
-  const resolution = resolveShiftAssignment(assignments, employeeCode, date);
-  if (resolution.status !== 'resolved') throw new Error(resolution.status === 'none'
-    ? 'No shift assignment covers the selected date.'
-    : 'Multiple shifts cover the selected date. Run the shift audit before changing it.');
-  const selected = resolution.assignment;
+  const selected = resolveAssignmentForDate(assignments, employeeCode, date, sourceSlotId);
+  // The override must not collide with the employee's other same-day shifts.
+  const conflicts = conflictingShiftAssignments(slots, {
+    employeeCode,
+    fromDate: date,
+    toDate: date,
+    startTime,
+    endTime,
+  }, selected.assignmentId);
+  if (conflicts.length > 0) throw new Error('The new shift overlaps another assignment on this date.');
   const remainingSegments = splitAssignmentForDate(selected, date);
   const destinationSlotId = await findUniqueSlot(startTime, endTime);
   const sourceRef = doc(db, 'shifts', selected.slotId);
@@ -286,32 +311,29 @@ const changeAssignmentForDateScoped = async (
     destinationShiftId: string;
     startTime: string;
     endTime: string;
+    sourceShiftId?: string;
   },
 ): Promise<void> => {
   if (!isBranchManager) {
-    await changeAssignmentForDate(args.employeeCode, args.date, args.startTime, args.endTime);
+    await changeAssignmentForDate(args.employeeCode, args.date, args.startTime, args.endTime, args.sourceShiftId);
     return;
   }
   const slots = await readSlots();
-  const resolution = resolveShiftAssignment(
+  const selected = resolveAssignmentForDate(
     flattenShiftAssignments(slots, args.employeeCode),
     args.employeeCode,
     args.date,
+    args.sourceShiftId,
   );
-  if (resolution.status !== 'resolved') {
-    throw new Error(resolution.status === 'none'
-      ? 'No shift assignment covers the selected date.'
-      : 'Multiple shifts cover the selected date. Run the shift audit before changing it.');
-  }
-  const employeeId = args.employeeId ?? resolution.assignment.employeeId;
+  const employeeId = args.employeeId ?? selected.employeeId;
   if (!employeeId) throw new Error('Employee record not found.');
   await changeExistingAssignmentForDate(
     {
       employeeId,
-      shiftId: resolution.assignment.slotId,
-      assignmentId: resolution.assignment.assignmentId,
-      fromDate: resolution.assignment.fromDate,
-      toDate: resolution.assignment.toDate,
+      shiftId: selected.slotId,
+      assignmentId: selected.assignmentId,
+      fromDate: selected.fromDate,
+      toDate: selected.toDate,
     },
     args.destinationShiftId,
     args.date,
@@ -386,6 +408,7 @@ export const shiftAssignmentsService = {
   addAssignment,
   removeAssignment,
   moveAssignment,
+  listAssignmentsForDate,
   changeAssignmentForDate,
   changeAssignmentForDateScoped,
   addExistingAssignment,

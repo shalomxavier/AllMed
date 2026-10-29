@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  conflictingShiftAssignments,
+  findAssignmentsForDate,
   flattenShiftAssignments,
   mergeAdjacentAssignments,
   resolveShiftAssignment,
   splitAssignmentForDate,
+  timeRangesOverlap,
   type ShiftSlotDocument,
 } from './shiftAssignments';
 
@@ -76,5 +79,53 @@ describe('shift assignment ranges', () => {
       { employeeCode: 'EMP-1', fromDate: '2026-09-03', toDate: '2026-09-04' },
       { employeeCode: 'emp-1', fromDate: '2026-09-01', toDate: '2026-09-02' },
     ])).toEqual([{ employeeCode: 'emp-1', fromDate: '2026-09-01', toDate: '2026-09-04' }]);
+  });
+});
+
+describe('multiple same-day shifts', () => {
+  it('detects wall-clock overlap including night-wrap shifts', () => {
+    expect(timeRangesOverlap(9 * 60, 13 * 60, 14 * 60, 20 * 60)).toBe(false);
+    expect(timeRangesOverlap(9 * 60, 13 * 60, 12 * 60, 17 * 60)).toBe(true);
+    // Night shift 22:00-06:00 overlaps 05:00-09:00 but not 09:00-13:00.
+    expect(timeRangesOverlap(22 * 60, 6 * 60, 5 * 60, 9 * 60)).toBe(true);
+    expect(timeRangesOverlap(22 * 60, 6 * 60, 9 * 60, 13 * 60)).toBe(false);
+  });
+
+  it('allows same-day assignments with non-overlapping times', () => {
+    const conflicts = conflictingShiftAssignments(slots, {
+      employeeCode: 'EMP-1',
+      fromDate: '2026-09-05',
+      toDate: '2026-09-05',
+      startTime: '19:00',
+      endTime: '22:00',
+    });
+    expect(conflicts).toHaveLength(0);
+  });
+
+  it('flags same-day assignments with overlapping times', () => {
+    const conflicts = conflictingShiftAssignments(slots, {
+      employeeCode: 'EMP-1',
+      fromDate: '2026-09-05',
+      toDate: '2026-09-05',
+      startTime: '17:00',
+      endTime: '22:00',
+    });
+    expect(conflicts.map((c) => c.assignmentId)).toEqual(['before']);
+  });
+
+  it('returns every assignment covering a date', () => {
+    const multi: ShiftSlotDocument[] = [{
+      id: 'day',
+      startTime: '09:00',
+      endTime: '13:00',
+      employees: [{ assignmentId: 'a', employeeCode: 'EMP-1', fromDate: '2026-09-05', toDate: '2026-09-05' }],
+    }, {
+      id: 'evening',
+      startTime: '14:00',
+      endTime: '20:00',
+      employees: [{ assignmentId: 'b', employeeCode: 'EMP-1', fromDate: '2026-09-05', toDate: '2026-09-05' }],
+    }];
+    const matches = findAssignmentsForDate(flattenShiftAssignments(multi, 'EMP-1'), 'EMP-1', '2026-09-05');
+    expect(matches.map((m) => m.assignmentId).sort()).toEqual(['a', 'b']);
   });
 });

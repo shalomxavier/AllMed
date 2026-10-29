@@ -140,16 +140,14 @@ const isNightShift = (shift: Shift): boolean => {
   return (eh * 60 + em) <= (sh * 60 + sm);
 };
 
-const getShiftForEmployee = (employeeCode: string, dateStr: string, shifts: Shift[]): Shift | null => {
+const getShiftsForEmployee = (employeeCode: string, dateStr: string, shifts: Shift[]): Shift[] => {
   const key = employeeCode.trim().toLowerCase();
-  const matches = shifts.filter((shift) => shift.employees?.some((emp) => {
+  return shifts.filter((shift) => shift.employees?.some((emp) => {
     const code = emp.employeeCode?.trim().toLowerCase();
     return code === key
       && (!emp.fromDate || dateStr >= emp.fromDate)
       && (!emp.toDate || dateStr <= emp.toDate);
   }));
-  if (matches.length > 1) console.error('Multiple shifts cover employee date:', employeeCode, dateStr, matches);
-  return matches.length === 1 ? matches[0] : null;
 };
 
 const getAttendanceDate = (punch: RawPunch, shifts: Shift[]): string | null => {
@@ -159,17 +157,18 @@ const getAttendanceDate = (punch: RawPunch, shifts: Shift[]): string | null => {
   const userId = punch.userId.trim().toLowerCase();
   if (punch.direction !== 'out') return dateStr;
 
+  // An out-punch belongs to the previous day when that day had a night shift
+  // whose end window covers the punch time (matches /attendance/records).
   const timeMin = d.getUTCHours() * 60 + d.getUTCMinutes();
-  const shiftToday = getShiftForEmployee(userId, dateStr, shifts);
-  if (!shiftToday || !isNightShift(shiftToday)) return dateStr;
-
-  const [sh, sm] = shiftToday.startTime!.split(':').map(Number);
-  const shiftStartMin = sh * 60 + sm;
-  if (timeMin >= shiftStartMin) return dateStr;
-
   const prevDay = new Date(dateStr + 'T00:00:00Z');
   prevDay.setUTCDate(prevDay.getUTCDate() - 1);
-  return formatLocalDate(prevDay);
+  const prevDateStr = formatLocalDate(prevDay);
+  const prevNightShifts = getShiftsForEmployee(userId, prevDateStr, shifts).filter(isNightShift);
+  const belongsToPrevious = prevNightShifts.some((shift) => {
+    const [eh, em] = shift.endTime!.split(':').map(Number);
+    return timeMin <= eh * 60 + em + 120;
+  });
+  return belongsToPrevious ? prevDateStr : dateStr;
 };
 
 const ALL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -484,15 +483,17 @@ export const InsightsPage: React.FC = () => {
         const shifts = shiftsSnapshot.docs.map((shiftDocument) => shiftDocument.data() as Shift);
         const leaves = leavesSnapshot.docs.map((leaveDocument) => leaveDocument.data() as LeaveRecord);
 
-        const shiftTimesByEmployee = new Map<string, string>();
+        const shiftTimesByEmployee = new Map<string, string[]>();
         shifts.forEach((shift) => {
           shift.employees?.forEach((shiftEmployee) => {
             const employeeCode = shiftEmployee.employeeCode?.trim().toLowerCase();
             if (!employeeCode || !branchEmployeeCodes.has(employeeCode)) return;
             const isAssignedForDate = (!shiftEmployee.fromDate || selectedDate >= shiftEmployee.fromDate)
               && (!shiftEmployee.toDate || selectedDate <= shiftEmployee.toDate);
-            if (isAssignedForDate && !shiftTimesByEmployee.has(employeeCode)) {
-              shiftTimesByEmployee.set(employeeCode, `${shift.startTime || '—'} - ${shift.endTime || '—'}`);
+            if (isAssignedForDate) {
+              const times = shiftTimesByEmployee.get(employeeCode) ?? [];
+              times.push(`${shift.startTime || '—'} - ${shift.endTime || '—'}`);
+              shiftTimesByEmployee.set(employeeCode, times);
             }
           });
         });
@@ -592,9 +593,9 @@ export const InsightsPage: React.FC = () => {
         );
 
         const getShiftBuckets = (employeeCode: string): (keyof DepartmentShiftCounts)[] => {
-          const assignedTime = shiftTimesByEmployee.get(employeeCode);
-          if (assignedTime) {
-            const buckets = categorizeShiftTime(assignedTime);
+          const assignedTimes = shiftTimesByEmployee.get(employeeCode);
+          if (assignedTimes && assignedTimes.length > 0) {
+            const buckets = [...new Set(assignedTimes.flatMap((time) => categorizeShiftTime(time)))];
             if (buckets.length) return buckets;
           }
           const punch = firstPunchByEmployee.get(employeeCode) ?? anyPunchByEmployee.get(employeeCode);
@@ -625,10 +626,10 @@ export const InsightsPage: React.FC = () => {
             designation,
             Array.from(employeeCodes).map((employeeCode) => {
               const employee = employeeByCode.get(employeeCode);
-              const assignedTime = shiftTimesByEmployee.get(employeeCode);
+              const assignedTimes = shiftTimesByEmployee.get(employeeCode);
               const punch = firstPunchByEmployee.get(employeeCode) ?? anyPunchByEmployee.get(employeeCode);
-              const shiftTime = assignedTime
-                ? assignedTime
+              const shiftTime = assignedTimes && assignedTimes.length > 0
+                ? assignedTimes.join(' · ')
                 : punch
                   ? `${String(punch.getUTCHours()).padStart(2, '0')}:${String(punch.getUTCMinutes()).padStart(2, '0')} (punch)`
                   : 'No shift assigned';
@@ -643,16 +644,16 @@ export const InsightsPage: React.FC = () => {
             }).sort((first, second) => first.name.localeCompare(second.name)),
           ]),
         );
-        
+
         const employeesByDepartment = Object.fromEntries(
           Array.from(attendanceByDepartment.entries()).map(([department, employeeCodes]) => [
             department,
             Array.from(employeeCodes).map((employeeCode) => {
               const employee = employeeByCode.get(employeeCode);
-              const assignedTime = shiftTimesByEmployee.get(employeeCode);
+              const assignedTimes = shiftTimesByEmployee.get(employeeCode);
               const punch = firstPunchByEmployee.get(employeeCode) ?? anyPunchByEmployee.get(employeeCode);
-              const shiftTime = assignedTime
-                ? assignedTime
+              const shiftTime = assignedTimes && assignedTimes.length > 0
+                ? assignedTimes.join(' · ')
                 : punch
                   ? `${String(punch.getUTCHours()).padStart(2, '0')}:${String(punch.getUTCMinutes()).padStart(2, '0')} (punch)`
                   : 'No shift assigned';

@@ -7,9 +7,9 @@ import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner, useToast } from '@/components/common';
 import { usePopupDismiss } from '@/hooks/usePopupDismiss';
 import {
+  findAssignmentsForDate,
   flattenShiftAssignments,
   normalizeEmployeeCode,
-  resolveShiftAssignment,
   type ShiftSlotDocument,
 } from '@/utils/shiftAssignments';
 import { LeaveOptionMenu, LeaveTypeLegend, leaveDotClass, leavePeriodLabel, type LeaveSelection } from '@/components/attendance/LeaveOptionMenu';
@@ -677,9 +677,8 @@ export const LeavesPage: React.FC = () => {
 
           const dayName = getIstDayName(d);
 
-          const resolution = resolveShiftAssignment(assignments, empCode, dateStr);
-          if (resolution.status !== 'resolved') continue;
-          const shift = resolution.assignment;
+          const dayShifts = findAssignmentsForDate(assignments, empCode, dateStr);
+          if (dayShifts.length === 0) continue;
 
           // Skip approved full-day leave days
           if (fullDayLeaveDates.has(dateStr)) continue;
@@ -688,71 +687,82 @@ export const LeavesPage: React.FC = () => {
           const hasWeekOff = empWeekOffs.some((w) => (w.days ?? []).includes(dayName));
           if (hasWeekOff) continue;
 
-          const startMinutes = timeToMinutes(shift.startTime ?? '00:00');
-          const endMinutes = timeToMinutes(shift.endTime ?? '00:00');
-          const isNight = endMinutes <= startMinutes;
-          const shiftDurationMinutes = isNight
-            ? 24 * 60 - startMinutes + endMinutes
-            : endMinutes - startMinutes;
-
           const inPunches = empPunches.filter((p) => p.direction === 'in');
           const outPunches = empPunches.filter((p) => p.direction === 'out');
-
-          let missingIn = false;
-          let missingOut = false;
           const halfDayPeriod = halfDayLeaveMap[dateStr];
 
-          if (halfDayPeriod) {
-            // Only check punches that fall within the working half of the shift
-            const midpoint = shiftDurationMinutes / 2;
-            const inWorkingPunches = inPunches.filter((p) => {
-              const m = getPunchMinutes(p.logDate);
+          // Each same-day shift is checked independently: a punch only counts
+          // toward the shift whose window (with a 2-hour grace) it falls in.
+          dayShifts.forEach((shift) => {
+            const startMinutes = timeToMinutes(shift.startTime ?? '00:00');
+            const endMinutes = timeToMinutes(shift.endTime ?? '00:00');
+            const isNight = endMinutes <= startMinutes;
+            const shiftDurationMinutes = isNight
+              ? 24 * 60 - startMinutes + endMinutes
+              : endMinutes - startMinutes;
+            const withinShiftWindow = (m: number | null): boolean => {
               if (m === null) return false;
               const rel = shiftRelativeMinutes(m, startMinutes);
-              return halfDayPeriod === 'first_half' ? rel >= midpoint : rel <= midpoint;
-            });
-            const outWorkingPunches = outPunches.filter((p) => {
-              const m = getPunchMinutes(p.logDate);
-              if (m === null) return false;
-              const rel = shiftRelativeMinutes(m, startMinutes);
-              return halfDayPeriod === 'first_half' ? rel >= midpoint : rel <= midpoint;
-            });
-            missingIn = inWorkingPunches.length === 0;
-            missingOut = outWorkingPunches.length === 0;
-          } else {
-            const hasIn = inPunches.some((p) => getDateKey(p.logDate) === dateStr);
-            missingIn = !hasIn;
+              return rel <= shiftDurationMinutes + 120 || rel >= 24 * 60 - 120;
+            };
 
-            if (isNight) {
-              const nextDateStr = addDaysIst(dateStr, 1);
-              const cutoffMinutes = endMinutes + 120;
-              const hasOut = outPunches.some((p) => {
-                const punchDate = getDateKey(p.logDate);
-                if (punchDate !== nextDateStr) return false;
+            let missingIn = false;
+            let missingOut = false;
+
+            if (halfDayPeriod) {
+              // Only check punches that fall within the working half of the shift
+              const midpoint = shiftDurationMinutes / 2;
+              const inWorkingPunches = inPunches.filter((p) => {
                 const m = getPunchMinutes(p.logDate);
                 if (m === null) return false;
-                return m <= cutoffMinutes;
+                const rel = shiftRelativeMinutes(m, startMinutes);
+                return halfDayPeriod === 'first_half' ? rel >= midpoint : rel <= midpoint;
               });
-              missingOut = !hasOut;
+              const outWorkingPunches = outPunches.filter((p) => {
+                const m = getPunchMinutes(p.logDate);
+                if (m === null) return false;
+                const rel = shiftRelativeMinutes(m, startMinutes);
+                return halfDayPeriod === 'first_half' ? rel >= midpoint : rel <= midpoint;
+              });
+              missingIn = inWorkingPunches.length === 0;
+              missingOut = outWorkingPunches.length === 0;
             } else {
-              const hasOut = outPunches.some((p) => getDateKey(p.logDate) === dateStr);
-              missingOut = !hasOut;
-            }
-          }
+              const hasIn = inPunches.some((p) =>
+                getDateKey(p.logDate) === dateStr && withinShiftWindow(getPunchMinutes(p.logDate)));
+              missingIn = !hasIn;
 
-          if (missingIn && missingOut) {
-            results.push({
-              employeeCode: empCode,
-              employeeName: empName,
-              date: dateStr,
-              shiftStart: shift.startTime,
-              shiftEnd: shift.endTime,
-              missingIn,
-              missingOut,
-              isNightShift: isNight,
-              halfDayPeriod,
-            });
-          }
+              if (isNight) {
+                const nextDateStr = addDaysIst(dateStr, 1);
+                const cutoffMinutes = endMinutes + 120;
+                const hasOut = outPunches.some((p) => {
+                  const punchDate = getDateKey(p.logDate);
+                  if (punchDate !== nextDateStr) return false;
+                  const m = getPunchMinutes(p.logDate);
+                  if (m === null) return false;
+                  return m <= cutoffMinutes;
+                });
+                missingOut = !hasOut;
+              } else {
+                const hasOut = outPunches.some((p) =>
+                  getDateKey(p.logDate) === dateStr && withinShiftWindow(getPunchMinutes(p.logDate)));
+                missingOut = !hasOut;
+              }
+            }
+
+            if (missingIn && missingOut) {
+              results.push({
+                employeeCode: empCode,
+                employeeName: empName,
+                date: dateStr,
+                shiftStart: shift.startTime,
+                shiftEnd: shift.endTime,
+                missingIn,
+                missingOut,
+                isNightShift: isNight,
+                halfDayPeriod,
+              });
+            }
+          });
         }
       });
 

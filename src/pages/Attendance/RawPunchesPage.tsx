@@ -7,6 +7,17 @@ import { db } from '@/firebase/firebase';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { useRole, usePermissions } from '@/permissions';
 import { RedSpinner, useToast } from '@/components/common';
+import { timeToMinutes } from '@/utils/shiftAssignments';
+import {
+  assignSessionsToShifts,
+  computeShiftMetrics,
+  outPunchBelongsToPreviousDay,
+  pairPunchSessions,
+  shiftDateAdd,
+  type PunchSession,
+  type ShiftTiming,
+  type TimedPunch,
+} from '@/utils/shiftAttendance';
 
 interface RawPunch {
   id: string;
@@ -1000,41 +1011,32 @@ export const RawPunchesPage: React.FC = () => {
     XLSX.writeFile(wb, `attendance-${fromLabel}-to-${toLabel}.xlsx`);
   };
 
-  const isNightShift = (shift: any): boolean => {
-    if (!shift?.startTime || !shift?.endTime) return false;
-    const [sh, sm] = shift.startTime.split(':').map(Number);
-    const [eh, em] = shift.endTime.split(':').map(Number);
-    return (eh * 60 + em) <= (sh * 60 + sm);
-  };
-
-  const getShiftForUser = (userId: string, dateStr: string): any | null => {
-    if (!userId) return null;
+  // All shifts covering the date, ordered by start time. An employee may have
+  // multiple non-overlapping shifts on the same day.
+  const getShiftsForUser = (userId: string, dateStr: string): ShiftTiming[] => {
+    if (!userId) return [];
     const key = userId.trim().toLowerCase();
     const shifts = shiftsMap[key];
-    if (!shifts || shifts.length === 0) return null;
-    return shifts.find((s) => dateStr >= s.fromDate && dateStr <= s.toDate) ?? null;
+    if (!shifts || shifts.length === 0) return [];
+    return shifts
+      .filter((s) => (!s.fromDate || dateStr >= s.fromDate) && (!s.toDate || dateStr <= s.toDate))
+      .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime));
   };
 
   const getAttendanceDate = (punch: RawPunch): string | null => {
     const d = toDate(punch.logDate);
     if (!d || !punch.userId) return null;
     const dateStr = formatLocalDate(d);
-    const userId = punch.userId.trim().toLowerCase();
 
-    // For night shifts, out-punches that occur before the shift start belong to the previous day
+    // An out-punch belongs to the previous day when that day had a night shift
+    // whose end window covers the punch time. This stays correct when the
+    // employee also has a day shift on the punch's calendar date.
     if (punch.direction !== 'out') return dateStr;
 
     const timeMin = d.getUTCHours() * 60 + d.getUTCMinutes();
-    const shiftToday = getShiftForUser(userId, dateStr);
-    if (!shiftToday || !isNightShift(shiftToday)) return dateStr;
-
-    const [sh, sm] = shiftToday.startTime.split(':').map(Number);
-    const shiftStartMin = sh * 60 + sm;
-    if (timeMin >= shiftStartMin) return dateStr;
-
-    const prevDay = new Date(dateStr + 'T00:00:00Z');
-    prevDay.setUTCDate(prevDay.getUTCDate() - 1);
-    return formatLocalDate(prevDay);
+    const prevDay = shiftDateAdd(dateStr, -1);
+    if (outPunchBelongsToPreviousDay(timeMin, getShiftsForUser(punch.userId, prevDay))) return prevDay;
+    return dateStr;
   };
 
   const computeDailyRecords = (punches: RawPunch[]): DailyRecord[] => {
@@ -1048,7 +1050,7 @@ export const RawPunchesPage: React.FC = () => {
       groups[dateKey].push(punch);
     });
 
-    return Object.entries(groups).map(([groupKey, punches]) => {
+    return Object.entries(groups).flatMap(([groupKey, punches]) => {
       const [key, attendanceDate] = [groupKey.substring(0, groupKey.lastIndexOf('_')), groupKey.substring(groupKey.lastIndexOf('_') + 1)];
       const sorted = [...punches].sort((a, b) => {
         const dA = toDate(a.logDate);
@@ -1059,108 +1061,76 @@ export const RawPunchesPage: React.FC = () => {
 
       const firstPunch = sorted[0];
       const userId = firstPunch.userId ?? '';
-      const firstIn = sorted.find((p) => p.direction === 'in');
-      const lastOut = [...sorted].reverse().find((p) => p.direction === 'out');
-      const inDate = toDate(firstIn?.logDate ?? null);
-      const outDate = toDate(lastOut?.logDate ?? null);
       const date = new Date(attendanceDate + 'T00:00:00Z');
-      const inTimes = sorted
-        .filter((p) => p.direction === 'in')
-        .map((p) => toDate(p.logDate))
-        .filter((d): d is Date => d !== null);
-      const outTimes = sorted
-        .filter((p) => p.direction === 'out')
-        .map((p) => toDate(p.logDate))
-        .filter((d): d is Date => d !== null);
-      const inPunches: PunchRef[] = sorted
-        .filter((p) => p.direction === 'in' && toDate(p.logDate))
-        .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'in' as const, isEdited: editedPunchIds.has(p.id) }));
-      const outPunches: PunchRef[] = sorted
-        .filter((p) => p.direction === 'out' && toDate(p.logDate))
-        .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'out' as const, isEdited: editedPunchIds.has(p.id) }));
-
-      const shift = getShiftForUser(userId, attendanceDate);
-      const nightShift = isNightShift(shift);
-      const workDate = attendanceDate;
+      const shifts = getShiftsForUser(userId, attendanceDate);
       const leaveCode = employeeLeaveCodeMap[key] ?? key;
-      const halfDayPeriod = halfDayLeavesMap[leaveCode]?.[workDate]?.halfDayPeriod;
-      let lateMinutes = 0;
-      let earlyMinutes = 0;
-      let overtimeMinutes = 0;
+      const halfDayPeriod = halfDayLeavesMap[leaveCode]?.[attendanceDate]?.halfDayPeriod;
 
-      if (inDate && shift?.startTime && halfDayPeriod !== 'first_half') {
-        const [sh, sm] = shift.startTime.split(':').map(Number);
-        const shiftStartMin = sh * 60 + sm;
-        const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-        if (!isNaN(shiftStartMin)) {
-          if (nightShift) {
-            // For night shifts, IN punch is in the evening. Late = punched in after shift start (same day).
-            if (inMin > shiftStartMin) {
-              lateMinutes = inMin - shiftStartMin;
-            }
-          } else {
-            if (inMin > shiftStartMin) {
-              lateMinutes = inMin - shiftStartMin;
-            }
-          }
-        }
-      }
+      const buildRecord = (shift: ShiftTiming | null, segmentPunches: RawPunch[], sessions?: PunchSession[], idSuffix = ''): DailyRecord => {
+        const firstIn = segmentPunches.find((p) => p.direction === 'in');
+        const lastOut = [...segmentPunches].reverse().find((p) => p.direction === 'out');
+        const inDate = toDate(firstIn?.logDate ?? null);
+        const outDate = toDate(lastOut?.logDate ?? null);
+        const inTimes = segmentPunches
+          .filter((p) => p.direction === 'in')
+          .map((p) => toDate(p.logDate))
+          .filter((d): d is Date => d !== null);
+        const outTimes = segmentPunches
+          .filter((p) => p.direction === 'out')
+          .map((p) => toDate(p.logDate))
+          .filter((d): d is Date => d !== null);
+        const inPunches: PunchRef[] = segmentPunches
+          .filter((p) => p.direction === 'in' && toDate(p.logDate))
+          .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'in' as const, isEdited: editedPunchIds.has(p.id) }));
+        const outPunches: PunchRef[] = segmentPunches
+          .filter((p) => p.direction === 'out' && toDate(p.logDate))
+          .map((p) => ({ id: p.id, time: toDate(p.logDate)!, direction: 'out' as const, isEdited: editedPunchIds.has(p.id) }));
+        const metrics = computeShiftMetrics(shift, inDate, outDate, {
+          skipLate: halfDayPeriod === 'first_half',
+          skipEarlyOvertime: halfDayPeriod === 'second_half',
+          sumSessions: sessions,
+        });
 
-      if (outDate && shift?.endTime && halfDayPeriod !== 'second_half') {
-        const [eh, em] = shift.endTime.split(':').map(Number);
-        const shiftEndMin = eh * 60 + em;
-        const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
-        if (!isNaN(shiftEndMin)) {
-          if (nightShift) {
-            // For night shifts, OUT punch is next morning. Compare wall-clock times.
-            if (outMin < shiftEndMin) {
-              earlyMinutes = shiftEndMin - outMin;
-            } else if (outMin > shiftEndMin) {
-              overtimeMinutes = outMin - shiftEndMin;
-            }
-          } else {
-            if (outMin < shiftEndMin) {
-              earlyMinutes = shiftEndMin - outMin;
-            } else if (outMin > shiftEndMin) {
-              overtimeMinutes = outMin - shiftEndMin;
-            }
-          }
-        }
-      }
-
-      let workingDurationMinutes = 0;
-      if (inDate && outDate && outDate.getTime() > inDate.getTime()) {
-        workingDurationMinutes = Math.round((outDate.getTime() - inDate.getTime()) / (1000 * 60));
-      } else if (inDate && outDate) {
-        const inMin = inDate.getUTCHours() * 60 + inDate.getUTCMinutes();
-        const outMin = outDate.getUTCHours() * 60 + outDate.getUTCMinutes();
-        if (outMin >= inMin) {
-          workingDurationMinutes = outMin - inMin;
-        } else {
-          workingDurationMinutes = outMin + 24 * 60 - inMin;
-        }
-      }
-
-      return {
-        id: `${key}_${attendanceDate}`,
-        userId,
-        employeeName: employeeMap[key] ?? '',
-        department: departmentMap[key] ?? '',
-        location: workLocationMap[key] || '',
-        shift,
-        date,
-        inTime: inDate,
-        outTime: outDate,
-        inTimes,
-        outTimes,
-        inPunches,
-        outPunches,
-        workingDurationMinutes,
-        lateMinutes,
-        earlyMinutes,
-        overtimeMinutes,
-        halfDayPeriod,
+        return {
+          id: `${key}_${attendanceDate}${idSuffix}`,
+          userId,
+          employeeName: employeeMap[key] ?? '',
+          department: departmentMap[key] ?? '',
+          location: workLocationMap[key] || '',
+          shift,
+          date,
+          inTime: inDate,
+          outTime: outDate,
+          inTimes,
+          outTimes,
+          inPunches,
+          outPunches,
+          ...metrics,
+          halfDayPeriod,
+        };
       };
+
+      // Single (or no) shift: one record per day, as before.
+      if (shifts.length <= 1) return [buildRecord(shifts[0] ?? null, sorted)];
+
+      // Multiple same-day shifts: pair punches into in→out sessions and
+      // attribute each session to the shift it best fits. Every shift gets a
+      // record, so a missing session shows up as a missing IN/OUT.
+      const timed: TimedPunch[] = [];
+      sorted.forEach((p) => {
+        const time = toDate(p.logDate);
+        if (!time || (p.direction !== 'in' && p.direction !== 'out')) return;
+        timed.push({ id: p.id, time, direction: p.direction, isEdited: editedPunchIds.has(p.id) });
+      });
+      const sessions = pairPunchSessions(timed);
+      const sessionsByShift = assignSessionsToShifts(sessions, shifts, attendanceDate);
+
+      return shifts.map((shift, index) => {
+        const shiftSessions = sessionsByShift.get(index) ?? [];
+        const punchIds = new Set(shiftSessions.flatMap((s) => [...s.inPunches, ...s.outPunches].map((p) => p.id)));
+        const segment = sorted.filter((p) => punchIds.has(p.id));
+        return buildRecord(shift, segment, shiftSessions, `_${shift.id ?? index}`);
+      });
     });
   };
 

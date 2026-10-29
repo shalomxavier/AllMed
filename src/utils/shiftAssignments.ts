@@ -51,6 +51,58 @@ export const dateRangesOverlap = (
   return first.fromDate <= second.toDate && second.fromDate <= first.toDate;
 };
 
+const MINUTES_PER_DAY = 24 * 60;
+
+export const timeToMinutes = (time?: string): number => {
+  if (!time) return NaN;
+  const [hours, minutes] = time.split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return NaN;
+  return hours * 60 + minutes;
+};
+
+/**
+ * Wall-clock overlap between two shift windows. Night shifts (end <= start)
+ * wrap past midnight, so each window is normalized to minute ranges first.
+ */
+export const timeRangesOverlap = (start1: number, end1: number, start2: number, end2: number): boolean => {
+  const normalize = (start: number, end: number): { start: number; end: number }[] => {
+    if (end <= start) return [{ start, end: MINUTES_PER_DAY }, { start: 0, end }];
+    return [{ start, end }];
+  };
+  return normalize(start1, end1).some((r1) =>
+    normalize(start2, end2).some((r2) => r1.start < r2.end && r2.start < r1.end));
+};
+
+/** Every resolved assignment that covers `date` for `employeeCode`. */
+export const findAssignmentsForDate = (
+  assignments: ResolvedShiftAssignment[],
+  employeeCode: string,
+  date: string,
+): ResolvedShiftAssignment[] => {
+  const targetCode = normalizeEmployeeCode(employeeCode);
+  return assignments.filter((assignment) =>
+    normalizeEmployeeCode(assignment.employeeCode) === targetCode && assignmentContainsDate(assignment, date));
+};
+
+/**
+ * Resolved assignments that genuinely conflict with a proposed assignment:
+ * same employee, overlapping date ranges AND overlapping shift time windows.
+ * Same-day assignments whose time windows do not overlap are allowed.
+ */
+export const conflictingShiftAssignments = (
+  slots: ShiftSlotDocument[],
+  proposed: Pick<ShiftEmployeeAssignment, 'employeeCode' | 'fromDate' | 'toDate'> & { startTime: string; endTime: string },
+  excludedAssignmentId?: string,
+): ResolvedShiftAssignment[] => {
+  const proposedStart = timeToMinutes(proposed.startTime);
+  const proposedEnd = timeToMinutes(proposed.endTime);
+  if (!Number.isFinite(proposedStart) || !Number.isFinite(proposedEnd)) return [];
+  return flattenShiftAssignments(slots, proposed.employeeCode).filter((existing) =>
+    existing.assignmentId !== excludedAssignmentId
+    && dateRangesOverlap(existing, proposed)
+    && timeRangesOverlap(proposedStart, proposedEnd, timeToMinutes(existing.startTime), timeToMinutes(existing.endTime)));
+};
+
 export const flattenShiftAssignments = (slots: ShiftSlotDocument[], employeeCode?: string): ResolvedShiftAssignment[] => {
   const targetCode = normalizeEmployeeCode(employeeCode);
   return slots.flatMap((slot) => slot.employees.flatMap((assignment, legacyIndex) => {

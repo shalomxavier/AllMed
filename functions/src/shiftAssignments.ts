@@ -85,6 +85,22 @@ const datesOverlap = (first: Assignment, second: Assignment): boolean => {
   return first.fromDate <= second.toDate && second.fromDate <= first.toDate;
 };
 
+const toMinutes = (value?: string): number => {
+  if (!value) return NaN;
+  const [hours, minutes] = value.split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return NaN;
+  return hours * 60 + minutes;
+};
+
+// Wall-clock overlap between two shift windows; night shifts (end <= start)
+// wrap past midnight so each window is normalized to minute ranges.
+const timesOverlap = (start1: number, end1: number, start2: number, end2: number): boolean => {
+  const normalize = (start: number, end: number): { start: number; end: number }[] =>
+    (end <= start ? [{ start, end: 24 * 60 }, { start: 0, end }] : [{ start, end }]);
+  return normalize(start1, end1).some((first) =>
+    normalize(start2, end2).some((second) => first.start < second.end && second.start < first.end));
+};
+
 const findAssignmentIndex = (employees: Assignment[], selectedId: string, employee: EmployeeIdentity, fromDate?: string, toDate?: string): number => {
   const indexes = employees.reduce<number[]>((result, candidate, index) => {
     const idMatches = candidate.assignmentId ? candidate.assignmentId === selectedId : selectedId.includes(':legacy:');
@@ -98,13 +114,26 @@ const findAssignmentIndex = (employees: Assignment[], selectedId: string, employ
   return indexes[0];
 };
 
-const assertNoOverlap = (slots: Slot[], employee: EmployeeIdentity, proposed: Assignment, excluded?: { shiftId: string; index: number }): void => {
+// An employee may hold multiple same-day shifts as long as their time
+// windows do not overlap, so conflict requires overlapping date ranges
+// AND overlapping shift times.
+const assertNoOverlap = (
+  slots: Slot[],
+  employee: EmployeeIdentity,
+  proposed: Assignment,
+  proposedTimes: { startTime: string; endTime: string },
+  excluded?: { shiftId: string; index: number },
+): void => {
+  const proposedStart = toMinutes(proposedTimes.startTime);
+  const proposedEnd = toMinutes(proposedTimes.endTime);
   const overlaps = slots.some((slot) => slot.employees.some((candidate, index) => {
     if (excluded?.shiftId === slot.id && excluded.index === index) return false;
     const sameEmployee = candidate.employeeId ? candidate.employeeId === employee.id : normalize(candidate.employeeCode) === normalize(employee.employeeCode);
-    return sameEmployee && datesOverlap(candidate, proposed);
+    return sameEmployee
+      && datesOverlap(candidate, proposed)
+      && timesOverlap(proposedStart, proposedEnd, toMinutes(slot.startTime), toMinutes(slot.endTime));
   }));
-  if (overlaps) throw new functions.https.HttpsError('already-exists', 'This employee already has a shift in the selected date range.');
+  if (overlaps) throw new functions.https.HttpsError('already-exists', 'This employee already has a shift with overlapping hours in the selected date range.');
 };
 
 const callable = (handler: (data: Record<string, unknown>, uid: string) => Promise<unknown>) =>
@@ -131,7 +160,7 @@ export const addExistingShiftAssignment = callable(async (data, uid) => {
     const slots = await readSlots(transaction);
     const target = slots.find((slot) => slot.id === shiftId);
     if (!target) throw new functions.https.HttpsError('not-found', 'Shift not found.');
-    assertNoOverlap(slots, employee, dates);
+    assertNoOverlap(slots, employee, dates, { startTime: target.startTime, endTime: target.endTime });
     transaction.update(db.collection('shifts').doc(shiftId), {
       employees: [...target.employees, { assignmentId: newId, employeeId, employeeCode: employee.employeeCode, employeeName: employee.employeeName, ...dates }],
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -160,7 +189,7 @@ export const updateExistingShiftAssignment = callable(async (data, uid) => {
     const index = findAssignmentIndex(source.employees, selectedAssignmentId, employee, legacyFromDate, legacyToDate);
     const selected = source.employees[index];
     resultingId = selected.assignmentId ?? assignmentId();
-    assertNoOverlap(slots, employee, dates, { shiftId: sourceShiftId, index });
+    assertNoOverlap(slots, employee, dates, { startTime: destination.startTime, endTime: destination.endTime }, { shiftId: sourceShiftId, index });
     const entry: Assignment = { assignmentId: resultingId, employeeId, employeeCode: employee.employeeCode, employeeName: employee.employeeName, ...dates };
     const sourceRef = db.collection('shifts').doc(sourceShiftId);
     const destinationRef = db.collection('shifts').doc(destinationShiftId);
@@ -211,7 +240,7 @@ export const changeExistingShiftAssignmentForDate = callable(async (data, uid) =
     const index = findAssignmentIndex(source.employees, selectedAssignmentId, employee);
     const selected = source.employees[index];
     if (!selected.fromDate || !selected.toDate || date < selected.fromDate || date > selected.toDate) throw new functions.https.HttpsError('invalid-argument', 'The selected date is outside the assignment range.');
-    assertNoOverlap(slots, employee, { fromDate: date, toDate: date }, { shiftId: sourceShiftId, index });
+    assertNoOverlap(slots, employee, { fromDate: date, toDate: date }, { startTime: destination.startTime, endTime: destination.endTime }, { shiftId: sourceShiftId, index });
     const remaining: Assignment[] = [];
     const addDays = (value: string, days: number): string => {
       const parsed = new Date(`${value}T00:00:00Z`);
